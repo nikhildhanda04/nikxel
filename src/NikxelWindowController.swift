@@ -1,0 +1,74 @@
+import Cocoa
+
+class NikxelWindow: NSWindow {
+    let stateMachine: StateMachine
+    var nikxelView: NikxelView?
+    private var dragOffset: NSPoint = .zero
+    private var dragging = false
+    private var prevDragPos: NSPoint = .zero
+    private var prevDragTime: TimeInterval = 0
+
+    init(stateMachine: StateMachine) {
+        self.stateMachine = stateMachine
+        let screen = NSScreen.main ?? NSScreen.screens.first!
+        let sz: CGFloat = 340
+        let frame = NSRect(x: screen.frame.midX - sz/2, y: screen.frame.midY - sz/2, width: sz, height: sz)
+
+        super.init(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)) + 2)
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = false
+        ignoresMouseEvents = false
+        isMovableByWindowBackground = false
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+
+        let view = NikxelView(stateMachine: stateMachine)
+        contentView = view
+        nikxelView = view
+        acceptsMouseMovedEvents = true
+
+        view.onMoveTo = { [weak self] p in self?.setFrameOrigin(p) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragOffset = event.locationInWindow
+        dragging = true
+        stateMachine.setState(.dragging)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard dragging else { return }
+        let loc = NSEvent.mouseLocation
+        let now = CACurrentMediaTime()
+
+        // Velocity tracking for inertia wiggle
+        let dt = now - prevDragTime
+        if dt > 0.001 {
+            nikxelView?.dragVelocity = CGPoint(
+                x: (loc.x - prevDragPos.x) / CGFloat(dt),
+                y: (loc.y - prevDragPos.y) / CGFloat(dt)
+            )
+        }
+        prevDragPos = loc
+        prevDragTime = now
+
+        var origin = NSPoint(x: loc.x - dragOffset.x, y: loc.y - dragOffset.y)
+        if let scr = screen {
+            origin.x = max(0, min(origin.x, scr.frame.width - frame.width))
+            origin.y = max(0, min(origin.y, scr.frame.height - frame.height))
+        }
+        setFrameOrigin(origin)
+        stateMachine.position = origin
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragging = false
+        stateMachine.setState(.idle)
+        nikxelView?.triggerSpringBack()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        // Cursor facing handled by view's tick loop
+    }
+}

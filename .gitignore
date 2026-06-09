@@ -1,0 +1,6 @@
+*.png
+!nikxel_avatar.png
+.DS_Store
+/tmp/
+*.pyc
+__pycache__/

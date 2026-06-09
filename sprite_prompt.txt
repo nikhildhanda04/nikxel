@@ -1,0 +1,21 @@
+Create a pixel art sprite sheet with 7 rows × 4 columns. Each cell is exactly 64×64 pixels. Total output: 256×448 PNG.
+
+BACKGROUND: Fill all empty space in every cell with solid magenta (#FF00FF, RGB 255,0,255). No checkerboard. No gradient. Just flat magenta everywhere the character is not present. Do NOT let the magenta bleed or anti-alias into the character's edge pixels.
+
+STYLE: Flat shaded pixel art. No gradients, no soft shading. Hard pixel edges everywhere. Blocky rectangular body shapes. The character is chibi — big head, small body. Based on my attached reference photo. Same character in all 28 cells. Full body visible in every cell. Feet at the same position across all cells.
+
+ROW 1 (IDLE): 4 frames. Standing with gentle 2px breathing bob up and down. Eyes alternate between open and closed for blinking. Arms relaxed at sides.
+
+ROW 2 (TYPING): 4 frames. Bottom area shows a small keyboard — 4 rectangular keys (gray, black outlines). Keys press down alternating between right and left. Arms raise with fingers pressing, body shifts weight side to side. Focused expression.
+
+ROW 3 (THINKING): 4 frames. Hand under chin, head tilting slowly. Eyes looking upward. Small blue sweat drop. One frame has a sparkle showing an idea moment.
+
+ROW 4 (DONE/JUMP): 4 frames. Frame 1: crouched ready to spring. Frame 2: launching upward, arms raised in V. Frame 3: peak of jump with sparkle stars. Frame 4: landing with bounce.
+
+ROW 5 (DRAGGING/MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body stretched vertically tall like mochi. Frame 3: body squished wide. Frame 4: springing back to normal.
+
+ROW 6 (POUNCE): 4 frames. Frame 1: crouched low. Frame 2: launching forward, arms reaching ahead. Frame 3: mid-air flight. Frame 4: landing with impact dust.
+
+ROW 7 (HAPPY/PETTED): 4 frames. Happy ^_^ expression. Pink blush on cheeks. Hearts floating near head — growing larger across frames. Sparkle stars.
+
+OUTPUT: 256×448 PNG. Magenta (#FF00FF) background. Same character in all cells with consistent colors and proportions. Pixel art with hard edges, no anti-aliasing or blur.

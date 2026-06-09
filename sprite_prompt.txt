@@ -1,21 +1,77 @@
-Create a pixel art sprite sheet with 7 rows × 4 columns. Each cell is exactly 64×64 pixels. Total output: 256×448 PNG.
+╔══════════════════════════════════════════════════════╗
+║  STEP 1 — Generate your pixel character             ║
+╚══════════════════════════════════════════════════════╝
 
-BACKGROUND: Fill all empty space in every cell with solid magenta (#FF00FF, RGB 255,0,255). No checkerboard. No gradient. Just flat magenta everywhere the character is not present. Do NOT let the magenta bleed or anti-alias into the character's edge pixels.
+Upload your photo to Gemini, paste this prompt, download the result as "character.png"
 
-STYLE: Flat shaded pixel art. No gradients, no soft shading. Hard pixel edges everywhere. Blocky rectangular body shapes. The character is chibi — big head, small body. Based on my attached reference photo. Same character in all 28 cells. Full body visible in every cell. Feet at the same position across all cells.
 
-ROW 1 (IDLE): 4 frames. Standing with gentle 2px breathing bob up and down. Eyes alternate between open and closed for blinking. Arms relaxed at sides.
+A single pixel art character, 64×64 pixels. PNG. Flat colors with no gradients
+or shading. 1px black outline around the full body. Blocky rectangular shapes
+for arms and legs — like a GameBoy Color sprite. Chibi proportions: large head
+(~50% of height), small body. Standing straight, arms at sides, neutral calm
+expression. Eyes are 2×2 black squares with 1 white highlight pixel. Full body
+visible from head to feet.
 
-ROW 2 (TYPING): 4 frames. Bottom area shows a small keyboard — 4 rectangular keys (gray, black outlines). Keys press down alternating between right and left. Arms raise with fingers pressing, body shifts weight side to side. Focused expression.
+Based on my attached photo — match the skin tone, hair color, hair style, and
+clothing. Use maximum 6 colors: 1 skin, 1-2 hair, 1-2 outfit, 1 black outline.
 
-ROW 3 (THINKING): 4 frames. Hand under chin, head tilting slowly. Eyes looking upward. Small blue sweat drop. One frame has a sparkle showing an idea moment.
+Hard pixel edges everywhere. NO anti-aliasing. NO smooth curves. Every color
+boundary is a visible stair-step of pixels. Transparent background. Output
+64×64 PNG. Save this — you'll use it as reference for Step 2.
 
-ROW 4 (DONE/JUMP): 4 frames. Frame 1: crouched ready to spring. Frame 2: launching upward, arms raised in V. Frame 3: peak of jump with sparkle stars. Frame 4: landing with bounce.
+---
 
-ROW 5 (DRAGGING/MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body stretched vertically tall like mochi. Frame 3: body squished wide. Frame 4: springing back to normal.
+╔══════════════════════════════════════════════════════╗
+║  STEP 2 — Generate the sprite sheet                 ║
+╚══════════════════════════════════════════════════════╝
 
-ROW 6 (POUNCE): 4 frames. Frame 1: crouched low. Frame 2: launching forward, arms reaching ahead. Frame 3: mid-air flight. Frame 4: landing with impact dust.
+Upload the "character.png" from Step 1 as reference, paste this prompt,
+download the result as "final_sprite.png"
 
-ROW 7 (HAPPY/PETTED): 4 frames. Happy ^_^ expression. Pink blush on cheeks. Hearts floating near head — growing larger across frames. Sparkle stars.
 
-OUTPUT: 256×448 PNG. Magenta (#FF00FF) background. Same character in all cells with consistent colors and proportions. Pixel art with hard edges, no anti-aliasing or blur.
+Create a pixel art sprite sheet with 7 rows × 4 columns. Every cell is exactly
+64×64 pixels. Total output: 256×448 PNG.
+
+CRITICAL: The character in EVERY cell must match the attached reference image
+("character.png") — same face, same colors, same proportions, same style. Only
+the POSE changes between cells.
+
+BACKGROUND: Fill all empty space with solid magenta (#FF00FF). No checkerboard.
+No gradient. Flat magenta everywhere the character is not present. Do NOT let
+magenta bleed into the character's edges.
+
+ROW 1 (IDLE): 4 frames. Gentle breathing bob (2px up/down). Eyes blink between
+open and closed. Arms at sides. Calm expression.
+
+ROW 2 (TYPING): 4 frames. Small keyboard strip at bottom (4 gray keys with black
+outlines). Keys alternate pressing down — right key, then left key. Arms raise
+with finger pressing, body leans side to side. Focused downward expression.
+
+ROW 3 (THINKING): 4 frames. Hand under chin. Head tilts left-right. Eyes looking
+up. Small blue sweat drop (3-4 blue pixels) on forehead in early frames. One
+frame has tiny yellow sparkle near head (idea moment).
+
+ROW 4 (DONE/JUMP): 4 frames. Frame 1: crouch down. Frame 2: spring up, arms
+raised in V-shape. Frame 3: peak of jump with sparkle stars near hands. Frame 4:
+land with slight bounce, dust pixels at feet. Happy expression throughout.
+
+ROW 5 (DRAGGING/MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body
+stretched vertically tall (torso elongated, head stays at same height), stretch
+lines on sides. Frame 3: body squished horizontally wide, puffed cheeks. Frame 4:
+springing back to normal, dizzy eyes.
+
+ROW 6 (POUNCE/HUNT): 4 frames. Frame 1: crouched low, arms pulled back, narrowed
+eyes. Frame 2: launching forward, arms reaching ahead, speed lines trailing. Frame
+3: mid-air flight, body stretched. Frame 4: landing with impact dust, satisfied
+smirk.
+
+ROW 7 (HAPPY/PETTED): 4 frames. ^_^ happy squinting eyes. Pink blush squares on
+cheeks. Tiny pixel hearts (pink, black outline) floating near head — growing larger
+and multiplying across frames. Sparkle stars in later frames. Content expression.
+
+STYLE (same as reference): Flat colors, no gradients. 1px black outline around
+character. Hard pixel edges with NO anti-aliasing. Blocky rectangular limbs. Same
+color palette as the reference image in every cell. Full body always visible.
+Magenta background (#FF00FF) — the magenta IS the background, not part of the art.
+
+OUTPUT: 256×448 PNG. 7 rows × 4 columns. Magenta background everywhere.

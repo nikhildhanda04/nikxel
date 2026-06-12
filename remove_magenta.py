@@ -50,10 +50,11 @@ for y in range(h):
             if solid: img.putpixel((x,y),(r,g,b,255))
             else: img.putpixel((x,y),(0,0,0,0))
 
-# Slice 7 rows x 4 cols
-ROWS, COLS = 7, 4
+# Slice 10 rows x 4 cols (idle, typing, thinking, done, dragging,
+# pounce, petted, alert, recording, momReady)
+ROWS, COLS = 10, 4
 cw, rh = w // COLS, h // ROWS
-result = Image.new("RGBA", (256, 448), (0,0,0,0))
+result = Image.new("RGBA", (256, 640), (0,0,0,0))
 
 for row in range(ROWS):
     for col in range(COLS):

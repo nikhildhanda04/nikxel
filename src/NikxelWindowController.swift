@@ -8,6 +8,8 @@ class NikxelWindow: NSWindow {
     private var prevDragPos: NSPoint = .zero
     private var prevDragTime: TimeInterval = 0
 
+    var onDoubleClick: (() -> Void)?
+
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         let screen = NSScreen.main ?? NSScreen.screens.first!
@@ -32,6 +34,22 @@ class NikxelWindow: NSWindow {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Reminder bubble hit-test takes priority over drag/double-click so a tap
+        // on a bubble completes the reminder without engaging the recording toggle.
+        if let view = nikxelView {
+            let pInView = view.convert(event.locationInWindow, from: nil)
+            if let id = view.hitTestReminderBubble(at: pInView) {
+                view.onReminderTapped?(id)
+                view.dismissReminder(id: id)
+                return
+            }
+        }
+
+        if event.clickCount >= 2 {
+            dragging = false
+            onDoubleClick?()
+            return
+        }
         dragOffset = event.locationInWindow
         dragging = true
         stateMachine.setState(.dragging)
@@ -64,6 +82,8 @@ class NikxelWindow: NSWindow {
 
     override func mouseUp(with event: NSEvent) {
         dragging = false
+        // Don't disturb the recording (headphone) animation when releasing a drag.
+        if stateMachine.state == .recording { return }
         stateMachine.setState(.idle)
         nikxelView?.triggerSpringBack()
     }

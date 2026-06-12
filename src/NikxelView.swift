@@ -37,6 +37,29 @@ class NikxelView: NSView, StateMachineDelegate {
     private var bubbleScale: CGFloat = 1
     private var bubbleTargetOpacity: CGFloat = 0
 
+    // Reminder bubble
+    var reminderText: String? = nil
+    private var reminderOpacity: CGFloat = 0
+    private var reminderTargetOpacity: CGFloat = 0
+    var onReminderDismissed: (() -> Void)?
+
+    // Recording timer
+    var recordingStartedAt: TimeInterval? = nil
+
+    // Apple Reminders bubbles (transient, tap-to-complete)
+    struct ReminderBubble {
+        let id: String
+        let title: String
+        let addedAt: TimeInterval
+        var opacity: CGFloat = 0
+        var hitRect: NSRect = .zero
+    }
+    private var reminderBubbles: [ReminderBubble] = []
+    var onReminderTapped: ((String) -> Void)?
+    private let reminderBubbleLifetime: TimeInterval = 30
+    private let reminderFadeOut: TimeInterval = 0.4
+    private let reminderFadeIn: TimeInterval = 0.3
+
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         super.init(frame: NSRect(x: 0, y: 0, width: 340, height: 340))
@@ -67,17 +90,39 @@ class NikxelView: NSView, StateMachineDelegate {
     func stateRow(_ s: NikxelState) -> Int {
         switch s {
         case .idle, .walk: return 0
-        case .typing: return 1
+        case .typing, .writingMOM: return 1
         case .thinking: return 2
         case .done: return 3
         case .dragging: return 4
         case .pounce: return 5
         case .petted: return 6
+        case .alert: return 7
+        case .recording: return 8
+        case .momReady: return 9
         }
     }
 
     func triggerSpringBack() { springActive = true; springStart = CACurrentMediaTime() }
     func recordKeystroke() { keyTimestamps.append(CACurrentMediaTime()) }
+
+    func pushReminder(id: String, title: String) {
+        // Dedup: ignore if already on screen.
+        if reminderBubbles.contains(where: { $0.id == id }) { return }
+        reminderBubbles.append(ReminderBubble(id: id, title: title, addedAt: CACurrentMediaTime()))
+        needsDisplay = true
+    }
+
+    func dismissReminder(id: String) {
+        if let i = reminderBubbles.firstIndex(where: { $0.id == id }) {
+            reminderBubbles.remove(at: i)
+            needsDisplay = true
+        }
+    }
+
+    func hitTestReminderBubble(at p: NSPoint) -> String? {
+        for b in reminderBubbles.reversed() where b.hitRect.contains(p) { return b.id }
+        return nil
+    }
     func isOverheated() -> Bool {
         let count = keyTimestamps.filter { CACurrentMediaTime() - $0 < wpmWindow }.count
         return Double(count) / 5.0 * (60.0 / wpmWindow) > overheatWPM
@@ -107,6 +152,10 @@ class NikxelView: NSView, StateMachineDelegate {
             case .dragging: return 0
             case .pounce: return 8
             case .petted: return 3
+            case .alert: return 6
+            case .recording: return 4
+            case .momReady: return 6
+            case .writingMOM: return 8
             }
         }()
         if fps > 0, spriteSheet != nil {
@@ -140,6 +189,21 @@ class NikxelView: NSView, StateMachineDelegate {
             else { scale = 1.0; bounce = 0 }
             wiggle = 0
         case .petted: bounce = CGFloat(sin(t * 2.5) * 1.5); scale = 1; wiggle = 0
+        case .alert:
+            bounce = CGFloat(abs(sin(t * 8)) * 4)
+            wiggle = CGFloat(sin(t * 12) * 1.5)
+            scale = 1
+        case .recording:
+            bounce = CGFloat(sin(t * 2) * 1.2)
+            scale = 1; wiggle = 0
+        case .momReady:
+            let p = t.truncatingRemainder(dividingBy: 0.6)
+            bounce = p < 0.3 ? CGFloat(p * 4 * 30) : CGFloat((0.6 - p) * 4 * 30)
+            scale = 1.08; wiggle = 0
+        case .writingMOM:
+            wiggle = CGFloat(sin(t * 25) * 2.5)
+            bounce = CGFloat(sin(t * 6) * 1.5)
+            scale = 1
         }
 
         // Spring-back scale
@@ -148,6 +212,41 @@ class NikxelView: NSView, StateMachineDelegate {
             let progress = elapsed / springDuration
             if progress >= 1.0 { springActive = false }
             else { scale = 1.2 + CGFloat(easeOutBounce(progress)) * (1.0 - 1.2) }
+        }
+
+        // Reminder bubble fade
+        reminderTargetOpacity = (reminderText != nil) ? 1 : 0
+        let reminderFadeSpeed: CGFloat = 5.0
+        if reminderTargetOpacity > reminderOpacity {
+            reminderOpacity = min(1, reminderOpacity + CGFloat(dt) * reminderFadeSpeed)
+        } else if reminderTargetOpacity < reminderOpacity {
+            reminderOpacity = max(0, reminderOpacity - CGFloat(dt) * reminderFadeSpeed)
+        }
+
+        // Reminders bubbles fade + GC
+        if !reminderBubbles.isEmpty {
+            var changed = false
+            for i in reminderBubbles.indices {
+                let age = now - reminderBubbles[i].addedAt
+                let target: CGFloat
+                if age < 0 {
+                    target = 0
+                } else if age < reminderFadeIn {
+                    target = CGFloat(age / reminderFadeIn)
+                } else if age > reminderBubbleLifetime - reminderFadeOut {
+                    let r = (reminderBubbleLifetime - age) / reminderFadeOut
+                    target = CGFloat(max(0, min(1, r)))
+                } else {
+                    target = 1
+                }
+                if abs(reminderBubbles[i].opacity - target) > 0.001 {
+                    reminderBubbles[i].opacity = target
+                    changed = true
+                }
+            }
+            let before = reminderBubbles.count
+            reminderBubbles.removeAll { now - $0.addedAt > reminderBubbleLifetime }
+            if reminderBubbles.count != before || changed { needsDisplay = true }
         }
 
         // Bubble animation (thinking dots only)
@@ -240,6 +339,84 @@ class NikxelView: NSView, StateMachineDelegate {
             }
         }
 
+        // Recording indicator (red pulsing dot + elapsed timer)
+        if currentState == .recording, let started = recordingStartedAt {
+            let elapsed = CACurrentMediaTime() - started
+            let mins = Int(elapsed) / 60
+            let secs = Int(elapsed) % 60
+            let timer = String(format: "%d:%02d", mins, secs)
+
+            let pulse = 0.7 + 0.3 * sin(CACurrentMediaTime() * 4)
+            let dotRadius: CGFloat = 5
+            let dotX = cx - 28
+            let dotY = cy + halfChar + 16
+            ctx.saveGState()
+            ctx.setFillColor(NSColor.red.withAlphaComponent(CGFloat(pulse)).cgColor)
+            ctx.fillEllipse(in: NSRect(x: dotX - dotRadius, y: dotY - dotRadius, width: dotRadius*2, height: dotRadius*2))
+            ctx.restoreGState()
+
+            // Timer text
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: NSColor.white,
+                .strokeColor: NSColor.black,
+                .strokeWidth: -3
+            ]
+            let str = NSAttributedString(string: timer, attributes: attrs)
+            let textSize = str.size()
+            str.draw(at: NSPoint(x: dotX + 10, y: dotY - textSize.height/2))
+        }
+
+        // Reminder bubble (calendar)
+        if let text = reminderText, reminderOpacity > 0.01 {
+            ctx.saveGState()
+            ctx.setAlpha(reminderOpacity)
+            let pad: CGFloat = 10
+            let fontSize: CGFloat = 13
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
+                .foregroundColor: NSColor.black
+            ]
+            let attrStr = NSAttributedString(string: text, attributes: attrs)
+            let textSize = attrStr.size()
+            let bw = min(260, textSize.width + pad * 2)
+            let bh = textSize.height + pad * 2
+            let bx = cx - bw/2
+            let by = cy + halfChar + 24
+            let rect = NSRect(x: bx, y: by, width: bw, height: bh)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+            ctx.setFillColor(NSColor.white.withAlphaComponent(0.96).cgColor)
+            path.fill()
+            ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.2).cgColor)
+            path.lineWidth = 1
+            path.stroke()
+            attrStr.draw(at: NSPoint(x: bx + pad, y: by + pad))
+            ctx.restoreGState()
+        }
+
+        // Reminders bubbles (Apple Reminders due today, tap-to-complete)
+        if !reminderBubbles.isEmpty {
+            drawReminderBubbles(ctx: ctx, cx: cx, cy: cy)
+        }
+
+        // MOM ready sparkle
+        if currentState == .momReady {
+            let now = CACurrentMediaTime()
+            for i in 0..<5 {
+                let phase = (now * 3 + Double(i) * 0.7).truncatingRemainder(dividingBy: 1.0)
+                let angle = Double(i) * .pi * 2 / 5
+                let dist: CGFloat = 30 + CGFloat(phase * 25)
+                let sx = cx + CGFloat(cos(angle)) * dist
+                let sy = cy + CGFloat(sin(angle)) * dist + 10
+                let alpha = CGFloat(1.0 - phase) * 0.9
+                let size: CGFloat = 4
+                ctx.saveGState()
+                ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(alpha).cgColor)
+                ctx.fillEllipse(in: NSRect(x: sx - size/2, y: sy - size/2, width: size, height: size))
+                ctx.restoreGState()
+            }
+        }
+
         // Thinking dots (on top of character)
         if currentState == .thinking, bubbleOpacity > 0.01 {
             ctx.saveGState()
@@ -258,6 +435,81 @@ class NikxelView: NSView, StateMachineDelegate {
                 ctx.setFillColor(NSColor.black.cgColor)
                 ctx.fillEllipse(in: dotRect)
             }
+            ctx.restoreGState()
+        }
+    }
+
+    func drawReminderBubbles(ctx: CGContext, cx: CGFloat, cy: CGFloat) {
+        // Visible window: 3 most recent. Newest at the top, oldest of the visible
+        // 3 closest to the avatar (lowest y). Stack above the calendar bubble lane
+        // (which sits at cy + halfChar + 24).
+        let visibleCount = min(3, reminderBubbles.count)
+        let startIdx = reminderBubbles.count - visibleCount
+        let baseY = cy + halfChar + 70
+        let stepY: CGFloat = 40
+        let pad: CGFloat = 10
+        let fontSize: CGFloat = 13
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
+            .foregroundColor: NSColor.black
+        ]
+
+        // First clear all hit rects so off-screen entries can't catch clicks.
+        for i in reminderBubbles.indices { reminderBubbles[i].hitRect = .zero }
+
+        for displayIdx in 0..<visibleCount {
+            let i = startIdx + displayIdx
+            let b = reminderBubbles[i]
+            let centerY = baseY + CGFloat(displayIdx) * stepY
+            let titleText = "📋 \(b.title)"
+            let attrStr = NSAttributedString(string: titleText, attributes: attrs)
+            let textSize = attrStr.size()
+            let bw = min(260, textSize.width + pad * 2)
+            let bh = textSize.height + pad * 2
+            let bx = cx - bw / 2
+            let by = centerY - bh / 2
+            let rect = NSRect(x: bx, y: by, width: bw, height: bh)
+
+            ctx.saveGState()
+            ctx.setAlpha(b.opacity)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+            ctx.setFillColor(NSColor.white.withAlphaComponent(0.96).cgColor)
+            path.fill()
+            ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.2).cgColor)
+            path.lineWidth = 1
+            path.stroke()
+            // Truncate the text horizontally to fit the bubble width.
+            let textRect = NSRect(x: bx + pad, y: by + pad, width: bw - pad * 2, height: textSize.height)
+            let truncated = NSMutableAttributedString(attributedString: attrStr)
+            let pstyle = NSMutableParagraphStyle()
+            pstyle.lineBreakMode = .byTruncatingTail
+            truncated.addAttribute(.paragraphStyle, value: pstyle, range: NSRange(location: 0, length: truncated.length))
+            truncated.draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
+            ctx.restoreGState()
+
+            reminderBubbles[i].hitRect = rect
+        }
+
+        // Overflow pill above the top bubble.
+        let overflow = reminderBubbles.count - visibleCount
+        if overflow > 0 {
+            let label = "+\(overflow) more"
+            let pillAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.white
+            ]
+            let pillStr = NSAttributedString(string: label, attributes: pillAttrs)
+            let sz = pillStr.size()
+            let bw = sz.width + 16
+            let bh = sz.height + 6
+            let topY = baseY + CGFloat(visibleCount - 1) * stepY + 30
+            let bx = cx - bw / 2
+            let rect = NSRect(x: bx, y: topY, width: bw, height: bh)
+            ctx.saveGState()
+            let path = NSBezierPath(roundedRect: rect, xRadius: bh / 2, yRadius: bh / 2)
+            ctx.setFillColor(NSColor.black.withAlphaComponent(0.7).cgColor)
+            path.fill()
+            pillStr.draw(at: NSPoint(x: bx + 8, y: topY + 3))
             ctx.restoreGState()
         }
     }

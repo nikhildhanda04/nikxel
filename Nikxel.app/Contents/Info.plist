@@ -15,12 +15,24 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Nikxel reads upcoming events to show meeting reminders.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Nikxel reads upcoming events to show meeting reminders.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Nikxel may use the microphone during meeting recording.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Nikxel captures system audio while recording meetings for MOM generation.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Nikxel shows reminders due today as bubbles above the avatar so you can tick them off without opening Reminders.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Nikxel shows reminders due today as bubbles above the avatar so you can tick them off without opening Reminders.</string>
 </dict>
 </plist>

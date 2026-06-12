@@ -29,8 +29,8 @@ Upload the "character.png" from Step 1 as reference, paste this prompt,
 download the result as "final_sprite.png"
 
 
-Create a pixel art sprite sheet with 7 rows × 4 columns. Every cell is exactly
-64×64 pixels. Total output: 256×448 PNG.
+Create a pixel art sprite sheet with 10 rows × 4 columns. Every cell is exactly
+64×64 pixels. Total output: 256×640 PNG.
 
 CRITICAL: The character in EVERY cell must match the attached reference image
 ("character.png") — same face, same colors, same proportions, same style. Only
@@ -43,35 +43,60 @@ magenta bleed into the character's edges.
 ROW 1 (IDLE): 4 frames. Gentle breathing bob (2px up/down). Eyes blink between
 open and closed. Arms at sides. Calm expression.
 
-ROW 2 (TYPING): 4 frames. Small keyboard strip at bottom (4 gray keys with black
-outlines). Keys alternate pressing down — right key, then left key. Arms raise
-with finger pressing, body leans side to side. Focused downward expression.
+ROW 2 (TYPING / WRITING NOTES): 4 frames. Small keyboard strip at bottom (4 gray
+keys with black outlines). Keys alternate pressing down — right key, then left
+key. Arms raise with finger pressing, body leans side to side. Focused downward
+expression. (Reused while the AI is writing notes/MOM in the background.)
 
 ROW 3 (THINKING): 4 frames. Hand under chin. Head tilts left-right. Eyes looking
 up. Small blue sweat drop (3-4 blue pixels) on forehead in early frames. One
 frame has tiny yellow sparkle near head (idea moment).
 
-ROW 4 (DONE/JUMP): 4 frames. Frame 1: crouch down. Frame 2: spring up, arms
+ROW 4 (DONE / JUMP): 4 frames. Frame 1: crouch down. Frame 2: spring up, arms
 raised in V-shape. Frame 3: peak of jump with sparkle stars near hands. Frame 4:
 land with slight bounce, dust pixels at feet. Happy expression throughout.
 
-ROW 5 (DRAGGING/MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body
+ROW 5 (DRAGGING / MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body
 stretched vertically tall (torso elongated, head stays at same height), stretch
 lines on sides. Frame 3: body squished horizontally wide, puffed cheeks. Frame 4:
 springing back to normal, dizzy eyes.
 
-ROW 6 (POUNCE/HUNT): 4 frames. Frame 1: crouched low, arms pulled back, narrowed
-eyes. Frame 2: launching forward, arms reaching ahead, speed lines trailing. Frame
-3: mid-air flight, body stretched. Frame 4: landing with impact dust, satisfied
-smirk.
+ROW 6 (POUNCE / HUNT): 4 frames. Frame 1: crouched low, arms pulled back,
+narrowed eyes. Frame 2: launching forward, arms reaching ahead, speed lines
+trailing. Frame 3: mid-air flight, body stretched. Frame 4: landing with impact
+dust, satisfied smirk.
 
-ROW 7 (HAPPY/PETTED): 4 frames. ^_^ happy squinting eyes. Pink blush squares on
-cheeks. Tiny pixel hearts (pink, black outline) floating near head — growing larger
-and multiplying across frames. Sparkle stars in later frames. Content expression.
+ROW 7 (HAPPY / PETTED): 4 frames. ^_^ happy squinting eyes. Pink blush squares
+on cheeks. Tiny pixel hearts (pink, black outline) floating near head — growing
+larger and multiplying across frames. Sparkle stars in later frames. Content
+expression.
+
+ROW 8 (ALERT): 4 frames. Surprised expression — eyes wide open (full white
+squares with small black pupils, taller than normal). Mouth open in a small "O".
+Frame 1: standing upright but startled. Frame 2: body shaking left. Frame 3:
+body shaking right. Frame 4: standing upright again. A small yellow exclamation
+mark "!" above the head in frames 2 and 3. Quick urgent vibe — meeting/event
+about to start.
+
+ROW 9 (RECORDING): 4 frames. Character wearing big over-ear pixel headphones
+(gray cups with a black headband connecting them). Standing calmly, gentle bob
+(2px) like idle but slower. Eyes half-closed in concentration. Frames cycle
+through tiny mouth movements as if quietly listening. NO red dot in the sprite
+itself — the app draws a separate pulsing red recording indicator above the
+character at runtime. Just give us the focused, headphones-on listening pose.
+
+ROW 10 (MOM READY / NOTES DONE): 4 frames. Character proudly holding up a
+small folded paper / notebook with a checkmark "✓" on it. Frame 1: paper just
+appeared, character looking at it. Frame 2: paper raised higher, broad smile,
+sparkle stars near the paper. Frame 3: paper at peak height, character winking
+or doing a thumbs-up with the free hand, more sparkles. Frame 4: paper lowered
+slightly, content satisfied smile. Yellow/gold sparkles throughout — the
+"task complete" moment.
 
 STYLE (same as reference): Flat colors, no gradients. 1px black outline around
-character. Hard pixel edges with NO anti-aliasing. Blocky rectangular limbs. Same
-color palette as the reference image in every cell. Full body always visible.
-Magenta background (#FF00FF) — the magenta IS the background, not part of the art.
+character. Hard pixel edges with NO anti-aliasing. Blocky rectangular limbs.
+Same color palette as the reference image in every cell. Full body always
+visible. Magenta background (#FF00FF) — the magenta IS the background, not
+part of the art.
 
-OUTPUT: 256×448 PNG. 7 rows × 4 columns. Magenta background everywhere.
+OUTPUT: 256×640 PNG. 10 rows × 4 columns. Magenta background everywhere.

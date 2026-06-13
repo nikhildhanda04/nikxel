@@ -29,6 +29,11 @@ class AudioRecorder: NSObject {
     var captureMode: CaptureMode = .notes
     private var activeMode: CaptureMode = .notes
 
+    /// Tracks the in-flight stop teardown. The next start() awaits this before
+    /// kicking off beginCapture so the two Tasks don't race on self.stream /
+    /// self.extAudioFile / self.mic.
+    private var teardownTask: Task<Void, Never>?
+
     let mic = MicRecorder()
     private var micURL: URL?
     var isMicMuted: Bool {
@@ -55,7 +60,14 @@ class AudioRecorder: NSObject {
     func start() {
         guard !isRecording else { return }
         self.activeMode = self.captureMode
-        Task { await beginCapture() }
+        // If a previous stop() is still tearing down the SCStream / ExtAudioFile /
+        // mic, wait for it to finish before we start the new capture. Otherwise
+        // the teardown Task can nil out the new stream after beginCapture set it.
+        let priorTeardown = self.teardownTask
+        Task { [weak self] in
+            if let prior = priorTeardown { await prior.value }
+            await self?.beginCapture()
+        }
     }
 
     func stop() {
@@ -65,7 +77,7 @@ class AudioRecorder: NSObject {
         let micURL = self.micURL
         let finalURL = self.outputURL
         let mode = self.activeMode
-        Task { [weak self] in
+        let task = Task<Void, Never> { [weak self] in
             guard let self = self else { return }
             do { try await self.stream?.stopCapture() } catch { print("stop: \(error)") }
             self.stream = nil
@@ -96,6 +108,7 @@ class AudioRecorder: NSObject {
             }
             DispatchQueue.main.async { self.delegate?.recorderDidStop(artifacts: artifacts, error: nil) }
         }
+        self.teardownTask = task
     }
 
     private func mergeIfPossible(sys: URL?, mic: URL?, out: URL?) -> URL? {
@@ -312,7 +325,9 @@ class AudioRecorder: NSObject {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".nikxel/recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd-HHmm"
+        // Seconds in the stem so back-to-back recordings within the same minute
+        // don't collide on the merged WAV path or the per-track sys/mic temp files.
+        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd-HHmmss"
         return dir.appendingPathComponent("\(fmt.string(from: Date())).wav")
     }
 

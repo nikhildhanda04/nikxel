@@ -138,7 +138,9 @@ class MOMGenerator {
     private func saveOutput(content: String, mode: CaptureMode, startedAt: Date) throws -> URL {
         let dir = mode == .notes ? notesDir : meetingsDir
         let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd-HHmm"
+        // Seconds in the stem so two recordings started in the same minute don't
+        // overwrite each other's MOM file.
+        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
         let name = "\(fmt.string(from: startedAt)).md"
         let url = dir.appendingPathComponent(name)
         try content.write(to: url, atomically: true, encoding: .utf8)

@@ -33,6 +33,12 @@ class StateMachine {
         // writingMOM is sticky for the same reason — OCM seeing opencode CPU would
         // otherwise flip it to .thinking. Only endWritingMOM() can leave.
         if state == .writingMOM && s != .writingMOM { return }
+        // While the user is actively typing, AgentMonitor would otherwise stomp
+        // the .typing state with .thinking every 1.5 s (any running claude/opencode
+        // is high CPU). Block that so typing animation gets to play its frames.
+        // The 0.5 s typing timer falls back to .idle, after which AgentMonitor's
+        // next tick correctly sets .thinking.
+        if state == .typing && s == .thinking { return }
         state = s
     }
     func updateMouse(_ pos: CGPoint) { facingRight = pos.x > self.position.x }

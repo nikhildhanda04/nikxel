@@ -36,8 +36,6 @@ class StateMachine {
         // While the user is actively typing, AgentMonitor would otherwise stomp
         // the .typing state with .thinking every 1.5 s (any running claude/opencode
         // is high CPU). Block that so typing animation gets to play its frames.
-        // The 0.5 s typing timer falls back to .idle, after which AgentMonitor's
-        // next tick correctly sets .thinking.
         if state == .typing && s == .thinking { return }
         state = s
     }
@@ -47,7 +45,7 @@ class StateMachine {
         if state == .recording { return }
         setState(.typing)
         typingTimer?.invalidate()
-        typingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in self?.setState(.idle) }
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in self?.setState(.idle) }
     }
 
     func triggerDone() {

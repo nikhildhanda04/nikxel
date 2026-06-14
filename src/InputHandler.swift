@@ -9,7 +9,6 @@ class InputHandler {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var trustPollTimer: Timer?
-    private var didShowAccessibilityAlert = false
     weak var nikxelView: NikxelView?
 
     init(stateMachine: StateMachine) {
@@ -19,12 +18,13 @@ class InputHandler {
     func startMonitoring() {
         // Trigger the system Accessibility prompt the first time the app needs it,
         // then either install the event tap or wait for the user to grant access.
+        // The system dialog already has an "Open System Settings" button, so we
+        // don't show a custom NSAlert on top of it.
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(opts)
         if trusted {
             installEventTap()
         } else {
-            showAccessibilityAlertOnce()
             startWaitingForTrust()
         }
     }
@@ -39,7 +39,12 @@ class InputHandler {
 
     private func installEventTap() {
         guard eventTap == nil else { return }
+        // Subscribe to keyDown plus the two disable notifications. Without those in
+        // the mask, macOS silently kills the tap (slow callback / system load) and
+        // the avatar freezes on idle until app restart.
         let eventMask = (1 << CGEventType.keyDown.rawValue)
+                      | (1 << CGEventType.tapDisabledByTimeout.rawValue)
+                      | (1 << CGEventType.tapDisabledByUserInput.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -48,9 +53,15 @@ class InputHandler {
             callback: { proxy, type, event, refcon in
                 guard let refcon = refcon else { return Unmanaged.passRetained(event) }
                 let handler = Unmanaged<InputHandler>.fromOpaque(refcon).takeUnretainedValue()
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = handler.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                    return Unmanaged.passRetained(event)
+                }
                 if type == .keyDown {
-                    handler.stateMachine.triggerTyping()
-                    handler.nikxelView?.recordKeystroke()
+                    DispatchQueue.main.async {
+                        handler.stateMachine.triggerTyping()
+                        handler.nikxelView?.recordKeystroke()
+                    }
                 }
                 return Unmanaged.passRetained(event)
             },
@@ -82,20 +93,4 @@ class InputHandler {
         }
     }
 
-    private func showAccessibilityAlertOnce() {
-        guard !didShowAccessibilityAlert else { return }
-        didShowAccessibilityAlert = true
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Accessibility access needed"
-            alert.informativeText = "Nikxel needs Accessibility access to detect typing — that's what powers the typing animation and the overheat (red + steam) state when you type fast.\n\nOpen System Settings → Privacy & Security → Accessibility and enable Nikxel. The typing animation will start automatically once you grant access; no restart needed."
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-        }
-    }
 }

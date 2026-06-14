@@ -86,6 +86,16 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{duration}}", with: "\(durationSec / 60) min \(durationSec % 60) sec")
             .replacingOccurrences(of: "{{transcript}}", with: transcript)
 
+        return try executeOpencode(binary: binary, prompt: prompt)
+    }
+
+    // Run an arbitrary prompt through opencode. Used by DayLogger for EOD summaries.
+    func runOpencodePrompt(_ prompt: String) throws -> String {
+        guard let bin = findOpencode() else { throw MOMError.opencodeNotFound }
+        return try executeOpencode(binary: bin, prompt: prompt)
+    }
+
+    private func executeOpencode(binary: String, prompt: String) throws -> String {
         let promptDump = workspace.appendingPathComponent("last_prompt.txt")
         let stdoutDump = workspace.appendingPathComponent("last_stdout.log")
         let stderrDump = workspace.appendingPathComponent("last_stderr.log")

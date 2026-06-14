@@ -10,6 +10,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var calendarWatcher: GoogleCalendarWatcher!
     var reminderWatcher: ReminderWatcher!
     var meetingCoordinator: MeetingCoordinator!
+    var dayLogger: DayLogger!
     private var reminderDismissTimer: Timer?
     private var muteMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
@@ -43,11 +44,14 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         UNUserNotificationCenter.current().delegate = self
 
+        dayLogger = DayLogger(momGenerator: meetingCoordinator.momGen)
+
         setupMenuBar()
         agentMonitor.startMonitoring()
         inputHandler.startMonitoring()
         calendarWatcher.start()
         reminderWatcher.start()
+        dayLogger.start()
         // Trigger TCC prompt on launch so it's granted before user hits record
         meetingCoordinator.recorder.warmUpPermission()
     }
@@ -57,6 +61,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         inputHandler.stopMonitoring()
         calendarWatcher.stop()
         reminderWatcher.stop()
+        dayLogger.stop()
     }
 
     func setupMenuBar() {
@@ -92,6 +97,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let openMoms = NSMenuItem(title: "Open Meetings Folder", action: #selector(openMeetings), keyEquivalent: "")
         openMoms.target = self; menu.addItem(openMoms)
+
+        let openDaily = NSMenuItem(title: "Open Daily Summaries Folder", action: #selector(openDaily), keyEquivalent: "")
+        openDaily.target = self; menu.addItem(openDaily)
+
+        let summarizeNow = NSMenuItem(title: "Summarize Today Now", action: #selector(summarizeNow), keyEquivalent: "")
+        summarizeNow.target = self; menu.addItem(summarizeNow)
 
         let connectGCal = NSMenuItem(title: "Connect Google Calendar…", action: #selector(connectGoogleCalendar), keyEquivalent: "")
         connectGCal.target = self; menu.addItem(connectGCal)
@@ -154,6 +165,17 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             .appendingPathComponent("Documents/nikxel/meetings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(dir)
+    }
+
+    @objc func openDaily() {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/nikxel/daily", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
+    @objc func summarizeNow() {
+        dayLogger.generateSummaryNow()
     }
 
     @objc func connectGoogleCalendar() {

@@ -44,6 +44,31 @@ it silently catches up to your existing backlog (no spam). After that, only
 genuinely new reminders trigger bubbles. Refetches immediately when the Mac
 wakes from sleep.
 
+### Daily summary (end-of-day journal)
+
+| Feature | Trigger |
+|---|---|
+| 📓 **Auto day-in-review** | Fires at 10pm daily (or on next launch if the Mac was asleep at 10pm). Manual: status bar → **Summarize Today Now**. |
+
+Nikxel quietly samples your foreground app + window title every 15s through
+the day (no keystrokes, no screen content — just app + window names), then
+at 10pm stitches it together with:
+
+- **Today's git activity** across every repo under `~/Desktop` — commits, uncommitted diff, current branch, recent commit history.
+- **Today's meeting MOMs** you recorded (with their Summary sections).
+- **Your Claude Code session prompts** — pulled from `~/.claude/projects/*/*.jsonl`, timestamped, grouped by project.
+- **Your opencode session prompts** — queried from `~/.local/share/opencode/opencode.db` via `sqlite3`.
+
+It then pipes the bundle to `opencode` with a journaling prompt and writes a
+narrative summary to `~/Documents/nikxel/daily/YYYY-MM-DD.md`. Because the
+summary sees your literal prompts to AI agents, it names specific bugs and
+features ("fixed the typing-linger bug, ~50-line diff in StateMachine.swift")
+instead of generic ("edited Swift files").
+
+Sleep gaps are capped at 5 min per sample so a night of sleep doesn't get
+charged to whatever app was frontmost when you closed the laptop. Window
+titles need Accessibility (the same grant the typing animation uses).
+
 ## Quick Start
 
 ### Step 1 — Create your character
@@ -132,6 +157,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 - **Transcription**: shells out to `whisper` / `whisper.cpp`, plain text for Notes, SRT for Meeting (so timestamps can interleave speakers)
 - **MOM generation**: shells out to `opencode` with a stdin prompt; output is Markdown
 - **Calendar / reminders**: Google Calendar v3 REST API on a 30 s poll; EventKit for Apple Reminders with `EKEventStoreChanged` notifications + `NSWorkspace.didWake` for wake-from-sleep refresh
+- **Daily summary**: 15 s `NSWorkspace.frontmostApplication` + AX `kAXFocusedWindowAttribute`/`kAXTitleAttribute` polling → JSONL day-log; aggregated at 10 pm with `git log`/`git diff`, today's MOMs, Claude Code JSONL session transcripts, and `sqlite3` queries against the opencode database; narrative written by `opencode`
 
 ## Where files live
 
@@ -139,6 +165,8 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 |---|---|
 | Notes (YouTube / lectures / podcasts) | `~/Documents/nikxel/notes/` |
 | Meeting MOM (per-speaker) | `~/Documents/nikxel/meetings/` |
+| Daily summaries | `~/Documents/nikxel/daily/` |
+| Raw day-activity log (JSONL) | `~/Library/Application Support/Nikxel/days/` |
 | Prompt templates | `~/.nikxel/prompts/notes.md` & `meeting.md` |
 | Raw recordings (kept until processed) | `~/.nikxel/recordings/` |
 | MOM workspace / last-run logs | `~/.nikxel/momworkspace/` |

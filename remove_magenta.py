@@ -10,6 +10,17 @@ img = Image.open(INPUT).convert("RGBA")
 w, h = img.size
 print(f"Input: {INPUT} ({w}x{h})")
 
+# Safety net: Gemini frequently ignores dimension constraints and produces sheets
+# in odd sizes (e.g. 1024×1024, 13 rows instead of 10). The cell-slicing below
+# divides by ROWS/COLS, so a wrongly-sized input produces sprites that look cut
+# in half. Resize to the canonical 256×640 so slicing math always works — the
+# characters may end up slightly stretched/squished, but all 40 poses render.
+TARGET_W, TARGET_H = 256, 640
+if (w, h) != (TARGET_W, TARGET_H):
+    print(f"Resizing to {TARGET_W}×{TARGET_H} (input wasn't the expected size)")
+    img = img.resize((TARGET_W, TARGET_H), Image.NEAREST)
+    w, h = TARGET_W, TARGET_H
+
 # Chroma key magenta -> transparent (R>150, G<100, B>150)
 removed = 0
 for y in range(h):

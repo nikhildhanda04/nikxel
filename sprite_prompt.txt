@@ -29,16 +29,35 @@ Upload the "character.png" from Step 1 as reference, paste this prompt,
 download the result as "final_sprite.png"
 
 
-Create a pixel art sprite sheet with 10 rows × 4 columns. Every cell is exactly
-64×64 pixels. Total output: 256×640 PNG.
+=== HARD CONSTRAINTS — VIOLATE ANY AND THE OUTPUT IS UNUSABLE ===
 
-CRITICAL: The character in EVERY cell must match the attached reference image
-("character.png") — same face, same colors, same proportions, same style. Only
-the POSE changes between cells.
+DIMENSIONS: The output PNG is EXACTLY 256 pixels wide × 640 pixels tall.
+  - Width = 256. Not 512, not 1024, not "approximately 256".
+  - Height = 640. Not 512, not 1024, not square.
+  - The image is TALLER than it is WIDE (2.5× taller).
+  - If you cannot produce 256×640, do not output anything else as a substitute.
+
+GRID: The image is divided into EXACTLY 10 rows × 4 columns of cells.
+  - 10 rows (vertically stacked), 4 columns (side by side).
+  - NOT 7 rows. NOT 13 rows. NOT 8 rows. EXACTLY 10.
+  - NOT 3 columns. NOT 5 columns. EXACTLY 4.
+  - Each cell is exactly 64×64 pixels (256÷4=64 wide, 640÷10=64 tall).
+  - Cells touch edge-to-edge — no gutters, no borders, no padding between cells.
+  - NO labels. NO row numbers. NO column headers. NO legend. NO title bar.
+  - The first cell starts at pixel (0,0). The last cell ends at pixel (255,639).
+  - Each character fills its ENTIRE 64×64 cell from top to bottom — head near
+    y=0 within its cell, feet near y=63 within its cell. Do not leave empty
+    rows of magenta above or below characters within a cell.
+
+CHARACTER: The character in EVERY cell matches the attached reference
+("character.png") — same face, same skin tone, same hair, same outfit, same
+proportions, same color palette. Only the POSE changes between cells.
 
 BACKGROUND: Fill all empty space with solid magenta (#FF00FF). No checkerboard.
 No gradient. Flat magenta everywhere the character is not present. Do NOT let
 magenta bleed into the character's edges.
+
+=== POSES (4 frames per row, exactly 4) ===
 
 ROW 1 (IDLE): 4 frames. Gentle breathing bob (2px up/down). Eyes blink between
 open and closed. Arms at sides. Calm expression.
@@ -98,5 +117,18 @@ character. Hard pixel edges with NO anti-aliasing. Blocky rectangular limbs.
 Same color palette as the reference image in every cell. Full body always
 visible. Magenta background (#FF00FF) — the magenta IS the background, not
 part of the art.
+
+=== FINAL CHECK BEFORE OUTPUTTING ===
+
+Before emitting the image, confirm ALL of these are true:
+  [ ] Width is exactly 256 pixels. Height is exactly 640 pixels.
+  [ ] 10 rows of characters, top to bottom. Count them.
+  [ ] 4 columns of characters, left to right. Count them.
+  [ ] No row labels, headers, borders, gutters, or title text anywhere.
+  [ ] Each character fills its 64×64 cell — head at the top of its cell,
+      feet at the bottom of its cell.
+  [ ] Background is pure #FF00FF magenta, not pink, not purple.
+
+If any check fails, redo the image — do not output a sheet with the wrong grid.
 
 OUTPUT: 256×640 PNG. 10 rows × 4 columns. Magenta background everywhere.

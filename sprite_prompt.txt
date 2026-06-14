@@ -7,13 +7,24 @@ Upload your photo to Gemini, paste this prompt, download the result as "characte
 
 A single pixel art character, 64×64 pixels. PNG. Flat colors with no gradients
 or shading. 1px black outline around the full body. Blocky rectangular shapes
-for arms and legs — like a GameBoy Color sprite. Chibi proportions: large head
-(~50% of height), small body. Standing straight, arms at sides, neutral calm
-expression. Eyes are 2×2 black squares with 1 white highlight pixel. Full body
-visible from head to feet.
+for arms and legs — like a GameBoy Color / SNES JRPG sprite. Chibi proportions:
+large head (~50% of height), small body. Full body visible from head to feet.
+Arms at sides, neutral calm expression.
 
-Based on my attached photo — match the skin tone, hair color, hair style, and
-clothing. Use maximum 6 colors: 1 skin, 1-2 hair, 1-2 outfit, 1 black outline.
+PERSPECTIVE — CRITICAL: 3/4 view, NOT face-forward. The character's body and
+head are turned roughly 30° to the side (their right shoulder slightly closer
+to the camera than their left). You should see ONE side of the nose, both
+eyes (the far eye slightly narrower than the near eye), and the body in a
+mild side-angle. Think classic 16-bit JRPG sprite (Chrono Trigger, Earthbound)
+— NOT a flat front-on Game Boy mugshot. Default facing direction: turned to
+their right (camera's left).
+
+Eyes are 2×2 black squares with 1 white highlight pixel. Both eyes visible
+but the far one is 1 pixel narrower than the near one to convey the angle.
+
+Based on my attached photo — match the skin tone, hair color, hair style,
+facial hair, and clothing. Use maximum 6 colors: 1 skin, 1-2 hair, 1-2 outfit,
+1 black outline.
 
 Hard pixel edges everywhere. NO anti-aliasing. NO smooth curves. Every color
 boundary is a visible stair-step of pixels. Transparent background. Output
@@ -52,6 +63,12 @@ GRID: The image is divided into EXACTLY 10 rows × 4 columns of cells.
 CHARACTER: The character in EVERY cell matches the attached reference
 ("character.png") — same face, same skin tone, same hair, same outfit, same
 proportions, same color palette. Only the POSE changes between cells.
+
+PERSPECTIVE: Same 3/4 side view as the reference image — the character is
+turned ~30° to their right (camera's left) in every cell. NOT face-forward.
+The app mirrors the sprite horizontally at runtime to face the cursor, so
+all cells must point the SAME direction — never flip the character mid-sheet.
+Both eyes visible but the far one slightly narrower than the near one.
 
 BACKGROUND: Fill all empty space with solid magenta (#FF00FF). No checkerboard.
 No gradient. Flat magenta everywhere the character is not present. Do NOT let
@@ -128,6 +145,8 @@ Before emitting the image, confirm ALL of these are true:
   [ ] Each character fills its 64×64 cell — head at the top of its cell,
       feet at the bottom of its cell.
   [ ] Background is pure #FF00FF magenta, not pink, not purple.
+  [ ] Every character is in 3/4 side view (turned ~30° to their right),
+      NOT face-forward. Every character faces the same direction.
 
 If any check fails, redo the image — do not output a sheet with the wrong grid.
 

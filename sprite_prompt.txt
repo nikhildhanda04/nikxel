@@ -19,8 +19,7 @@ mild side-angle. Think classic 16-bit JRPG sprite (Chrono Trigger, Earthbound)
 — NOT a flat front-on Game Boy mugshot. Default facing direction: turned to
 their right (camera's left).
 
-Eyes are 2×2 black squares with 1 white highlight pixel. Both eyes visible
-but the far one is 1 pixel narrower than the near one to convey the angle.
+Both eyes visible but the far one is 1 pixel narrower than the near one to convey the angle.
 
 Based on my attached photo — match the skin tone, hair color, hair style,
 facial hair, and clothing. Use maximum 6 colors: 1 skin, 1-2 hair, 1-2 outfit,

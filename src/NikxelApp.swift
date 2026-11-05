@@ -14,6 +14,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var meetingDetector: MeetingDetector!
     var chatbotEngine: ChatbotEngine!
     var whatsAppActivityLogger: WhatsAppActivityLogger!
+    var onboardingWindowController: OnboardingWindowController?
     private var reminderDismissTimer: Timer?
     private var muteMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
@@ -96,6 +97,17 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
         // Trigger TCC prompt on launch so it's granted before user hits record
         meetingCoordinator.recorder.warmUpPermission()
+
+        if !NikxelSettings.onboardingCompleted {
+            showOnboarding()
+        }
+    }
+
+    func showOnboarding() {
+        if onboardingWindowController == nil {
+            onboardingWindowController = OnboardingWindowController(momGenerator: meetingCoordinator.momGen)
+        }
+        onboardingWindowController?.show()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -171,6 +183,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let editSettings = NSMenuItem(title: "Edit Nikxel Settings (name, language)…", action: #selector(editSettings), keyEquivalent: "")
         editSettings.target = self; menu.addItem(editSettings)
+
+        let setupWizard = NSMenuItem(title: "Setup Wizard…", action: #selector(openOnboarding), keyEquivalent: "")
+        setupWizard.target = self; menu.addItem(setupWizard)
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "Quit Nikxel", action: #selector(quitApp), keyEquivalent: "q")
@@ -283,6 +298,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func summarizeNow() {
         dayLogger.generateSummaryNow()
+    }
+
+    @objc func openOnboarding() {
+        showOnboarding()
     }
 
     @objc func connectGoogleCalendar() {

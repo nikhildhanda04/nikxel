@@ -8,9 +8,13 @@
 		<data>
 		xSCzIFMHbRsFOLa2pGkmb+PpxTk=
 		</data>
+		<key>Resources/sprite_prompt.txt</key>
+		<data>
+		NXHM2aueh/9Bdty09ac8Mtiq6hw=
+		</data>
 		<key>Resources/sprites.png</key>
 		<data>
-		Exv7P2WsJEk7nh7M2H6vNjVXqzI=
+		d35X2LnouhFMO/5P16hIoF2HQ+M=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -22,11 +26,18 @@
 			+0WX95TTme1p1q0zHhQoZo+yEbpUg8inwzUoEK3+Pv4=
 			</data>
 		</dict>
+		<key>Resources/sprite_prompt.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			aFl7XsUKsqE/KghVk3Lt5osj7v32YWmijBIPqSCb4lM=
+			</data>
+		</dict>
 		<key>Resources/sprites.png</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			1kbSbF5F3n2+TMPsKQOnmz7H90mD9zpEBf4CN4uSr1Y=
+			jt3/siUuRIFDTXH6K27xZZd9qhhmJax/jN3bq3mpn/Y=
 			</data>
 		</dict>
 	</dict>

@@ -1,0 +1,152 @@
+╔══════════════════════════════════════════════════════╗
+║  STEP 1 — Generate your pixel character             ║
+╚══════════════════════════════════════════════════════╝
+
+Upload your photo to Gemini, paste this prompt, download the result as "character.png"
+
+
+A single pixel art character, 64×64 pixels. PNG. Flat colors with no gradients
+or shading. 1px black outline around the full body. Blocky rectangular shapes
+for arms and legs — like a GameBoy Color / SNES JRPG sprite. Chibi proportions:
+large head (~50% of height), small body. Full body visible from head to feet.
+Arms at sides, neutral calm expression.
+
+PERSPECTIVE — CRITICAL: 3/4 view, NOT face-forward. The character's body and
+head are turned roughly 30° to the side (their right shoulder slightly closer
+to the camera than their left). You should see ONE side of the nose, both
+eyes (the far eye slightly narrower than the near eye), and the body in a
+mild side-angle. Think classic 16-bit JRPG sprite (Chrono Trigger, Earthbound)
+— NOT a flat front-on Game Boy mugshot. Default facing direction: turned to
+their right (camera's left).
+
+Both eyes visible but the far one is 1 pixel narrower than the near one to convey the angle.
+
+Based on my attached photo — match the skin tone, hair color, hair style,
+facial hair, and clothing. Use maximum 6 colors: 1 skin, 1-2 hair, 1-2 outfit,
+1 black outline.
+
+Hard pixel edges everywhere. NO anti-aliasing. NO smooth curves. Every color
+boundary is a visible stair-step of pixels. Transparent background. Output
+64×64 PNG. Save this — you'll use it as reference for Step 2.
+
+---
+
+╔══════════════════════════════════════════════════════╗
+║  STEP 2 — Generate the sprite sheet                 ║
+╚══════════════════════════════════════════════════════╝
+
+Upload the "character.png" from Step 1 as reference, paste this prompt,
+download the result as "final_sprite.png"
+
+
+=== HARD CONSTRAINTS — VIOLATE ANY AND THE OUTPUT IS UNUSABLE ===
+
+DIMENSIONS: The output PNG is EXACTLY 256 pixels wide × 640 pixels tall.
+  - Width = 256. Not 512, not 1024, not "approximately 256".
+  - Height = 640. Not 512, not 1024, not square.
+  - The image is TALLER than it is WIDE (2.5× taller).
+  - If you cannot produce 256×640, do not output anything else as a substitute.
+
+GRID: The image is divided into EXACTLY 10 rows × 4 columns of cells.
+  - 10 rows (vertically stacked), 4 columns (side by side).
+  - NOT 7 rows. NOT 13 rows. NOT 8 rows. EXACTLY 10.
+  - NOT 3 columns. NOT 5 columns. EXACTLY 4.
+  - Each cell is exactly 64×64 pixels (256÷4=64 wide, 640÷10=64 tall).
+  - Cells touch edge-to-edge — no gutters, no borders, no padding between cells.
+  - NO labels. NO row numbers. NO column headers. NO legend. NO title bar.
+  - The first cell starts at pixel (0,0). The last cell ends at pixel (255,639).
+  - Each character fills its ENTIRE 64×64 cell from top to bottom — head near
+    y=0 within its cell, feet near y=63 within its cell. Do not leave empty
+    rows of magenta above or below characters within a cell.
+
+CHARACTER: The character in EVERY cell matches the attached reference
+("character.png") — same face, same skin tone, same hair, same outfit, same
+proportions, same color palette. Only the POSE changes between cells.
+
+PERSPECTIVE: Same 3/4 side view as the reference image — the character is
+turned ~30° to their right (camera's left) in every cell. NOT face-forward.
+The app mirrors the sprite horizontally at runtime to face the cursor, so
+all cells must point the SAME direction — never flip the character mid-sheet.
+Both eyes visible but the far one slightly narrower than the near one.
+
+BACKGROUND: Fill all empty space with solid magenta (#FF00FF). No checkerboard.
+No gradient. Flat magenta everywhere the character is not present. Do NOT let
+magenta bleed into the character's edges.
+
+=== POSES (4 frames per row, exactly 4) ===
+
+ROW 1 (IDLE): 4 frames. Gentle breathing bob (2px up/down). Eyes blink between
+open and closed. Arms at sides. Calm expression.
+
+ROW 2 (TYPING / WRITING NOTES): 4 frames. Small keyboard strip at bottom (4 gray
+keys with black outlines). Keys alternate pressing down — right key, then left
+key. Arms raise with finger pressing, body leans side to side. Focused downward
+expression. (Reused while the AI is writing notes/MOM in the background.)
+
+ROW 3 (THINKING): 4 frames. Hand under chin. Head tilts left-right. Eyes looking
+up. Small blue sweat drop (3-4 blue pixels) on forehead in early frames. One
+frame has tiny yellow sparkle near head (idea moment).
+
+ROW 4 (DONE / JUMP): 4 frames. Frame 1: crouch down. Frame 2: spring up, arms
+raised in V-shape. Frame 3: peak of jump with sparkle stars near hands. Frame 4:
+land with slight bounce, dust pixels at feet. Happy expression throughout.
+
+ROW 5 (DRAGGING / MOCHI): 4 frames. Frame 1: normal standing. Frame 2: body
+stretched vertically tall (torso elongated, head stays at same height), stretch
+lines on sides. Frame 3: body squished horizontally wide, puffed cheeks. Frame 4:
+springing back to normal, dizzy eyes.
+
+ROW 6 (POUNCE / HUNT): 4 frames. Frame 1: crouched low, arms pulled back,
+narrowed eyes. Frame 2: launching forward, arms reaching ahead, speed lines
+trailing. Frame 3: mid-air flight, body stretched. Frame 4: landing with impact
+dust, satisfied smirk.
+
+ROW 7 (HAPPY / PETTED): 4 frames. ^_^ happy squinting eyes. Pink blush squares
+on cheeks. Tiny pixel hearts (pink, black outline) floating near head — growing
+larger and multiplying across frames. Sparkle stars in later frames. Content
+expression.
+
+ROW 8 (ALERT): 4 frames. Surprised expression — eyes wide open (full white
+squares with small black pupils, taller than normal). Mouth open in a small "O".
+Frame 1: standing upright but startled. Frame 2: body shaking left. Frame 3:
+body shaking right. Frame 4: standing upright again. A small yellow exclamation
+mark "!" above the head in frames 2 and 3. Quick urgent vibe — meeting/event
+about to start.
+
+ROW 9 (RECORDING): 4 frames. Character wearing big over-ear pixel headphones
+(gray cups with a black headband connecting them). Standing calmly, gentle bob
+(2px) like idle but slower. Eyes half-closed in concentration. Frames cycle
+through tiny mouth movements as if quietly listening. NO red dot in the sprite
+itself — the app draws a separate pulsing red recording indicator above the
+character at runtime. Just give us the focused, headphones-on listening pose.
+
+ROW 10 (MOM READY / NOTES DONE): 4 frames. Character proudly holding up a
+small folded paper / notebook with a checkmark "✓" on it. Frame 1: paper just
+appeared, character looking at it. Frame 2: paper raised higher, broad smile,
+sparkle stars near the paper. Frame 3: paper at peak height, character winking
+or doing a thumbs-up with the free hand, more sparkles. Frame 4: paper lowered
+slightly, content satisfied smile. Yellow/gold sparkles throughout — the
+"task complete" moment.
+
+STYLE (same as reference): Flat colors, no gradients. 1px black outline around
+character. Hard pixel edges with NO anti-aliasing. Blocky rectangular limbs.
+Same color palette as the reference image in every cell. Full body always
+visible. Magenta background (#FF00FF) — the magenta IS the background, not
+part of the art.
+
+=== FINAL CHECK BEFORE OUTPUTTING ===
+
+Before emitting the image, confirm ALL of these are true:
+  [ ] Width is exactly 256 pixels. Height is exactly 640 pixels.
+  [ ] 10 rows of characters, top to bottom. Count them.
+  [ ] 4 columns of characters, left to right. Count them.
+  [ ] No row labels, headers, borders, gutters, or title text anywhere.
+  [ ] Each character fills its 64×64 cell — head at the top of its cell,
+      feet at the bottom of its cell.
+  [ ] Background is pure #FF00FF magenta, not pink, not purple.
+  [ ] Every character is in 3/4 side view (turned ~30° to their right),
+      NOT face-forward. Every character faces the same direction.
+
+If any check fails, redo the image — do not output a sheet with the wrong grid.
+
+OUTPUT: 256×640 PNG. 10 rows × 4 columns. Magenta background everywhere.

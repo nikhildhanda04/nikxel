@@ -59,7 +59,7 @@ at 10pm stitches it together with:
 - **Your Claude Code session prompts** — pulled from `~/.claude/projects/*/*.jsonl`, timestamped, grouped by project.
 - **Your opencode session prompts** — queried from `~/.local/share/opencode/opencode.db` via `sqlite3`.
 
-It then pipes the bundle to `opencode` with a journaling prompt and writes a
+It then pipes the bundle to your chosen coding agent with a journaling prompt and writes a
 narrative summary to `~/Documents/nikxel/daily/YYYY-MM-DD.md`. Because the
 summary sees your literal prompts to AI agents, it names specific bugs and
 features ("fixed the typing-linger bug, ~50-line diff in StateMachine.swift")
@@ -69,55 +69,110 @@ Sleep gaps are capped at 5 min per sample so a night of sleep doesn't get
 charged to whatever app was frontmost when you closed the laptop. Window
 titles need Accessibility (the same grant the typing animation uses).
 
-## Quick Start
+## Install (macOS)
 
-### Step 1 — Create your character
+Everything is built from source on your own Mac — there's no signed release
+download, so macOS Gatekeeper never gets in the way.
 
-1. Open `sprite_prompt.txt` → copy the **Step 1** prompt.
-2. Paste into [Gemini](https://gemini.google.com) with a photo of yourself.
-3. Save the output as `character.png`.
+### 1. Prerequisites
 
-### Step 2 — Create your sprite sheet
+You need the Xcode Command Line Tools (ships the Swift compiler). Check:
 
-1. Open `sprite_prompt.txt` → copy the **Step 2** prompt.
-2. Paste into Gemini with `character.png` as the reference image.
-3. Save the output as `final_sprite.png` in this folder.
+```sh
+xcode-select -p
+```
 
-The sprite sheet is now 10 rows × 4 columns (256×640) — adds Alert, Recording,
-and MOM-ready poses on top of the original 7. If you previously generated a
-7-row sheet, re-run Step 2 with the new prompt to get the new poses; otherwise
-the new states will render blank.
+If that errors, install them (a few GB, one time):
 
-### Step 3 — Run setup
+```sh
+xcode-select --install
+```
 
-Double-click `setup.command`. This runs `remove_magenta.py` to chroma-key the
-magenta background out of your sprite sheet and installs it into the app,
-then launches Nikxel.
+macOS 13.0 or later. Both Apple Silicon and Intel work — the build produces a
+universal binary.
 
-### Step 4 — Grant permissions
+### 2. Clone and build
 
-On first launch you'll be prompted for a handful of macOS permissions, in
-roughly this order:
+```sh
+git clone https://github.com/nikhildhanda04/nikxel.git
+cd nikxel
+./setup.command
+```
 
-- **Accessibility** — for keystroke detection (overheat / typing animation)
-- **Microphone** — only used while recording
+That compiles `Nikxel.app` and launches it. (You can also double-click
+`setup.command` in Finder, or run `./build.sh && open Nikxel.app`.)
+
+A pixel character appears on your desktop and a **Nikxel** item appears in the
+menu bar.
+
+### 3. Walk through the setup wizard
+
+The wizard opens by itself on first launch. Reopen it any time from the menu
+bar → **Setup Wizard…**. Four steps:
+
+| Step | What it does |
+|---|---|
+| **Your avatar** | Keep the bundled character, or make one that looks like you — see [Make your own avatar](#make-your-own-avatar) below. |
+| **Transcription tools** | Checks for `whisper` and `ffmpeg`. If either is missing it offers **Install with Homebrew**, which opens Terminal and runs the install for you. Skippable — only the recording features need them. |
+| **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated Chrome profile; scan the QR with your phone and the wizard detects the login by itself. Only needed if you want Nikxel replying for you during meetings. |
+| **Choose your coding agent** | Claude Code, OpenCode, or Codex — whichever writes your meeting notes and summaries. Agents that aren't installed are greyed out. |
+
+### 4. Grant permissions
+
+macOS prompts for these as you first use each feature. Deny anything you don't
+want; the rest keeps working.
+
+- **Accessibility** — keystroke detection (the overheat / typing animation)
+- **Microphone** — only while recording
 - **Screen Recording** — required by ScreenCaptureKit to capture system audio
-- **Reminders** — only if you want the Apple Reminders bubbles
+- **Reminders** — only for the Apple Reminders bubbles
 - **Notifications** — for "Notes ready" / "MOM ready" toasts
 
-You can deny anything you don't want; the rest keeps working.
+### Updating
+
+```sh
+git pull
+./build.sh
+```
+
+Your settings, prompts, and custom avatar live in `~/.nikxel/` and survive
+rebuilds.
+
+## Make your own avatar
+
+The bundled sprite sheet works out of the box — this is entirely optional.
+
+1. Menu bar → **Setup Wizard…** → **Your avatar**.
+2. Click **Copy Gemini prompt**. (It's the contents of `sprite_prompt.txt`.)
+3. Paste it into [Gemini](https://gemini.google.com) along with a photo of
+   yourself, and follow its two steps: a 64×64 character first, then the full
+   sprite sheet.
+4. Click **Use my own sprite sheet…** and pick the PNG Gemini gave you.
+
+Nikxel does the rest — it keys out the magenta background, finds the real grid
+(Gemini's sheets are rarely the exact size it was asked for), scales every pose
+by one shared factor so the character doesn't change size between states, and
+installs it to `~/.nikxel/sprites.png`. The avatar swaps live, no restart.
+
+A valid sheet is **10 rows × 4 columns** — one row per state, in this order:
+idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM
+ready. If Gemini returns a different number of rows, the import refuses and
+tells you the count it found, rather than installing sliced characters.
+
+**Reset to default** puts the bundled avatar back.
 
 ## Optional — Recording dependencies
 
 The audio recording / MOM pipeline shells out to a few CLI tools. None of
 these are required for the pixel companion / agent watcher / reminders to
-work — only for the Notes & Meeting features.
+work — only for the Notes & Meeting features. The setup wizard checks for
+`whisper` and `ffmpeg` and can install them for you.
 
 | Tool | Purpose | Install |
 |---|---|---|
 | `whisper` (Python) or `whisper-cli` (whisper.cpp) | Speech-to-text | `pip3 install openai-whisper` or `brew install whisper-cpp` |
 | `ffmpeg` | Mixes mic + system audio in Notes mode | `brew install ffmpeg` |
-| `opencode` | Runs the prompt → markdown step | See [opencode.ai](https://opencode.ai) |
+| A coding agent | Turns the transcript into Markdown notes | [Claude Code](https://claude.com/claude-code), [OpenCode](https://opencode.ai), or Codex — pick yours in the setup wizard |
 
 Prompt templates live at `~/.nikxel/prompts/notes.md` and
 `~/.nikxel/prompts/meeting.md` after the first run — edit them to taste; the
@@ -135,14 +190,16 @@ See in-app prompt for the full step-by-step. Calendar access is read-only.
 
 ## Customizing
 
-### Make your own character
-1. Re-do Steps 1–2 with a new photo.
-2. Replace `final_sprite.png` with the new output.
-3. Re-run `setup.command`.
+### Change your avatar
+Menu bar → **Setup Wizard…** → **Your avatar**. See
+[Make your own avatar](#make-your-own-avatar).
 
-### Add an AI agent to detect
-Edit `src/AgentMonitor.swift`, add the process name to `agentNames`, then
-rebuild with `./build.sh`.
+### Switch which coding agent writes your notes
+Menu bar → **Setup Wizard…** → **Choose your coding agent**.
+
+### Add an AI agent to the "thinking" detection
+Edit `src/OpenCodeMonitor.swift`, add the process name to the watched list,
+then rebuild with `./build.sh`.
 
 ### Supported agents (autodetected)
 opencode · claude · claude-code · codex · cursor · antigravity · kiro
@@ -155,9 +212,10 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 - **Keystroke detection**: macOS `CGEventTap` (needs Accessibility)
 - **Audio capture**: `ScreenCaptureKit` for system audio + `AVAudioEngine` for mic, mixed via `ffmpeg` (Notes) or kept separate (Meeting)
 - **Transcription**: shells out to `whisper` / `whisper.cpp`, plain text for Notes, SRT for Meeting (so timestamps can interleave speakers)
-- **MOM generation**: shells out to `opencode` with a stdin prompt; output is Markdown
+- **MOM generation**: shells out to your chosen agent (Claude Code / OpenCode / Codex) in headless one-shot mode; output is Markdown. The raw transcript is written to disk *before* generation runs, so a failed or timed-out summary never costs you the transcript.
+- **Sprite import**: chroma-keys the magenta out, detects the row/column grid from background gaps instead of assuming an even division, and scales all 40 frames by one shared factor
 - **Calendar / reminders**: Google Calendar v3 REST API on a 30 s poll; EventKit for Apple Reminders with `EKEventStoreChanged` notifications + `NSWorkspace.didWake` for wake-from-sleep refresh
-- **Daily summary**: 15 s `NSWorkspace.frontmostApplication` + AX `kAXFocusedWindowAttribute`/`kAXTitleAttribute` polling → JSONL day-log; aggregated at 10 pm with `git log`/`git diff`, today's MOMs, Claude Code JSONL session transcripts, and `sqlite3` queries against the opencode database; narrative written by `opencode`
+- **Daily summary**: 15 s `NSWorkspace.frontmostApplication` + AX `kAXFocusedWindowAttribute`/`kAXTitleAttribute` polling → JSONL day-log; aggregated at 10 pm with `git log`/`git diff`, today's MOMs, Claude Code JSONL session transcripts, and `sqlite3` queries against the opencode database; narrative written by your chosen coding agent
 
 ## Where files live
 
@@ -171,12 +229,15 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 | Raw recordings (kept until processed) | `~/.nikxel/recordings/` |
 | MOM workspace / last-run logs | `~/.nikxel/momworkspace/` |
 | Google OAuth creds & token | `~/.nikxel/google_creds.json`, `~/.nikxel/google_token.json` |
+| Your custom avatar (if you made one) | `~/.nikxel/sprites.png` |
+| Settings (agent choice, name, language) | `~/.nikxel/settings.json` |
 
 ## Requirements
 
 - macOS 13.0 or later (Reminders full-access API uses macOS 14+ when available, falls back gracefully on 13)
-- Python 3 with Pillow (`pip3 install Pillow`) — for sprite setup
-- Optional: `whisper`, `ffmpeg`, `opencode` for the recording / MOM features
+- Xcode Command Line Tools (`xcode-select --install`) — to build
+- Optional: `whisper` + `ffmpeg` and a coding agent, for the recording / MOM
+  features. The setup wizard installs the first two for you.
 
 ## License
 

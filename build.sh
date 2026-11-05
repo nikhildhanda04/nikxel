@@ -5,9 +5,13 @@ mkdir -p Nikxel.app/Contents/MacOS Nikxel.app/Contents/Resources
 mkdir -p build/arm64 build/x86_64
 
 # Ship the pre-made, tested sprite sheet so a fresh clone has a working avatar
-# without going through setup.command's custom-avatar flow. setup.command
-# overwrites this file in-place if you want to make your own avatar instead.
+# straight away. Making your own is optional and happens in-app, via the setup
+# wizard's "Your avatar" step, which writes to ~/.nikxel/sprites.png instead of
+# touching this file.
 [ -f Nikxel.app/Contents/Resources/sprites.png ] || cp sprites.png Nikxel.app/Contents/Resources/sprites.png
+
+# The onboarding "Your avatar" step copies this to the clipboard for Gemini.
+cp sprite_prompt.txt Nikxel.app/Contents/Resources/sprite_prompt.txt
 
 FRAMEWORKS=(-framework Cocoa -framework CoreGraphics -framework ApplicationServices -framework QuartzCore -framework ScreenCaptureKit -framework AVFoundation -framework AudioToolbox -framework CoreMedia -framework Network -framework UserNotifications -framework EventKit)
 

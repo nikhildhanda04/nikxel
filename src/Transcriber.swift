@@ -44,7 +44,7 @@ class Transcriber {
         }
     }
 
-    private func findBinary() -> String? {
+    func findBinary() -> String? {
         for path in candidateBinaries where FileManager.default.isExecutableFile(atPath: path) {
             return path
         }

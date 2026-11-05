@@ -11,6 +11,89 @@ private final class OutputBuffer {
     func setErr(_ d: Data) { lock.lock(); _err = d; lock.unlock() }
 }
 
+// Per-agent CLI shape: where to find the binary, how to invoke it for a
+// one-shot headless text-generation prompt, and how to pull plain text back
+// out of whatever format that agent prints.
+private struct AgentBackend {
+    let candidatePaths: (String) -> [String]
+    let whichName: String
+    let buildArgs: (String) -> [String]
+    let usesStdin: Bool
+    let parseOutput: (Data) -> String?
+
+    static func backend(for agent: CodingAgent) -> AgentBackend {
+        switch agent {
+        case .claude:
+            return AgentBackend(
+                candidatePaths: { home in [
+                    "/opt/homebrew/bin/claude",
+                    "\(home)/.claude/local/claude",
+                    "\(home)/.local/bin/claude",
+                    "/usr/local/bin/claude"
+                ]},
+                whichName: "claude",
+                // -p is headless one-shot. Empty --allowed-tools keeps it pure
+                // text generation: these prompts need no file or shell access,
+                // and a tool call that stops for a permission prompt would
+                // hang a GUI-spawned process with nobody to answer it.
+                buildArgs: { _ in ["-p", "--allowed-tools", ""] },
+                usesStdin: true,
+                parseOutput: { String(data: $0, encoding: .utf8) }
+            )
+        case .opencode:
+            return AgentBackend(
+                candidatePaths: { home in [
+                    "\(home)/.opencode/bin/opencode",
+                    "/opt/homebrew/bin/opencode",
+                    "\(home)/.local/bin/opencode",
+                    "/usr/local/bin/opencode"
+                ]},
+                whichName: "opencode",
+                // `opencode run` takes the message as a positional arg, not
+                // stdin. --format json gives newline-delimited event objects
+                // instead of the human-readable banner + reply that the
+                // default format prints (which would pollute the saved .md).
+                buildArgs: { prompt in ["run", prompt, "--format", "json"] },
+                usesStdin: false,
+                parseOutput: parseOpenCodeNDJSON
+            )
+        case .codex:
+            // `codex exec <prompt>` is the expected non-interactive shape,
+            // but this is UNVERIFIED — the local codex install is broken
+            // (missing @openai/codex-darwin-arm64), so there was no working
+            // binary to test the exact flags/output format against. Confirm
+            // and adjust once a working codex CLI is available.
+            return AgentBackend(
+                candidatePaths: { home in [
+                    "/opt/homebrew/bin/codex",
+                    "\(home)/.local/bin/codex",
+                    "/usr/local/bin/codex"
+                ]},
+                whichName: "codex",
+                buildArgs: { prompt in ["exec", prompt] },
+                usesStdin: false,
+                parseOutput: { String(data: $0, encoding: .utf8) }
+            )
+        }
+    }
+
+    // opencode's --format json prints one JSON object per line; the reply
+    // text is spread across one or more {"type":"text",...} events.
+    private static func parseOpenCodeNDJSON(_ data: Data) -> String? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        var out = ""
+        for line in text.split(separator: "\n") {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  obj["type"] as? String == "text",
+                  let part = obj["part"] as? [String: Any],
+                  let t = part["text"] as? String else { continue }
+            out += t
+        }
+        return out.isEmpty ? nil : out
+    }
+}
+
 class MOMGenerator {
     enum MOMError: Error {
         case agentNotFound
@@ -18,17 +101,7 @@ class MOMGenerator {
         case generationFailed(String)
     }
 
-    private var candidateBinaries: [String] {
-        let home = NSHomeDirectory()
-        return [
-            "/opt/homebrew/bin/claude",
-            "\(home)/.claude/local/claude",
-            "\(home)/.local/bin/claude",
-            "/usr/local/bin/claude"
-        ]
-    }
-
-    // Upper bound on a single claude run. Generation normally takes well under
+    // Upper bound on a single agent run. Generation normally takes well under
     // a minute; anything past this is a hang, not slow work.
     private static let timeoutSec: Double = 600
 
@@ -64,8 +137,9 @@ class MOMGenerator {
                 // claude failure/timeout/missing-binary still leaves the full
                 // transcript on disk instead of losing it with the recording.
                 try? self.saveTranscript(content: trimmed, mode: mode, startedAt: startedAt)
-                guard let bin = self.findClaude() else { throw MOMError.agentNotFound }
-                let output = try self.runTemplate(binary: bin, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec)
+                let agent = NikxelSettings.connectedAgent
+                guard let bin = self.findBinary(for: agent) else { throw MOMError.agentNotFound }
+                let output = try self.runTemplate(binary: bin, agent: agent, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec)
                 let outURL = try self.saveOutput(content: output, mode: mode, startedAt: startedAt)
                 completion(.success(outURL))
             } catch {
@@ -74,11 +148,16 @@ class MOMGenerator {
         }
     }
 
-    private func findClaude() -> String? {
-        for path in candidateBinaries where FileManager.default.isExecutableFile(atPath: path) { return path }
+    // Resolves the installed binary for `agent`, checking common install
+    // locations first and falling back to a login-shell `which` (same
+    // approach for every agent — only the candidate paths/binary name differ).
+    func findBinary(for agent: CodingAgent) -> String? {
+        let backend = AgentBackend.backend(for: agent)
+        let home = NSHomeDirectory()
+        for path in backend.candidatePaths(home) where FileManager.default.isExecutableFile(atPath: path) { return path }
         let task = Process()
         task.launchPath = "/bin/zsh"
-        task.arguments = ["-ilc", "which claude 2>/dev/null"]
+        task.arguments = ["-ilc", "which \(backend.whichName) 2>/dev/null"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()
@@ -95,7 +174,7 @@ class MOMGenerator {
         return promptsDir.appendingPathComponent(name)
     }
 
-    private func runTemplate(binary: String, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int) throws -> String {
+    private func runTemplate(binary: String, agent: CodingAgent, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int) throws -> String {
         let promptURL = promptPath(for: mode)
         let template = (try? String(contentsOf: promptURL, encoding: .utf8)) ?? defaultPrompt(for: mode)
 
@@ -108,17 +187,19 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
 
-        return try executeClaude(binary: binary, prompt: prompt)
+        return try executeAgent(binary: binary, agent: agent, prompt: prompt)
     }
 
     // Run an arbitrary prompt through the agent. Used by DayLogger for EOD
     // summaries and by LLMResponder for chat replies.
     func runPrompt(_ prompt: String) throws -> String {
-        guard let bin = findClaude() else { throw MOMError.agentNotFound }
-        return try executeClaude(binary: bin, prompt: prompt)
+        let agent = NikxelSettings.connectedAgent
+        guard let bin = findBinary(for: agent) else { throw MOMError.agentNotFound }
+        return try executeAgent(binary: bin, agent: agent, prompt: prompt)
     }
 
-    private func executeClaude(binary: String, prompt: String) throws -> String {
+    private func executeAgent(binary: String, agent: CodingAgent, prompt: String) throws -> String {
+        let backend = AgentBackend.backend(for: agent)
         let promptDump = workspace.appendingPathComponent("last_prompt.txt")
         let stdoutDump = workspace.appendingPathComponent("last_stdout.log")
         let stderrDump = workspace.appendingPathComponent("last_stderr.log")
@@ -131,13 +212,9 @@ class MOMGenerator {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: binary)
         task.currentDirectoryURL = workspace
-        // -p is headless one-shot. Empty --allowed-tools keeps it pure text
-        // generation: these prompts need no file or shell access, and a tool
-        // call that stops for a permission prompt would hang a GUI-spawned
-        // process with nobody to answer it.
-        task.arguments = ["-p", "--allowed-tools", ""]
+        task.arguments = backend.buildArgs(prompt)
         var env = ProcessInfo.processInfo.environment
-        let extraPaths = ["/opt/homebrew/bin", "\(NSHomeDirectory())/.claude/local", "\(NSHomeDirectory())/.local/bin", "/usr/local/bin", "/opt/local/bin"]
+        let extraPaths = ["/opt/homebrew/bin", "\(NSHomeDirectory())/.claude/local", "\(NSHomeDirectory())/.opencode/bin", "\(NSHomeDirectory())/.local/bin", "/usr/local/bin", "/opt/local/bin"]
         env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).filter { !$0.isEmpty }.joined(separator: ":")
         task.environment = env
         task.standardInput = inPipe
@@ -164,7 +241,7 @@ class MOMGenerator {
         pump(outPipe.fileHandleForReading) { $0.setOut($1) }
         pump(errPipe.fileHandleForReading) { $0.setErr($1) }
         DispatchQueue.global(qos: .utility).async {
-            if let data = prompt.data(using: .utf8) {
+            if backend.usesStdin, let data = prompt.data(using: .utf8) {
                 try? inPipe.fileHandleForWriting.write(contentsOf: data)
             }
             try? inPipe.fileHandleForWriting.close()
@@ -190,7 +267,7 @@ class MOMGenerator {
         try? errData.write(to: stderrDump)
 
         if timedOut {
-            throw MOMError.generationFailed("claude did not finish within \(Int(Self.timeoutSec / 60)) min and was killed.\nCheck that `claude -p` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
+            throw MOMError.generationFailed("\(backend.whichName) did not finish within \(Int(Self.timeoutSec / 60)) min and was killed.\nCheck that `\(backend.whichName)` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
         }
 
         guard task.terminationStatus == 0 else {
@@ -198,13 +275,13 @@ class MOMGenerator {
             let snippet = errStr.isEmpty ? "(no stderr; exit \(task.terminationStatus))" : String(errStr.prefix(500))
             throw MOMError.generationFailed("\(snippet)\n\nLogs: \(workspace.path)")
         }
-        guard let out = String(data: outData, encoding: .utf8) else {
-            throw MOMError.generationFailed("non-utf8 output\n\nLogs: \(workspace.path)")
+        guard let out = backend.parseOutput(outData) else {
+            throw MOMError.generationFailed("non-utf8 or unparseable output\n\nLogs: \(workspace.path)")
         }
         let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             let errStr = String(data: errData, encoding: .utf8) ?? ""
-            throw MOMError.generationFailed("empty output from opencode\n\(errStr.prefix(300))\n\nLogs: \(workspace.path)")
+            throw MOMError.generationFailed("empty output from \(backend.whichName)\n\(errStr.prefix(300))\n\nLogs: \(workspace.path)")
         }
         return out
     }

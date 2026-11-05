@@ -95,6 +95,12 @@ class NikxelView: NSView, StateMachineDelegate {
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.magnificationFilter = .nearest
         loadSprites()
+        NotificationCenter.default.addObserver(
+            forName: NikxelSprites.changedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.loadSprites()
+            self?.needsDisplay = true
+        }
         #if HAS_LIQUID_GLASS
         setupGlassContainer()
         #endif
@@ -126,7 +132,7 @@ class NikxelView: NSView, StateMachineDelegate {
         return NSFont.systemFont(ofSize: size, weight: bold ? .semibold : .medium)
     }
     required init?(coder: NSCoder) { fatalError() }
-    deinit { animTimer?.invalidate() }
+    deinit { animTimer?.invalidate(); NotificationCenter.default.removeObserver(self) }
 
     func loadSprites() {
         if let path = Bundle.main.path(forResource: "nikxel_avatar", ofType: "png"),
@@ -136,8 +142,13 @@ class NikxelView: NSView, StateMachineDelegate {
             fb.lockFocus(); NSColor.systemPink.setFill(); NSRect(x: 0, y: 0, width: 64, height: 64).fill(); fb.unlockFocus()
             fallbackAvatar = fb
         }
-        if let path = Bundle.main.path(forResource: "sprites", ofType: "png"),
+        if let path = NikxelSprites.activePath,
            let sheet = NSImage(contentsOfFile: path) { spriteSheet = sheet }
+        // A swapped sheet invalidates the cached per-frame alpha mask, which is
+        // what hit-testing uses -- stale masks would make the new avatar
+        // clickable in the old one's silhouette.
+        alphaMask = nil
+        alphaMaskKey = -1
     }
 
     func stateRow(_ s: NikxelState) -> Int {

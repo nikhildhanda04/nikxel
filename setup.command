@@ -1,48 +1,34 @@
 #!/bin/bash
+# One-shot setup: build Nikxel from source and launch it. Everything else --
+# your own avatar, WhatsApp, which coding agent to use -- happens in the setup
+# wizard that opens on first launch.
 cd "$(dirname "$0")"
+set -e
+
 echo "Nikxel Setup"
 echo "============"
 echo ""
 
-# Check for sprite sheet
-if [ ! -f "final_sprite.png" ]; then
-    echo "ERROR: final_sprite.png not found!"
-    echo ""
-    echo "Please:"
-    echo "1. Open sprite_prompt.txt"
-    echo "2. Copy the prompt → paste into Gemini with your photo"
-    echo "3. Save the output as 'final_sprite.png' in this folder"
-    echo "4. Run setup.command again"
-    echo ""
+if ! xcode-select -p &> /dev/null; then
+    echo "ERROR: Xcode Command Line Tools not found."
+    echo "Run this first, then re-run setup.command:"
+    echo "    xcode-select --install"
     exit 1
 fi
 
-# Check Python
-if ! command -v python3 &> /dev/null; then
-    echo "ERROR: python3 not found. Install Python 3 first."
-    exit 1
-fi
-
-# Check Pillow
-python3 -c "from PIL import Image" 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "ERROR: Pillow not installed."
-    echo "Run: pip3 install Pillow"
-    exit 1
-fi
-
-# Process sprite
-echo "Processing final_sprite.png..."
-python3 remove_magenta.py final_sprite.png
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Sprite processing failed."
-    exit 1
-fi
+echo "Building Nikxel.app (this takes a minute on first run)..."
+./build.sh
 
 echo ""
 echo "Launching Nikxel..."
 open Nikxel.app
+
 echo ""
-echo "Done! Look for the pixel character on your screen."
-echo "Grant Accessibility permission if prompted (for typing detection)."
+echo "Done. The setup wizard will walk you through the rest."
+echo "Look for the pixel character on your screen, and Nikxel in the menu bar."
+echo ""
+echo "macOS will ask for permissions as you use each feature:"
+echo "  Accessibility     - typing animation"
+echo "  Microphone        - only while recording"
+echo "  Screen Recording  - required to capture system audio"
+echo "  Reminders         - only for the reminder bubbles"

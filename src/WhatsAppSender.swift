@@ -166,22 +166,27 @@ enum WhatsAppSender {
     private static func pressEnter() { postKey(36, mask: []) }
 
     private static func postKey(_ keyCode: CGKeyCode, mask: CGEventFlags) {
+        // No browser running means no WhatsApp to type into. The old fallback
+        // posted to the global HID tap instead, which fired Return into
+        // whatever app happened to be focused -- it was walking Nikxel's own
+        // onboarding window through its default buttons.
         let pid = whatsappPID
+        guard pid != 0 else { return }
         guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
         let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
         let up   = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
         down?.flags = mask; up?.flags = mask
-        if pid != 0 { down?.postToPid(pid); up?.postToPid(pid) }
-        else        { down?.post(tap: .cghidEventTap); up?.post(tap: .cghidEventTap) }
+        down?.postToPid(pid); up?.postToPid(pid)
     }
 
     private static func postMouseClick(x: CGFloat, y: CGFloat) {
+        // Same reason as postKey: never click into an unrelated foreground app.
         let pid = whatsappPID
+        guard pid != 0 else { return }
         guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
         let pt = CGPoint(x: x, y: y)
         let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left)
         let up   = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp,   mouseCursorPosition: pt, mouseButton: .left)
-        if pid != 0 { down?.postToPid(pid); up?.postToPid(pid) }
-        else        { down?.post(tap: .cghidEventTap); up?.post(tap: .cghidEventTap) }
+        down?.postToPid(pid); up?.postToPid(pid)
     }
 }

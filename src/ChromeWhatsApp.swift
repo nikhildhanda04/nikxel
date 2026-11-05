@@ -124,6 +124,20 @@ enum ChromeWhatsApp {
 
     // MARK: - High-level API
 
+    /// True once WhatsApp Web has a logged-in chat list visible (as opposed
+    /// to showing the QR code or still loading). Used by the onboarding
+    /// wizard to poll for "scan complete" without the user clicking anything.
+    static func isLoggedIn() -> Bool {
+        guard let c = ensureCDP() else { return false }
+        let js = """
+        (function(){
+            if (document.querySelector('canvas[aria-label], div[data-ref]')) return 'false';
+            return !!document.querySelector('#pane-side, [aria-label="Chat list"]') ? 'true' : 'false';
+        })()
+        """
+        return c.eval(js) == "true"
+    }
+
     /// Get all unread chats from the sidebar.
     static func unreadChats() -> [WAUnreadChat] {
         guard let c = ensureCDP() else { return [] }

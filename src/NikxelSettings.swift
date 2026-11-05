@@ -1,5 +1,31 @@
 import Foundation
 
+/// The CLI-based coding agent Nikxel shells out to for MOM/notes generation
+/// and chat replies (see MOMGenerator's per-agent `AgentBackend`).
+enum CodingAgent: String, Codable, CaseIterable, Hashable {
+    case claude
+    case opencode
+    case codex
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .opencode: return "OpenCode"
+        case .codex: return "Codex"
+        }
+    }
+
+    /// Process names to look for when checking "is this agent running" —
+    /// mirrors AgentMonitor.swift's cosmetic `ps aux` detection list.
+    var processNames: [String] {
+        switch self {
+        case .claude: return ["claude", "claude-code"]
+        case .opencode: return ["opencode"]
+        case .codex: return ["codex"]
+        }
+    }
+}
+
 /// User-editable preferences shared across the meeting/notes/chat/daily-summary
 /// LLM pipelines. Backed by a small JSON file (not UserDefaults) so it's easy
 /// for the user to open and edit directly, same as `bot_personality.txt`.
@@ -8,6 +34,9 @@ enum NikxelSettings {
         var userName: String?
         var language: String?
         var waOwnName: String?
+        var connectedAgent: String?
+        var whatsappConnected: Bool?
+        var onboardingCompleted: Bool?
     }
 
     private static let fileURL: URL = {
@@ -73,4 +102,50 @@ enum NikxelSettings {
         }
         return "Always write your output in \(language), regardless of what language the source content is in. Translate as needed."
     }
+
+    /// Which CLI agent MOMGenerator shells out to. Defaults to Claude Code —
+    /// the only backend that worked before the onboarding agent picker existed.
+    static var connectedAgent: CodingAgent {
+        get { CodingAgent(rawValue: load().connectedAgent ?? "") ?? .claude }
+        set { save { $0.connectedAgent = newValue.rawValue } }
+    }
+
+    /// Whether the onboarding wizard has confirmed a WhatsApp Web login in
+    /// the bot's isolated Chrome profile. Purely informational — the actual
+    /// connection lives in the Chrome profile dir; this just drives UI state.
+    static var whatsappConnected: Bool {
+        get { load().whatsappConnected ?? false }
+        set { save { $0.whatsappConnected = newValue } }
+    }
+
+    /// Gates auto-showing the onboarding wizard on launch.
+    static var onboardingCompleted: Bool {
+        get { load().onboardingCompleted ?? false }
+        set { save { $0.onboardingCompleted = newValue } }
+    }
+}
+
+/// Where the running avatar's sprite sheet comes from. The bundled sheet is the
+/// default; dropping one at ~/.nikxel/sprites.png overrides it, which is what
+/// the onboarding "use your own avatar" step writes.
+enum NikxelSprites {
+    /// Sheets are a 4-column x 10-row grid of 64x64 frames (one row per state,
+    /// see NikxelView.stateRow) -- i.e. 256x640.
+    static let frameSize = 64
+    static let cols = 4
+    static let rows = 10
+
+    static let customURL: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".nikxel/sprites.png")
+
+    static var hasCustom: Bool { FileManager.default.isReadableFile(atPath: customURL.path) }
+
+    static var activePath: String? {
+        if hasCustom { return customURL.path }
+        return Bundle.main.path(forResource: "sprites", ofType: "png")
+    }
+
+    /// Posted after the custom sheet is installed or removed so the live avatar
+    /// picks it up without an app restart.
+    static let changedNotification = Notification.Name("NikxelSpritesChanged")
 }

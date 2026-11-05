@@ -21,7 +21,7 @@ class NikxelWindow: NSWindow {
         backgroundColor = .clear
         isOpaque = false
         hasShadow = false
-        ignoresMouseEvents = false
+        ignoresMouseEvents = true
         isMovableByWindowBackground = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
@@ -41,6 +41,13 @@ class NikxelWindow: NSWindow {
             if let id = view.hitTestReminderBubble(at: pInView) {
                 view.onReminderTapped?(id)
                 view.dismissReminder(id: id)
+                return
+            }
+            // Only engage drag / double-click when the click actually lands on the
+            // character. Clicks in the surrounding transparent padding are ignored
+            // so they don't accidentally pick Nikxel up.
+            if !view.hitTestAvatar(at: pInView) {
+                dragging = false
                 return
             }
         }

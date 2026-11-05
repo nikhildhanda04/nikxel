@@ -43,6 +43,16 @@ class NikxelView: NSView, StateMachineDelegate {
     private var reminderTargetOpacity: CGFloat = 0
     var onReminderDismissed: (() -> Void)?
 
+    // Meeting indicator (yellow dot)
+    var isInMeeting = false
+    private var meetingDotOpacity: CGFloat = 0
+    private var meetingDotTargetOpacity: CGFloat = 0
+
+    // Active texter bubble (chatbot)
+    var activeTexterName: String? = nil
+    private var texterOpacity: CGFloat = 0
+    private var texterTargetOpacity: CGFloat = 0
+
     // Recording timer
     var recordingStartedAt: TimeInterval? = nil
 
@@ -60,6 +70,24 @@ class NikxelView: NSView, StateMachineDelegate {
     private let reminderFadeOut: TimeInterval = 0.4
     private let reminderFadeIn: TimeInterval = 0.3
 
+    // Liquid Glass bubble views (macOS 26+). Gated behind HAS_LIQUID_GLASS so the
+    // app still builds against pre-macOS-26 SDKs (where these types don't exist);
+    // without the flag the bubbles simply don't render.
+    #if HAS_LIQUID_GLASS
+    private var glassContainer: NSGlassEffectContainerView!
+    private var reminderGlassViews: [String: NSGlassEffectView] = [:]
+    private var calendarGlassView: NSGlassEffectView?
+    private var texterGlassView: NSGlassEffectView?
+    private var overflowGlassView: NSGlassEffectView?
+    #endif
+
+    // Cloud puff (appearance animation)
+    private var puffActive = false
+    private var puffStart: TimeInterval = 0
+    private let puffDuration: TimeInterval = 1.3
+    private let puffRevealAt: CGFloat = 0.54 // 0.54 * 1.3 ≈ 0.7s of dust before Nikxel
+    private var avatarHiddenByPuff = false
+
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         super.init(frame: NSRect(x: 0, y: 0, width: 340, height: 340))
@@ -67,10 +95,35 @@ class NikxelView: NSView, StateMachineDelegate {
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.magnificationFilter = .nearest
         loadSprites()
+        #if HAS_LIQUID_GLASS
+        setupGlassContainer()
+        #endif
         stateMachine.delegate = self
         lastTick = CACurrentMediaTime()
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60, repeats: true) { [weak self] _ in self?.tick() }
         needsDisplay = true
+    }
+
+    #if HAS_LIQUID_GLASS
+    private func setupGlassContainer() {
+        let container = NSGlassEffectContainerView(frame: bounds)
+        container.autoresizingMask = [.width, .height]
+        // Spacing controls the proximity at which adjacent glass views fluidly
+        // merge into one blob (the "liquid" in Liquid Glass). Set wider than the
+        // pixel gap between stacked bubbles so they actually merge on screen.
+        container.spacing = 24
+        container.contentView = NSView(frame: bounds)
+        container.contentView?.autoresizingMask = [.width, .height]
+        addSubview(container)
+        glassContainer = container
+    }
+    #endif
+
+    private func dmFont(size: CGFloat, bold: Bool = false) -> NSFont {
+        let name = bold ? "DMSans-Bold" : "DMSans-Medium"
+        if let f = NSFont(name: name, size: size) { return f }
+        // Fallback to system if bundled font failed to register
+        return NSFont.systemFont(ofSize: size, weight: bold ? .semibold : .medium)
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { animTimer?.invalidate() }
@@ -105,6 +158,16 @@ class NikxelView: NSView, StateMachineDelegate {
     func triggerSpringBack() { springActive = true; springStart = CACurrentMediaTime() }
     func recordKeystroke() { keyTimestamps.append(CACurrentMediaTime()) }
 
+    /// Pixel dust cloud appearance. Avatar is hidden for the first ~45% of
+    /// the animation, then pops in with a small spring-back bounce while the
+    /// dust continues outward and fades.
+    func triggerPuff() {
+        puffActive = true
+        puffStart = CACurrentMediaTime()
+        avatarHiddenByPuff = true
+        needsDisplay = true
+    }
+
     func pushReminder(id: String, title: String) {
         // Dedup: ignore if already on screen.
         if reminderBubbles.contains(where: { $0.id == id }) { return }
@@ -123,6 +186,83 @@ class NikxelView: NSView, StateMachineDelegate {
         for b in reminderBubbles.reversed() where b.hitRect.contains(p) { return b.id }
         return nil
     }
+
+    // MARK: - Avatar hit testing
+    // The view is 340x340 but the character only occupies a 156pt sprite in the
+    // centre. We alpha-sample the current sprite frame so a click only counts as
+    // "on Nikxel" when it lands on an opaque pixel — clicks in the surrounding
+    // padding (or the transparent corners of the sprite) are ignored.
+    private var alphaMask: [UInt8]?
+    private var alphaMaskKey: Int = -1
+    // A few points of slack around opaque pixels so clicking the very edge of the
+    // character still registers, without re-engaging the empty padding.
+    private let hitTolerancePx: Int = 2
+
+    private func ensureAlphaMask() -> [UInt8]? {
+        guard let sheet = spriteSheet,
+              let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let mf = (currentState == .dragging) ? 1 : frameCount
+        let col = frameIndex % mf
+        let row = stateRow(currentState)
+        let key = row * 100 + col
+        if key == alphaMaskKey, let m = alphaMask { return m }
+
+        guard let cropped = cg.cropping(to: CGRect(x: col * 64, y: row * 64, width: 64, height: 64)) else { return nil }
+        var buf = [UInt8](repeating: 0, count: 64 * 64 * 4)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let cctx = CGContext(
+            data: &buf, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 64 * 4,
+            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        cctx.interpolationQuality = .none
+        // Drawn the same way as draw(): an unflipped bottom-left context, so the
+        // buffer orientation matches what's on screen (scaled down to 64x64).
+        cctx.draw(cropped, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+        alphaMask = buf
+        alphaMaskKey = key
+        return buf
+    }
+
+    /// Make the transparent padding around Nikxel click-through: only the
+    /// character and its interactive bubbles consume mouse events, so clicks
+    /// anywhere else fall through to whatever app is behind the window.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let p = convert(point, from: superview)
+        if hitTestReminderBubble(at: p) != nil { return self }
+        if hitTestAvatar(at: p) { return self }
+        return nil
+    }
+
+    /// True only when `p` (in view coords) lands on an opaque pixel of the
+    /// current sprite frame, matching the live transform (facing/scale/offset).
+    func hitTestAvatar(at p: NSPoint) -> Bool {
+        if avatarHiddenByPuff { return false }
+        let cx = bounds.midX, cy = bounds.midY
+        let signX: CGFloat = facingRight ? 1 : -1
+        let s = max(scale, 0.01)
+        // Invert the draw transform back into sprite-rect space [0, charSize].
+        let qx = (p.x - (cx + wiggle)) / (signX * s) + halfChar
+        let qy = (p.y - (cy + bounce)) / s + halfChar
+        guard qx >= 0, qx <= charSize, qy >= 0, qy <= charSize else { return false }
+
+        // No sprite sheet -> fall back to the bounding box.
+        guard let mask = ensureAlphaMask() else { return true }
+
+        // Map into the 64x64 mask. qy is measured from the bottom of the rect;
+        // bitmap row 0 is the top, hence the (63 - row) flip.
+        let mx = Int(qx / charSize * 64)
+        let myFromBottom = Int(qy / charSize * 64)
+        let baseCol = min(63, max(0, mx))
+        let baseRow = min(63, max(0, 63 - myFromBottom))
+        for dr in -hitTolerancePx...hitTolerancePx {
+            for dc in -hitTolerancePx...hitTolerancePx {
+                let r = baseRow + dr, c = baseCol + dc
+                guard r >= 0, r < 64, c >= 0, c < 64 else { continue }
+                if mask[(r * 64 + c) * 4 + 3] > 24 { return true }
+            }
+        }
+        return false
+    }
     func isOverheated() -> Bool {
         let count = keyTimestamps.filter { CACurrentMediaTime() - $0 < wpmWindow }.count
         return Double(count) / 5.0 * (60.0 / wpmWindow) > overheatWPM
@@ -136,6 +276,20 @@ class NikxelView: NSView, StateMachineDelegate {
         // Always face cursor
         if currentState != .dragging {
             stateMachine.updateMouse(NSEvent.mouseLocation)
+        }
+
+        // Let clicks fall through to apps behind us whenever the cursor isn't on
+        // Nikxel or one of the bubbles. Polled here (not via hitTest) because
+        // ignoresMouseEvents=true stops the window receiving events at all, so we
+        // must decide from the global cursor position each frame.
+        if let win = window {
+            let screenPt = NSEvent.mouseLocation
+            let viewPt = NSPoint(x: screenPt.x - win.frame.minX,
+                                 y: screenPt.y - win.frame.minY)
+            let interactive = currentState == .dragging
+                || hitTestReminderBubble(at: viewPt) != nil
+                || hitTestAvatar(at: viewPt)
+            win.ignoresMouseEvents = !interactive
         }
 
         // Overheat decay (prune old keystrokes)
@@ -223,6 +377,24 @@ class NikxelView: NSView, StateMachineDelegate {
             reminderOpacity = max(0, reminderOpacity - CGFloat(dt) * reminderFadeSpeed)
         }
 
+        // Active texter bubble fade
+        texterTargetOpacity = (activeTexterName != nil) ? 1 : 0
+        let texterFadeSpeed: CGFloat = 6.0
+        if texterTargetOpacity > texterOpacity {
+            texterOpacity = min(1, texterOpacity + CGFloat(dt) * texterFadeSpeed)
+        } else if texterTargetOpacity < texterOpacity {
+            texterOpacity = max(0, texterOpacity - CGFloat(dt) * texterFadeSpeed)
+        }
+
+        // Meeting yellow dot fade
+        meetingDotTargetOpacity = isInMeeting ? 1 : 0
+        let meetingDotFadeSpeed: CGFloat = 4.0
+        if meetingDotTargetOpacity > meetingDotOpacity {
+            meetingDotOpacity = min(1, meetingDotOpacity + CGFloat(dt) * meetingDotFadeSpeed)
+        } else if meetingDotTargetOpacity < meetingDotOpacity {
+            meetingDotOpacity = max(0, meetingDotOpacity - CGFloat(dt) * meetingDotFadeSpeed)
+        }
+
         // Reminders bubbles fade + GC
         if !reminderBubbles.isEmpty {
             var changed = false
@@ -264,6 +436,12 @@ class NikxelView: NSView, StateMachineDelegate {
                 bubbleScale = bubbleOpacity
             }
         }
+
+        // Reconcile Liquid Glass bubble views with model state.
+        #if HAS_LIQUID_GLASS
+        layoutBubbles(cx: bounds.midX, cy: bounds.midY)
+        #endif
+
         needsDisplay = true
     }
 
@@ -298,8 +476,10 @@ class NikxelView: NSView, StateMachineDelegate {
             ctx.restoreGState()
         }
 
-        // Character
-        if let sheet = spriteSheet {
+        // Character (skipped while hidden by the puff)
+        if avatarHiddenByPuff {
+            // fall through to draw the dust cloud below
+        } else if let sheet = spriteSheet {
             ctx.saveGState()
             ctx.translateBy(x: cx + wiggle, y: cy + bounce)
             ctx.scaleBy(x: facingRight ? scale : -scale, y: scale)
@@ -321,7 +501,10 @@ class NikxelView: NSView, StateMachineDelegate {
                 ctx.draw(cg, in: CGRect(x: 0, y: 0, width: charSize, height: charSize))
             }
             ctx.restoreGState()
-        } else { return }
+        } else if !avatarHiddenByPuff { return }
+
+        // Pixel dust puff (appearance animation, drawn on top of avatar)
+        if puffActive { drawPixelPuff(ctx: ctx, cx: cx, cy: cy) }
 
         // Overheat red tint + steam
         if currentState != .dragging {
@@ -367,37 +550,23 @@ class NikxelView: NSView, StateMachineDelegate {
             str.draw(at: NSPoint(x: dotX + 10, y: dotY - textSize.height/2))
         }
 
-        // Reminder bubble (calendar)
-        if let text = reminderText, reminderOpacity > 0.01 {
+        // Meeting indicator (yellow dot above avatar)
+        if meetingDotOpacity > 0.01 {
+            let dotRadius: CGFloat = 6
+            let dotX = cx
+            let dotY = cy + halfChar + 14
             ctx.saveGState()
-            ctx.setAlpha(reminderOpacity)
-            let pad: CGFloat = 10
-            let fontSize: CGFloat = 13
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
-                .foregroundColor: NSColor.black
-            ]
-            let attrStr = NSAttributedString(string: text, attributes: attrs)
-            let textSize = attrStr.size()
-            let bw = min(260, textSize.width + pad * 2)
-            let bh = textSize.height + pad * 2
-            let bx = cx - bw/2
-            let by = cy + halfChar + 24
-            let rect = NSRect(x: bx, y: by, width: bw, height: bh)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
-            ctx.setFillColor(NSColor.white.withAlphaComponent(0.96).cgColor)
-            path.fill()
-            ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.2).cgColor)
-            path.lineWidth = 1
-            path.stroke()
-            attrStr.draw(at: NSPoint(x: bx + pad, y: by + pad))
+            // Outer glow
+            ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(meetingDotOpacity * 0.3).cgColor)
+            ctx.fillEllipse(in: NSRect(x: dotX - dotRadius - 3, y: dotY - dotRadius - 3, width: (dotRadius+3)*2, height: (dotRadius+3)*2))
+            // Inner dot
+            ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(meetingDotOpacity).cgColor)
+            ctx.fillEllipse(in: NSRect(x: dotX - dotRadius, y: dotY - dotRadius, width: dotRadius*2, height: dotRadius*2))
             ctx.restoreGState()
         }
 
-        // Reminders bubbles (Apple Reminders due today, tap-to-complete)
-        if !reminderBubbles.isEmpty {
-            drawReminderBubbles(ctx: ctx, cx: cx, cy: cy)
-        }
+        // (Calendar bubble + Apple Reminders bubbles are now real NSGlassEffectView
+        // subviews managed in layoutBubbles(), called from tick().)
 
         // MOM ready sparkle
         if currentState == .momReady {
@@ -439,79 +608,348 @@ class NikxelView: NSView, StateMachineDelegate {
         }
     }
 
-    func drawReminderBubbles(ctx: CGContext, cx: CGFloat, cy: CGFloat) {
-        // Visible window: 3 most recent. Newest at the top, oldest of the visible
-        // 3 closest to the avatar (lowest y). Stack above the calendar bubble lane
-        // (which sits at cy + halfChar + 24).
+    // MARK: - Liquid Glass bubble layout
+    #if HAS_LIQUID_GLASS
+
+    private struct GlassMetrics {
+        static let pad: CGFloat = 16
+        static let fontSize: CGFloat = 14
+        static let dotDiameter: CGFloat = 7
+        static let dotGap: CGFloat = 10
+        static let maxWidth: CGFloat = 280
+        static let stepY: CGFloat = 48
+    }
+
+    private func makeBubbleContent(title: String, dotColor: NSColor) -> (NSView, NSSize) {
+        let pad = GlassMetrics.pad
+        let dotDiameter = GlassMetrics.dotDiameter
+        let dotGap = GlassMetrics.dotGap
+        let maxWidth = GlassMetrics.maxWidth
+
+        let font = dmFont(size: GlassMetrics.fontSize, bold: false)
+        // White text with subtle shadow for legibility against varied wallpapers
+        // showing through the clear glass.
+        let textShadow = NSShadow()
+        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        textShadow.shadowOffset = NSSize(width: 0, height: -1)
+        textShadow.shadowBlurRadius = 2
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .kern: 0.1,
+            .shadow: textShadow
+        ]
+        let attrStr = NSAttributedString(string: title, attributes: attrs)
+        let textSize = attrStr.size()
+        let contentW = min(maxWidth - pad * 2, dotDiameter + dotGap + textSize.width)
+        let contentH = max(dotDiameter, textSize.height)
+        let bw = contentW + pad * 2
+        let bh = contentH + pad * 2
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: bw, height: bh))
+        content.wantsLayer = true
+
+        // Accent dot
+        let dotY = (bh - dotDiameter) / 2
+        let dot = NSView(frame: NSRect(x: pad, y: dotY, width: dotDiameter, height: dotDiameter))
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = dotColor.cgColor
+        dot.layer?.cornerRadius = dotDiameter / 2
+        content.addSubview(dot)
+
+        // Title label
+        let labelX = pad + dotDiameter + dotGap
+        let labelW = bw - labelX - pad
+        let label = NSTextField(labelWithAttributedString: attrStr)
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.frame = NSRect(
+            x: labelX,
+            y: (bh - textSize.height) / 2,
+            width: labelW,
+            height: textSize.height
+        )
+        content.addSubview(label)
+
+        return (content, NSSize(width: bw, height: bh))
+    }
+
+    private func makeGlassBubble(title: String, dotColor: NSColor) -> (NSGlassEffectView, NSSize) {
+        let (content, size) = makeBubbleContent(title: title, dotColor: dotColor)
+        let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
+        // .clear samples the screen backdrop for the refractive look. .regular
+        // expects an opaque UI material backdrop and renders dark on a
+        // transparent borderless window.
+        glass.style = .clear
+        glass.cornerRadius = size.height / 2 // full pill shape
+        glass.tintColor = nil
+        glass.contentView = content
+        return (glass, size)
+    }
+
+    private func makeOverflowPill(count: Int) -> (NSGlassEffectView, NSSize) {
+        let font = dmFont(size: 11, bold: true)
+        let textShadow = NSShadow()
+        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        textShadow.shadowOffset = NSSize(width: 0, height: -1)
+        textShadow.shadowBlurRadius = 2
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .kern: 0.3,
+            .shadow: textShadow
+        ]
+        let str = NSAttributedString(string: "+\(count) more", attributes: attrs)
+        let sz = str.size()
+        let bw = sz.width + 22
+        let bh = sz.height + 12
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: bw, height: bh))
+        content.wantsLayer = true
+        let label = NSTextField(labelWithAttributedString: str)
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.frame = NSRect(x: (bw - sz.width) / 2, y: (bh - sz.height) / 2, width: sz.width, height: sz.height)
+        content.addSubview(label)
+
+        let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: NSSize(width: bw, height: bh)))
+        glass.style = .clear
+        glass.cornerRadius = bh / 2
+        glass.tintColor = nil
+        glass.contentView = content
+        return (glass, NSSize(width: bw, height: bh))
+    }
+
+    private func layoutBubbles(cx: CGFloat, cy: CGFloat) {
+        guard let host = glassContainer.contentView else { return }
+
+        // --- Calendar bubble (single, beneath the reminder stack) ---
+        if let text = reminderText, reminderOpacity > 0.001 {
+            let glass: NSGlassEffectView
+            if let existing = calendarGlassView {
+                glass = existing
+            } else {
+                let (g, _) = makeGlassBubble(title: text, dotColor: .systemBlue)
+                host.addSubview(g)
+                calendarGlassView = g
+                glass = g
+            }
+            // Refresh content if text changed
+            if let label = glass.contentView?.subviews.compactMap({ $0 as? NSTextField }).first,
+               label.stringValue != text {
+                let (newContent, newSize) = makeBubbleContent(title: text, dotColor: .systemBlue)
+                glass.contentView = newContent
+                glass.frame = NSRect(origin: glass.frame.origin, size: newSize)
+            }
+            let size = glass.frame.size
+            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: cy + halfChar + 24)
+            glass.alphaValue = reminderOpacity
+        } else if let g = calendarGlassView {
+            g.removeFromSuperview()
+            calendarGlassView = nil
+        }
+
+        // --- Texter bubble (who's texting via chatbot, above avatar) ---
+        if let name = activeTexterName, texterOpacity > 0.001 {
+            let dotColor = NSColor.systemGreen
+            let displayText = "💬 \(name) is texting..."
+            let glass: NSGlassEffectView
+            if let existing = texterGlassView {
+                glass = existing
+            } else {
+                let (g, _) = makeGlassBubble(title: displayText, dotColor: dotColor)
+                host.addSubview(g)
+                texterGlassView = g
+                glass = g
+            }
+            if let label = glass.contentView?.subviews.compactMap({ $0 as? NSTextField }).first,
+               label.stringValue != displayText {
+                let (newContent, newSize) = makeBubbleContent(title: displayText, dotColor: dotColor)
+                glass.contentView = newContent
+                glass.frame = NSRect(origin: glass.frame.origin, size: newSize)
+            }
+            let size = glass.frame.size
+            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: cy + halfChar + 36)
+            glass.alphaValue = texterOpacity
+        } else if let g = texterGlassView {
+            g.removeFromSuperview()
+            texterGlassView = nil
+        }
+
+        // --- Apple Reminders stack (3 visible, newest top) ---
+        // baseY is the bottom-most visible bubble's centerY. Tuned to fit within
+        // the 340pt window above the calendar bubble lane.
         let visibleCount = min(3, reminderBubbles.count)
         let startIdx = reminderBubbles.count - visibleCount
-        let baseY = cy + halfChar + 70
-        let stepY: CGFloat = 40
-        let pad: CGFloat = 10
-        let fontSize: CGFloat = 13
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
-            .foregroundColor: NSColor.black
-        ]
+        let baseY = cy + halfChar + 52
+        let stepY = GlassMetrics.stepY
 
-        // First clear all hit rects so off-screen entries can't catch clicks.
+        // Clear hit rects on the model first; we'll repopulate for visible ones.
         for i in reminderBubbles.indices { reminderBubbles[i].hitRect = .zero }
 
+        var aliveIds = Set<String>()
         for displayIdx in 0..<visibleCount {
             let i = startIdx + displayIdx
             let b = reminderBubbles[i]
+            aliveIds.insert(b.id)
+
+            let glass: NSGlassEffectView
+            if let existing = reminderGlassViews[b.id] {
+                glass = existing
+            } else {
+                let (g, _) = makeGlassBubble(title: b.title, dotColor: .systemOrange)
+                host.addSubview(g)
+                reminderGlassViews[b.id] = g
+                glass = g
+            }
+            let size = glass.frame.size
             let centerY = baseY + CGFloat(displayIdx) * stepY
-            let titleText = "📋 \(b.title)"
-            let attrStr = NSAttributedString(string: titleText, attributes: attrs)
-            let textSize = attrStr.size()
-            let bw = min(260, textSize.width + pad * 2)
-            let bh = textSize.height + pad * 2
-            let bx = cx - bw / 2
-            let by = centerY - bh / 2
-            let rect = NSRect(x: bx, y: by, width: bw, height: bh)
-
-            ctx.saveGState()
-            ctx.setAlpha(b.opacity)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
-            ctx.setFillColor(NSColor.white.withAlphaComponent(0.96).cgColor)
-            path.fill()
-            ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.2).cgColor)
-            path.lineWidth = 1
-            path.stroke()
-            // Truncate the text horizontally to fit the bubble width.
-            let textRect = NSRect(x: bx + pad, y: by + pad, width: bw - pad * 2, height: textSize.height)
-            let truncated = NSMutableAttributedString(attributedString: attrStr)
-            let pstyle = NSMutableParagraphStyle()
-            pstyle.lineBreakMode = .byTruncatingTail
-            truncated.addAttribute(.paragraphStyle, value: pstyle, range: NSRange(location: 0, length: truncated.length))
-            truncated.draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
-            ctx.restoreGState()
-
-            reminderBubbles[i].hitRect = rect
+            let origin = NSPoint(x: cx - size.width / 2, y: centerY - size.height / 2)
+            glass.frame.origin = origin
+            glass.alphaValue = b.opacity
+            reminderBubbles[i].hitRect = NSRect(origin: origin, size: size)
         }
 
-        // Overflow pill above the top bubble.
+        // Remove views whose model is gone OR which fell off the visible window.
+        for (id, view) in reminderGlassViews where !aliveIds.contains(id) {
+            view.removeFromSuperview()
+            reminderGlassViews.removeValue(forKey: id)
+        }
+
+        // --- Overflow pill above the top bubble ---
         let overflow = reminderBubbles.count - visibleCount
-        if overflow > 0 {
-            let label = "+\(overflow) more"
-            let pillAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor.white
-            ]
-            let pillStr = NSAttributedString(string: label, attributes: pillAttrs)
-            let sz = pillStr.size()
-            let bw = sz.width + 16
-            let bh = sz.height + 6
-            let topY = baseY + CGFloat(visibleCount - 1) * stepY + 30
-            let bx = cx - bw / 2
-            let rect = NSRect(x: bx, y: topY, width: bw, height: bh)
+        if overflow > 0, visibleCount > 0 {
+            let (glass, size): (NSGlassEffectView, NSSize) = {
+                if let existing = overflowGlassView {
+                    // Rebuild if count changed (label is baked into content).
+                    if let label = existing.contentView?.subviews.compactMap({ $0 as? NSTextField }).first,
+                       label.stringValue != "+\(overflow) more" {
+                        let (g, s) = makeOverflowPill(count: overflow)
+                        existing.removeFromSuperview()
+                        host.addSubview(g)
+                        overflowGlassView = g
+                        return (g, s)
+                    }
+                    return (existing, existing.frame.size)
+                }
+                let (g, s) = makeOverflowPill(count: overflow)
+                host.addSubview(g)
+                overflowGlassView = g
+                return (g, s)
+            }()
+            let topY = baseY + CGFloat(visibleCount - 1) * stepY + 34
+            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: topY)
+            glass.alphaValue = 1
+        } else if let g = overflowGlassView {
+            g.removeFromSuperview()
+            overflowGlassView = nil
+        }
+    }
+    #endif
+
+    /// Chunky pixel-art dust cloud. Particles are integer-aligned filled
+    /// squares (not soft ellipses) to match the pixel sprite aesthetic.
+    /// Phases:
+    ///   0% – 45%: avatar is hidden, dust expands from a tight cluster
+    ///   45%: avatar pops in with a spring-back bounce
+    ///   45% – 100%: dust continues outward and fades
+    func drawPixelPuff(ctx: CGContext, cx: CGFloat, cy: CGFloat) {
+        let now = CACurrentMediaTime()
+        let raw = (now - puffStart) / puffDuration
+        if raw >= 1 {
+            puffActive = false
+            if avatarHiddenByPuff { avatarHiddenByPuff = false } // safety
+            needsDisplay = true
+            return
+        }
+        let progress = CGFloat(max(0, raw))
+        // Ease-out cubic for outward expansion.
+        let eased = 1 - pow(1 - progress, 2.5)
+
+        let baseRadius: CGFloat = 4
+        let maxRadius: CGFloat = 104
+        let radius = baseRadius + (maxRadius - baseRadius) * eased
+
+        // Reveal avatar partway, kick a small spring-back bounce.
+        if avatarHiddenByPuff, progress >= puffRevealAt {
+            avatarHiddenByPuff = false
+            triggerSpringBack()
+        }
+
+        // Pixel palette — clean whites for cartoon-dust feel.
+        let palette: [NSColor] = [
+            NSColor.white,
+            NSColor(calibratedWhite: 0.96, alpha: 1),
+            NSColor(calibratedWhite: 0.86, alpha: 1),
+            NSColor(calibratedWhite: 0.74, alpha: 1)
+        ]
+        let baseAlpha = max(0, 1 - progress) * 0.95
+
+        // Outer ring of 14 large pixels, slight angle + radius jitter so it
+        // doesn't read as a perfect circle.
+        let outerCount = 14
+        for i in 0..<outerCount {
+            let baseAngle = (CGFloat(i) / CGFloat(outerCount)) * .pi * 2
+            let angleJ = CGFloat((i * 47) % 11 - 5) * 0.045
+            let angle = baseAngle + angleJ
+            let radJ = CGFloat((i * 31) % 9 - 4) * 2.5
+            let r = radius + radJ
+            let pxCenter = cx + cos(angle) * r
+            let pyCenter = cy + sin(angle) * r
+
+            let size = floor(max(3, 9 - progress * 5)) // 9px → 4px
+            let px = floor(pxCenter - size / 2)
+            let py = floor(pyCenter - size / 2)
+
             ctx.saveGState()
-            let path = NSBezierPath(roundedRect: rect, xRadius: bh / 2, yRadius: bh / 2)
-            ctx.setFillColor(NSColor.black.withAlphaComponent(0.7).cgColor)
-            path.fill()
-            pillStr.draw(at: NSPoint(x: bx + 8, y: topY + 3))
+            let color = palette[i % palette.count].withAlphaComponent(baseAlpha)
+            ctx.setFillColor(color.cgColor)
+            ctx.fill(CGRect(x: px, y: py, width: size, height: size))
             ctx.restoreGState()
         }
+
+        // Inner scatter — denser early, sparse late. Deterministic by index so
+        // particles stay put frame to frame (no flickering chaos).
+        let scatterCount = Int((1 - progress) * 18) + 8
+        for i in 0..<scatterCount {
+            let seedA = Double((i * 73) % 360) * .pi / 180
+            let seedR = CGFloat((i * 53) % 100) / 100.0 * radius * 0.8 + 4
+            let pxCenter = cx + CGFloat(cos(seedA)) * seedR
+            let pyCenter = cy + CGFloat(sin(seedA)) * seedR
+            let size: CGFloat = (i % 4 == 0) ? 6 : 4
+            let px = floor(pxCenter - size / 2)
+            let py = floor(pyCenter - size / 2)
+            let alphaJ = CGFloat((i * 19) % 100) / 100.0 * 0.5 + 0.5
+            let alpha = baseAlpha * alphaJ
+            ctx.saveGState()
+            ctx.setFillColor(palette[i % palette.count].withAlphaComponent(alpha).cgColor)
+            ctx.fill(CGRect(x: px, y: py, width: size, height: size))
+            ctx.restoreGState()
+        }
+
+        // Bright dense core for the first beat — visually obscures the avatar
+        // while it's hidden so the reveal feels like it emerges from the cloud.
+        if progress < 0.35 {
+            let coreFade = 1 - (progress / 0.35)
+            let coreSize: CGFloat = floor(64 * coreFade + 28)
+            ctx.saveGState()
+            ctx.setFillColor(NSColor.white.withAlphaComponent(coreFade * 0.9).cgColor)
+            ctx.fill(CGRect(
+                x: floor(cx - coreSize / 2),
+                y: floor(cy - coreSize / 2),
+                width: coreSize,
+                height: coreSize
+            ))
+            ctx.restoreGState()
+        }
+
+        needsDisplay = true
     }
 
     func drawSteam(ctx: CGContext, cx: CGFloat, cy: CGFloat) {

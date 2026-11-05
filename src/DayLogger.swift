@@ -127,9 +127,10 @@ class DayLogger {
         }
     }
 
-    private func backfillIfMissed() {
-        // If today is past the summary hour and we never wrote today's file
-        // (e.g. machine was asleep / app wasn't running at 9pm), generate now.
+    /// Idempotent: writes today's summary if past the summary hour and the
+    /// file isn't there yet. Safe to call from app launch, wake-from-sleep,
+    /// and external triggers (LaunchAgent).
+    func backfillIfMissed() {
         let now = Date()
         let cal = Calendar.current
         var comps = cal.dateComponents([.year, .month, .day], from: now)
@@ -148,7 +149,7 @@ class DayLogger {
             if report.isEmpty { return }
             do {
                 let prompt = self.summaryPrompt(report: report, date: date)
-                let output = try self.momGenerator.runOpencodePrompt(prompt)
+                let output = try self.momGenerator.runPrompt(prompt)
                 try output.write(to: self.summaryFileURL(for: date), atomically: true, encoding: .utf8)
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
@@ -169,6 +170,10 @@ class DayLogger {
         if !claudePrompts.isEmpty { parts.append("## Claude Code sessions (your prompts today)\n" + claudePrompts) }
         let opencodePrompts = aggregateOpencodeSessions(for: date)
         if !opencodePrompts.isEmpty { parts.append("## Opencode sessions (your prompts today)\n" + opencodePrompts) }
+        let waChats = aggregateWhatsAppChats(for: date)
+        if !waChats.isEmpty { parts.append("## WhatsApp chats (preview snapshots through the day)\n" + waChats) }
+        let waCalls = aggregateWhatsAppCalls(for: date)
+        if !waCalls.isEmpty { parts.append("## WhatsApp calls\n" + waCalls) }
         return parts.joined(separator: "\n\n")
     }
 
@@ -425,6 +430,42 @@ class DayLogger {
         return lines.joined(separator: "\n")
     }
 
+    // MARK: - WhatsApp
+
+    private func aggregateWhatsAppChats(for date: Date) -> String {
+        let entries = WhatsAppActivityLogger.readLog(file: "chats", for: date)
+        if entries.isEmpty { return "" }
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "HH:mm"
+        var lines: [String] = []
+        for e in entries {
+            guard let t = e["t"] as? TimeInterval,
+                  let name = e["name"] as? String,
+                  let preview = e["preview"] as? String else { continue }
+            let time = timeFmt.string(from: Date(timeIntervalSince1970: t))
+            let oneLine = preview.replacingOccurrences(of: "\n", with: " ")
+            lines.append("- [\(time)] \(name): \(oneLine)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func aggregateWhatsAppCalls(for date: Date) -> String {
+        let entries = WhatsAppActivityLogger.readLog(file: "calls", for: date)
+        if entries.isEmpty { return "" }
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "HH:mm"
+        var lines: [String] = []
+        for e in entries {
+            guard let t = e["t"] as? TimeInterval,
+                  let name = e["name"] as? String else { continue }
+            let info = (e["info"] as? String) ?? ""
+            let waTime = (e["timeText"] as? String) ?? ""
+            let seenAt = timeFmt.string(from: Date(timeIntervalSince1970: t))
+            lines.append("- \(name) — \(info)\(waTime.isEmpty ? "" : " (\(waTime))") [seen \(seenAt)]")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func runGit(repo: URL, args: [String]) -> String {
         let task = Process()
         task.launchPath = "/usr/bin/git"
@@ -447,8 +488,14 @@ You are generating an end-of-day journal entry for the user, based on raw activi
 - Git activity per project: commits today, uncommitted changes, current branch, recent commit history.
 - Claude Code session prompts: the user's actual messages to Claude today, timestamped, with project name.
 - Opencode session prompts: the user's actual messages to opencode today, timestamped.
+- WhatsApp chats: periodic preview-text snapshots of each chat through the day (name + a short text excerpt), NOT full conversations.
+- WhatsApp calls: call-log entries (caller, missed/incoming/outgoing, WhatsApp's own time label) — no call content/audio is available unless that call happened to be recorded as a meeting (in which case it shows up under Meetings too).
 
 The session prompts are the most informative signal: they tell you LITERALLY what bug or feature the user was working on, in their own words. Use them as the spine of the narrative.
+
+For WhatsApp chats specifically: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
+
+\(NikxelSettings.languageInstruction)
 
 Write a friendly, personal, specific narrative. Not generic ("worked on coding") but specific ("fixed the typing-animation lag bug in Nikxel — diagnosed it as a missing CGEventTap re-enable, then added day-of-week logging").
 
@@ -468,6 +515,11 @@ Output this exact Markdown structure:
 ## Meetings
 - One bullet per meeting: time, who/what (use the MOM summary if present), key outcome if obvious.
 - If none, write "- None today."
+
+## WhatsApp
+- Calls: one bullet per call (who, missed/incoming/outgoing, when). If none, write "- No calls today."
+- Tasks assigned in chats: one bullet per task you can identify — "<Who> asked you to <what> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
+- Anything else notable from chats worth a quick mention. If nothing, write "- Nothing else notable."
 
 ## Browsing & Reading
 - Time in browser/reading apps, summarized ("~45 min in Chrome — mostly docs"). Don't list every URL.

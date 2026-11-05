@@ -1,5 +1,6 @@
 *.png
 !nikxel_avatar.png
+!sprites.png
 .DS_Store
 /tmp/
 *.pyc

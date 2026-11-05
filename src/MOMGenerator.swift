@@ -1,8 +1,19 @@
 import Foundation
 
+// Lets the stdout/stderr pump threads hand their bytes back without a data race.
+private final class OutputBuffer {
+    private let lock = NSLock()
+    private var _out = Data()
+    private var _err = Data()
+    var out: Data { lock.lock(); defer { lock.unlock() }; return _out }
+    var err: Data { lock.lock(); defer { lock.unlock() }; return _err }
+    func setOut(_ d: Data) { lock.lock(); _out = d; lock.unlock() }
+    func setErr(_ d: Data) { lock.lock(); _err = d; lock.unlock() }
+}
+
 class MOMGenerator {
     enum MOMError: Error {
-        case opencodeNotFound
+        case agentNotFound
         case transcriptEmpty
         case generationFailed(String)
     }
@@ -10,11 +21,16 @@ class MOMGenerator {
     private var candidateBinaries: [String] {
         let home = NSHomeDirectory()
         return [
-            "\(home)/.opencode/bin/opencode",
-            "/opt/homebrew/bin/opencode",
-            "/usr/local/bin/opencode"
+            "/opt/homebrew/bin/claude",
+            "\(home)/.claude/local/claude",
+            "\(home)/.local/bin/claude",
+            "/usr/local/bin/claude"
         ]
     }
+
+    // Upper bound on a single claude run. Generation normally takes well under
+    // a minute; anything past this is a hang, not slow work.
+    private static let timeoutSec: Double = 600
 
     private let promptsDir: URL
     private let workspace: URL
@@ -44,8 +60,12 @@ class MOMGenerator {
                 if trimmed.split(whereSeparator: { $0.isWhitespace }).count < 3 {
                     throw MOMError.transcriptEmpty
                 }
-                guard let bin = self.findOpencode() else { throw MOMError.opencodeNotFound }
-                let output = try self.runOpencode(binary: bin, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec)
+                // Save the raw transcript before attempting generation, so a
+                // claude failure/timeout/missing-binary still leaves the full
+                // transcript on disk instead of losing it with the recording.
+                try? self.saveTranscript(content: trimmed, mode: mode, startedAt: startedAt)
+                guard let bin = self.findClaude() else { throw MOMError.agentNotFound }
+                let output = try self.runTemplate(binary: bin, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec)
                 let outURL = try self.saveOutput(content: output, mode: mode, startedAt: startedAt)
                 completion(.success(outURL))
             } catch {
@@ -54,11 +74,11 @@ class MOMGenerator {
         }
     }
 
-    private func findOpencode() -> String? {
+    private func findClaude() -> String? {
         for path in candidateBinaries where FileManager.default.isExecutableFile(atPath: path) { return path }
         let task = Process()
         task.launchPath = "/bin/zsh"
-        task.arguments = ["-ilc", "which opencode 2>/dev/null"]
+        task.arguments = ["-ilc", "which claude 2>/dev/null"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()
@@ -75,7 +95,7 @@ class MOMGenerator {
         return promptsDir.appendingPathComponent(name)
     }
 
-    private func runOpencode(binary: String, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int) throws -> String {
+    private func runTemplate(binary: String, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int) throws -> String {
         let promptURL = promptPath(for: mode)
         let template = (try? String(contentsOf: promptURL, encoding: .utf8)) ?? defaultPrompt(for: mode)
 
@@ -85,17 +105,20 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{date}}", with: fmt.string(from: startedAt))
             .replacingOccurrences(of: "{{duration}}", with: "\(durationSec / 60) min \(durationSec % 60) sec")
             .replacingOccurrences(of: "{{transcript}}", with: transcript)
+            .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
+            .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
 
-        return try executeOpencode(binary: binary, prompt: prompt)
+        return try executeClaude(binary: binary, prompt: prompt)
     }
 
-    // Run an arbitrary prompt through opencode. Used by DayLogger for EOD summaries.
-    func runOpencodePrompt(_ prompt: String) throws -> String {
-        guard let bin = findOpencode() else { throw MOMError.opencodeNotFound }
-        return try executeOpencode(binary: bin, prompt: prompt)
+    // Run an arbitrary prompt through the agent. Used by DayLogger for EOD
+    // summaries and by LLMResponder for chat replies.
+    func runPrompt(_ prompt: String) throws -> String {
+        guard let bin = findClaude() else { throw MOMError.agentNotFound }
+        return try executeClaude(binary: bin, prompt: prompt)
     }
 
-    private func executeOpencode(binary: String, prompt: String) throws -> String {
+    private func executeClaude(binary: String, prompt: String) throws -> String {
         let promptDump = workspace.appendingPathComponent("last_prompt.txt")
         let stdoutDump = workspace.appendingPathComponent("last_stdout.log")
         let stderrDump = workspace.appendingPathComponent("last_stderr.log")
@@ -108,26 +131,67 @@ class MOMGenerator {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: binary)
         task.currentDirectoryURL = workspace
-        task.arguments = ["run"]
+        // -p is headless one-shot. Empty --allowed-tools keeps it pure text
+        // generation: these prompts need no file or shell access, and a tool
+        // call that stops for a permission prompt would hang a GUI-spawned
+        // process with nobody to answer it.
+        task.arguments = ["-p", "--allowed-tools", ""]
         var env = ProcessInfo.processInfo.environment
-        let extraPaths = ["\(NSHomeDirectory())/.opencode/bin", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
+        let extraPaths = ["/opt/homebrew/bin", "\(NSHomeDirectory())/.claude/local", "\(NSHomeDirectory())/.local/bin", "/usr/local/bin", "/opt/local/bin"]
         env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).filter { !$0.isEmpty }.joined(separator: ":")
         task.environment = env
         task.standardInput = inPipe
         task.standardOutput = outPipe
         task.standardError = errPipe
+        let exited = DispatchSemaphore(value: 0)
+        task.terminationHandler = { _ in exited.signal() }
         try task.run()
 
-        if let data = prompt.data(using: .utf8) {
-            inPipe.fileHandleForWriting.write(data)
+        // Drain both pipes and feed stdin on their own threads. Reading only
+        // after the process exits deadlocks once opencode emits more than the
+        // 64 KB pipe buffer, and a long transcript can fill stdin's buffer the
+        // same way.
+        let buf = OutputBuffer()
+        let io = DispatchGroup()
+        func pump(_ handle: FileHandle, _ keep: @escaping (OutputBuffer, Data) -> Void) {
+            io.enter()
+            DispatchQueue.global(qos: .utility).async {
+                let d = handle.readDataToEndOfFile()
+                keep(buf, d)
+                io.leave()
+            }
         }
-        inPipe.fileHandleForWriting.closeFile()
-        task.waitUntilExit()
+        pump(outPipe.fileHandleForReading) { $0.setOut($1) }
+        pump(errPipe.fileHandleForReading) { $0.setErr($1) }
+        DispatchQueue.global(qos: .utility).async {
+            if let data = prompt.data(using: .utf8) {
+                try? inPipe.fileHandleForWriting.write(contentsOf: data)
+            }
+            try? inPipe.fileHandleForWriting.close()
+        }
 
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        // Without this the pet sits in .writingMOM forever whenever the agent
+        // hangs (opencode used to retry a failing stream with backoff and never
+        // exit), so no alert ever fires and the animation never stops.
+        // ponytail: fixed ceiling; make it a setting if a long transcript ever
+        // legitimately runs past it.
+        var timedOut = false
+        if exited.wait(timeout: .now() + Self.timeoutSec) == .timedOut {
+            timedOut = true
+            task.terminate()
+            _ = exited.wait(timeout: .now() + 5)
+        }
+        // Bounded: a lingering grandchild can hold the write end open past the
+        // kill, and waiting forever here would reintroduce the same stall.
+        _ = io.wait(timeout: .now() + 10)
+        let outData = buf.out
+        let errData = buf.err
         try? outData.write(to: stdoutDump)
         try? errData.write(to: stderrDump)
+
+        if timedOut {
+            throw MOMError.generationFailed("claude did not finish within \(Int(Self.timeoutSec / 60)) min and was killed.\nCheck that `claude -p` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
+        }
 
         guard task.terminationStatus == 0 else {
             let errStr = String(data: errData, encoding: .utf8) ?? "exit \(task.terminationStatus)"
@@ -147,21 +211,56 @@ class MOMGenerator {
 
     private func saveOutput(content: String, mode: CaptureMode, startedAt: Date) throws -> URL {
         let dir = mode == .notes ? notesDir : meetingsDir
-        let fmt = DateFormatter()
-        // Seconds in the stem so two recordings started in the same minute don't
-        // overwrite each other's MOM file.
-        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
-        let name = "\(fmt.string(from: startedAt)).md"
+        let name = "\(timestampStem(startedAt)).md"
         let url = dir.appendingPathComponent(name)
         try content.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
+    // Written before generation runs, so the full transcript survives even if
+    // claude is missing, times out, or returns an error. Shares its filename
+    // stem with saveOutput's .md so the two are easy to pair up by eye.
+    @discardableResult
+    private func saveTranscript(content: String, mode: CaptureMode, startedAt: Date) throws -> URL {
+        let dir = mode == .notes ? notesDir : meetingsDir
+        let name = "\(timestampStem(startedAt)).transcript.txt"
+        let url = dir.appendingPathComponent(name)
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    // Seconds in the stem so two recordings started in the same minute don't
+    // overwrite each other's files.
+    private func timestampStem(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
+        return fmt.string(from: date)
+    }
+
     private func seedDefaultPrompts() {
         for mode: CaptureMode in [.notes, .meeting] {
             let url = promptPath(for: mode)
-            if FileManager.default.fileExists(atPath: url.path) { continue }
-            try? defaultPrompt(for: mode).write(to: url, atomically: true, encoding: .utf8)
+            let fresh = defaultPrompt(for: mode)
+            if let existing = try? String(contentsOf: url, encoding: .utf8) {
+                // Migrate older default prompts that told the model to write in
+                // the transcript's language. These produced Hindi notes/MOM
+                // for Hindi recordings and false "no credible conversation"
+                // bail-outs. Detect by the old marker phrases and overwrite.
+                // User customizations that don't contain these phrases are
+                // left alone.
+                let legacyMarkers = [
+                    "Write the notes in the SAME language as the transcript",
+                    "Write the MOM in the SAME language as the transcript",
+                    "translate the section headings to match",
+                    "ALWAYS write the notes in English regardless of the transcript",
+                    "ALWAYS write the MOM in English regardless of the transcript"
+                ]
+                if legacyMarkers.contains(where: { existing.contains($0) }) {
+                    try? fresh.write(to: url, atomically: true, encoding: .utf8)
+                }
+                continue
+            }
+            try? fresh.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 
@@ -177,15 +276,15 @@ You are generating structured notes from the transcript of a YouTube video,
 lecture, podcast, talk, or other single-source spoken content. Always produce
 the Markdown below — never refuse or output a "not enough content" message.
 
-The transcript may be in English, Hindi, Hinglish (mixed), or any other
-language. Write the notes in the SAME language as the transcript. If mixed,
-match the dominant language.
+{{language_instruction}}
+Section headings (Summary, Key Points, etc.) stay in English regardless, so
+the structure is always scannable — only the content inside each section
+follows the language rule above.
 
 Recorded: {{date}}
 Duration: {{duration}}
 
-Output this exact Markdown structure (translate the section headings to match
-the transcript language):
+Output this exact Markdown structure (keep section headings in English):
 
 # Notes — {{date}}
 
@@ -219,27 +318,39 @@ TRANSCRIPT:
     private let meetingPrompt = """
 You are generating Minutes of Meeting (MOM) from a transcript of a meeting,
 call, or 1:1 conversation. The transcript is pre-labeled with speakers:
-  "Me" = the user who recorded this meeting (microphone input)
+  "Me" = {{user_name}}, the user who recorded this meeting (microphone input)
   "Others" = everyone else on the call (system audio output)
+
+IMPORTANT identity rule: "Me" is specifically {{user_name}} — nobody else.
+If a name mentioned anywhere in the transcript happens to resemble, sound
+like, or be associated with someone else on the call, do NOT reassign "Me"'s
+lines to them, and do NOT describe "Me" as if they were a different person.
+Conversely, don't attribute something "Others" said to {{user_name}}/"Me"
+just because the topic involves {{user_name}}. When referring to the user by
+name anywhere in the output, use {{user_name}}, not a guessed or inferred name.
 Multiple distinct people may be collapsed under "Others" — use context clues
 (names, turn-taking, topic switches) to distinguish them where you can.
 
-Always produce the Markdown below — never refuse or output a "not a real
-meeting" message.
+Always produce the Markdown below — never refuse, never output a "not a real
+meeting" message, and never claim "no credible conversation occurred" or any
+similar bail-out. If the transcript has any speech at all, treat it as a real
+meeting and fill in every section from what was said. A short, casual, or
+non-English meeting is still a meeting.
 
-The transcript may be in English, Hindi, Hinglish (mixed), or any other
-language. Write the MOM in the SAME language as the transcript.
+{{language_instruction}}
+Section headings (Attendees, Summary, Decisions, etc.) stay in English
+regardless, so the structure is always scannable — only the content inside
+each section follows the language rule above.
 
 Recorded: {{date}}
 Duration: {{duration}}
 
-Output this exact Markdown structure (translate the section headings to match
-the transcript language):
+Output this exact Markdown structure (keep section headings in English):
 
 # Meeting — {{date}}
 
 ## Attendees
-- Me — (infer role/context if possible)
+- {{user_name}} (Me) — (infer role/context if possible)
 - Others — list distinct participants you can identify by name or context; if
   indistinguishable, write "Others (1 or more participants)".
 
@@ -247,7 +358,7 @@ the transcript language):
 3-5 sentences capturing what was discussed and the overall outcome.
 
 ## Per-Speaker Highlights
-**Me:** what the user contributed, asked, proposed, or committed to.
+**{{user_name}} (Me):** what the user contributed, asked, proposed, or committed to.
 **Others:** what the other side contributed, asked, proposed, or committed to.
   If you identified specific people by name, give each their own line.
 
@@ -255,7 +366,7 @@ the transcript language):
 - Concrete decisions made during the meeting. If none, write "- None."
 
 ## Action Items
-- [ ] Task — Owner (Me / name from Others) — due date if mentioned.
+- [ ] Task — Owner ({{user_name}} / name from Others) — due date if mentioned.
 - If none, write "- None mentioned."
 
 ## Open Questions

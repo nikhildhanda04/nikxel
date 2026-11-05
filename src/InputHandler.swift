@@ -16,10 +16,8 @@ class InputHandler {
     }
 
     func startMonitoring() {
-        // Trigger the system Accessibility prompt the first time the app needs it,
-        // then either install the event tap or wait for the user to grant access.
-        // The system dialog already has an "Open System Settings" button, so we
-        // don't show a custom NSAlert on top of it.
+ 
+ 
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(opts)
         if trusted {

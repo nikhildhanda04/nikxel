@@ -185,27 +185,27 @@ Set the spoken language in the wizard (**Transcription tools** → *Spoken
 language*). It is stored as `transcriptionLanguage` in
 `~/.nikxel/settings.json`.
 
-| Setting | Use it for |
-|---|---|
-| `en` (default) | English, and Hinglish where English words should stay English |
-| `hi` | Mostly-Hindi speech |
-| `auto` | Not recommended — see below |
+**Leave it on `en`.** Despite the name, English is the best setting for all
+three languages — it transcribes Hindi as Hinglish *and* keeps English words
+spelled correctly. Measured on the `small` model:
 
-**Hindi is always written in Latin letters**, never Devanagari, in both the
-transcript and the summary: "main kal meeting mein shamil nahi ho paunga".
-Whisper can't do that on its own (`-l hi` returns Devanagari and `-l en`
-translates the meaning into English instead of writing the Hindi down), so
-Nikxel transcribes in Hindi and romanizes the result itself.
+| Spoken | Setting | Result |
+|---|---|---|
+| English | `en` | clean English |
+| Hindi | `en` | `Namaste, mai kal meeting me shamil nahi ho paunga. Kripya mujhe notes bhejh deejhye.` |
+| Hinglish | `en` | `Yes, I have already deployed that feature, now let's schedule the client demo tomorrow morning.` |
+| English | `hi` | ❌ Devanagari gibberish |
+| anything | `auto` | ❌ misreads Indian-accented English as Hindi (p = 0.68) |
 
-One caveat: English words spoken inside Hindi come back spelled phonetically
-("pheetchhar", "diployo"). The summary prompt tells your coding agent to
-restore the normal spelling, so the MOM reads correctly even when the raw
-transcript doesn't.
+So `hi` is only worth choosing for heavy, sustained Hindi where you want
+maximum fidelity to the Hindi itself — and it will mangle pure English, so
+switch back afterwards. Under `hi`, Nikxel transcribes in Devanagari and then
+romanizes it (`Devanagari.swift`, including Hindi's word-final schwa deletion
+so कल is "kal", not "kala"); English words inside that come back phonetic
+("pheetchhar"), and the summary prompt tells your agent to restore them.
 
-Auto-detect is offered but not recommended — measured against the base and
-small models, it put Hindi into **Urdu** script, and on the small model it
-turned plain English into Devanagari gibberish. Naming the language was
-correct in every case tested.
+Either way **Hindi is never left in Devanagari** — not in the transcript, not
+in the summary.
 
 Hindi needs the `small` model or better; `base` transcribes Hindi into Urdu
 script even when told `-l hi`. The wizard downloads `small` for that reason.

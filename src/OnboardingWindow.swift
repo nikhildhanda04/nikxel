@@ -254,7 +254,7 @@ final class OnboardingWindowController: NSWindowController {
 
         body.addArrangedSubview(label("Spoken language", bold: true, align: .left))
         body.addArrangedSubview(label(
-            "Auto-detect is unreliable — it has put Hindi into Urdu script and turned English into gibberish. Naming the language is much more accurate.",
+            "Leave this on English unless your meetings are mostly Hindi — English also transcribes Hindi, as Hinglish, and keeps English words spelled correctly.",
             size: 11, secondary: true, align: .left
         ))
         for (i, option) in Self.languageOptions.enumerated() {
@@ -411,10 +411,16 @@ final class OnboardingWindowController: NSWindowController {
     @objc private func recheckDeps() { refreshDeps() }
     @objc private func recheckAgents() { refreshAvailableAgents() }
 
+    /// "en" handles all three cases and is what almost everyone should use.
+    /// Measured on the small model: English stays clean, Hindi comes back as
+    /// natural Hinglish with English words spelled properly ("Namaste, mai kal
+    /// meeting me shamil nahi ho paunga"), and Hinglish resolves to English.
+    /// Picking "hi" makes pure English come out as Devanagari gibberish, and
+    /// auto-detect reads Indian-accented English as Hindi.
     static let languageOptions: [(title: String, code: String)] = [
-        ("English (also best for Hinglish)", "en"),
-        ("Hindi (written as Hinglish)", "hi"),
-        ("Auto-detect (unreliable)", "auto"),
+        ("English — handles Hindi and Hinglish too (recommended)", "en"),
+        ("Hindi — only for heavy Hindi; breaks pure English", "hi"),
+        ("Auto-detect — not recommended, misreads Indian English as Hindi", "auto"),
     ]
 
     @objc private func pickLanguage(_ sender: NSButton) {

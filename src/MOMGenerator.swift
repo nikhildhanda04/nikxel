@@ -291,7 +291,18 @@ class MOMGenerator {
         let name = "\(timestampStem(startedAt)).md"
         let url = dir.appendingPathComponent(name)
         try content.write(to: url, atomically: true, encoding: .utf8)
-        return url
+
+        // Always keep the Markdown -- it's what the agent produced and what the
+        // other formats render from. A failed conversion shouldn't lose the
+        // note, so fall back to handing back the .md.
+        let format = NikxelSettings.noteFormat
+        guard format != .markdown else { return url }
+        do {
+            return try NoteExporter.export(markdown: content, from: url, as: format)
+        } catch {
+            Diag.log("MOM", "note export to \(format.rawValue) failed: \(error)")
+            return url
+        }
     }
 
     // Written before generation runs, so the full transcript survives even if

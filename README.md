@@ -179,6 +179,18 @@ Prompt templates live at `~/.nikxel/prompts/notes.md` and
 `~/.nikxel/prompts/meeting.md` after the first run — edit them to taste; the
 app won't overwrite once they exist.
 
+## Note format — Markdown, PDF or Word
+
+Menu bar → **Note Format** → Markdown (.md) · PDF (.pdf) · Word (.docx).
+
+The Markdown your agent wrote is **always** saved; picking PDF or Word renders
+that into a second file beside it, so nothing is ever lost to a failed
+conversion. Both are produced by macOS itself — no pandoc, no LaTeX, nothing
+to install. Headings, bullet and numbered lists, bold/italic and inline code
+all carry across.
+
+Stored as `noteFormat` in `~/.nikxel/settings.json`.
+
 ## Languages — English, Hindi, Hinglish
 
 Set the spoken language in the wizard (**Transcription tools** → *Spoken
@@ -255,7 +267,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 
 | What | Where |
 |---|---|
-| Notes (YouTube / lectures / podcasts) | `~/Documents/nikxel/notes/` |
+| Notes (YouTube / lectures / podcasts) | `~/Documents/nikxel/notes/` (`.md`, plus `.pdf`/`.docx` if chosen) |
 | Meeting MOM (per-speaker) | `~/Documents/nikxel/meetings/` |
 | Daily summaries | `~/Documents/nikxel/daily/` |
 | Raw day-activity log (JSONL) | `~/Library/Application Support/Nikxel/days/` |

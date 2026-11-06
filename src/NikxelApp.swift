@@ -17,6 +17,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var onboardingWindowController: OnboardingWindowController?
     private var reminderDismissTimer: Timer?
     private var muteMenuItem: NSMenuItem?
+    private var noteFormatItems: [NSMenuItem] = []
     private var recordMenuItem: NSMenuItem?
     private var modeNotesItem: NSMenuItem?
     private var modeMeetingItem: NSMenuItem?
@@ -160,6 +161,19 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(modeItem)
         refreshModeMenuItems()
 
+        let formatItem = NSMenuItem(title: "Note Format", action: nil, keyEquivalent: "")
+        let formatSubmenu = NSMenu()
+        for format in NoteExporter.Format.allCases {
+            let item = NSMenuItem(title: format.displayName, action: #selector(setNoteFormat(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = format.rawValue
+            formatSubmenu.addItem(item)
+            noteFormatItems.append(item)
+        }
+        formatItem.submenu = formatSubmenu
+        menu.addItem(formatItem)
+        refreshNoteFormatMenuItems()
+
         let openNotes = NSMenuItem(title: "Open Notes Folder", action: #selector(openNotes), keyEquivalent: "")
         openNotes.target = self; menu.addItem(openNotes)
 
@@ -298,6 +312,20 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func summarizeNow() {
         dayLogger.generateSummaryNow()
+    }
+
+    @objc func setNoteFormat(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let format = NoteExporter.Format(rawValue: raw) else { return }
+        NikxelSettings.noteFormat = format
+        refreshNoteFormatMenuItems()
+    }
+
+    private func refreshNoteFormatMenuItems() {
+        let current = NikxelSettings.noteFormat
+        for item in noteFormatItems {
+            item.state = (item.representedObject as? String) == current.rawValue ? .on : .off
+        }
     }
 
     @objc func openOnboarding() {

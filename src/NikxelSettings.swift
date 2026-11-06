@@ -45,6 +45,7 @@ enum NikxelSettings {
         var language: String?
         var waOwnName: String?
         var transcriptionLanguage: String?
+        var noteFormat: String?
         var connectedAgent: String?
         var whatsappConnected: Bool?
         var onboardingCompleted: Bool?
@@ -129,6 +130,13 @@ enum NikxelSettings {
             return raw.isEmpty ? "en" : raw
         }
         set { save { $0.transcriptionLanguage = newValue } }
+    }
+
+    /// File format for generated notes/MOMs. The Markdown the agent wrote is
+    /// always saved; anything else is rendered alongside it.
+    static var noteFormat: NoteExporter.Format {
+        get { NoteExporter.Format(rawValue: load().noteFormat ?? "") ?? .markdown }
+        set { save { $0.noteFormat = newValue.rawValue } }
     }
 
     /// Which CLI agent MOMGenerator shells out to. Defaults to Claude Code —

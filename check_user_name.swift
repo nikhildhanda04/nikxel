@@ -1,6 +1,11 @@
-// Runnable check for NikxelSettings.firstName — the fallback that stopped
-// every user's meeting notes from calling them "Nikhil".
-//   swiftc -parse-as-library -o /tmp/cun src/NikxelSettings.swift check_user_name.swift && /tmp/cun
+// Runnable checks for the two bits of parsing behind meeting summaries:
+// NikxelSettings.firstName (the fallback that stopped every user's notes from
+// calling them "Nikhil") and MOMGenerator.stampedVersion (which decides when a
+// cached prompt in ~/.nikxel/prompts/ is replaced by a newer shipped one).
+//
+//   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/cun \
+//     src/NikxelSettings.swift src/NoteExporter.swift src/MOMGenerator.swift \
+//     src/CaptureMode.swift src/Diag.swift check_user_name.swift && /tmp/cun
 import Foundation
 
 @main struct Check {
@@ -18,6 +23,20 @@ import Foundation
         eq("", "jake", nil, "empty full name")
         eq("  ", "jake", nil, "whitespace-only full name")
         eq("J Smith", "j", nil, "single-letter first name is an initial")
+        func ver(_ text: String, _ want: Int?, _ why: String) {
+            let got = MOMGenerator.stampedVersion(text)
+            precondition(got == want, "\(why): stampedVersion = \(got.map(String.init) ?? "nil"), want \(want.map(String.init) ?? "nil")")
+        }
+        ver(MOMGenerator.promptVersionTag, MOMGenerator.promptVersion, "the tag we ship reads back as the version we ship")
+        ver("<!-- nikxel-prompt v2 -->\nYou are generating...", 2, "older version")
+        ver("<!-- nikxel-prompt v12 -->", 12, "two-digit version")
+        ver("You are generating Minutes of Meeting", nil, "pre-versioning prompt falls through to the legacy markers")
+        ver("<!-- nikxel-prompt v -->", nil, "missing number is not a version")
+        ver("<!-- nikxel-prompt vX -->", nil, "non-numeric version")
+        ver("<!-- nikxel-prompt v3", nil, "unterminated tag")
+        precondition(MOMGenerator.promptVersionTag.contains("v\(MOMGenerator.promptVersion)"),
+                     "shipped prompts must carry the current version")
+
         print("check_user_name: all cases pass")
     }
 }

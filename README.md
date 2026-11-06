@@ -196,6 +196,58 @@ Each run now gets its own folder under `~/.nikxel/momworkspace/<timestamp>/`.
 Previously every run wrote to the same `last_*.log` files, so two overlapping
 runs destroyed each other's logs.
 
+## What a meeting summary contains
+
+Every MOM has the same sections, in this order:
+
+**Summary** · **Speakers** · **Per-Speaker Highlights** · **Decisions** ·
+**Blockers & Risks** · **Open Questions** · **Action Items** · **Agent Prompts**
+
+Two of those are worth knowing about.
+
+### Speakers
+
+Nikxel records two audio channels, not two people: your microphone (`Me`) and
+everything coming out of your speakers (`Others`) — which is *everyone else on
+the call, mixed together*, however many of them there are. Separating them back
+out is the summary's first job, using self-introductions, who gets addressed by
+name, handoffs, who answers which questions, and the gaps between turns.
+
+People it can name, it names. People it can't, it labels `Speaker 2`,
+`Speaker 3` and keeps those labels consistent through the whole document. When
+it genuinely can't tell two voices apart it says so rather than guessing — an
+honest *"could not be separated reliably"* beats a confident wrong name.
+
+Your own name comes from the setup wizard, or failing that from your macOS
+account. It's `userName` in `~/.nikxel/settings.json`.
+
+### Agent Prompts
+
+Any action item that is actual software work also gets written as a
+ready-to-paste prompt for your coding agent, in a fenced block you can copy in
+one go:
+
+> ### Webhook consumer retries and idempotency — Priya
+> ```
+> Add retry handling and idempotency to the webhook consumer so transient
+> downstream failures stop dropping events…
+>
+> Background: … Required changes: … Done when: …
+>
+> Ask about these before starting:
+> - Which cron job is it, and where does it live? Don't guess.
+> ```
+
+Each prompt carries the background from the meeting, the specific changes
+asked for, how to tell it's done, and — importantly — whatever the meeting
+*left unspecified*, listed as questions for the agent to ask first. It will
+not invent file paths, function names, endpoints or library versions; if the
+discussion said "that cron job", the prompt says "that cron job" and asks.
+
+Non-code tasks (chasing approvals, booking rooms, making calls) are skipped
+here — they stay in **Action Items** where they belong. A meeting with no
+engineering work just gets *"None"*.
+
 ## Note format — Markdown, PDF or Word
 
 Menu bar → **Note Format** → Markdown (.md) · PDF (.pdf) · Word (.docx).

@@ -412,34 +412,58 @@ class MOMGenerator {
                  durationSec: job.durationSec, completion: completion)
     }
 
+    /// Bumped whenever the shipped prompts change in a way existing installs
+    /// need. Every default prompt carries it as `promptVersionTag`, so an
+    /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
+    static let promptVersion = 4
+
+    private static let versionTagPrefix = "<!-- nikxel-prompt v"
+    static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
+
+    /// The version stamped into an on-disk prompt, or nil if it predates
+    /// versioning (or the user removed the tag, which opts them out).
+    static func stampedVersion(_ text: String) -> Int? {
+        guard let r = text.range(of: Self.versionTagPrefix),
+              let end = text.range(of: " -->", range: r.upperBound..<text.endIndex)
+        else { return nil }
+        return Int(text[r.upperBound..<end.lowerBound])
+    }
+
     private func seedDefaultPrompts() {
         for mode: CaptureMode in [.notes, .meeting] {
             let url = promptPath(for: mode)
             let fresh = defaultPrompt(for: mode)
-            if let existing = try? String(contentsOf: url, encoding: .utf8) {
-                // Migrate older default prompts that told the model to write in
-                // the transcript's language. These produced Hindi notes/MOM
-                // for Hindi recordings and false "no credible conversation"
-                // bail-outs. Detect by the old marker phrases and overwrite.
-                // User customizations that don't contain these phrases are
-                // left alone.
-                let legacyMarkers = [
-                    "Write the notes in the SAME language as the transcript",
-                    "Write the MOM in the SAME language as the transcript",
-                    "translate the section headings to match",
-                    "ALWAYS write the notes in English regardless of the transcript",
-                    "ALWAYS write the MOM in English regardless of the transcript",
-                    // Pre-speaker-identification MOM prompt: collapsed every
-                    // remote participant into one "Others" and buried action
-                    // items at the bottom with no blockers section.
-                    "IMPORTANT identity rule:"
-                ]
-                if legacyMarkers.contains(where: { existing.contains($0) }) {
+            guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+                try? fresh.write(to: url, atomically: true, encoding: .utf8)
+                continue
+            }
+            if let stamped = Self.stampedVersion(existing) {
+                // Versioned copy: replace only when it is behind. A user who
+                // edited the prompt but kept the tag still gets updates; one
+                // who deleted the tag is treated as having customized it.
+                if stamped < Self.promptVersion {
                     try? fresh.write(to: url, atomically: true, encoding: .utf8)
                 }
                 continue
             }
-            try? fresh.write(to: url, atomically: true, encoding: .utf8)
+            // Pre-versioning copies, identified by phrases unique to the
+            // defaults that shipped before the tag existed. The first three
+            // told the model to write in the transcript's language, which
+            // produced Hindi notes and false "no credible conversation"
+            // bail-outs; the last is the MOM prompt that collapsed every
+            // remote participant into a single "Others".
+            let legacyMarkers = [
+                "Write the notes in the SAME language as the transcript",
+                "Write the MOM in the SAME language as the transcript",
+                "translate the section headings to match",
+                "ALWAYS write the notes in English regardless of the transcript",
+                "ALWAYS write the MOM in English regardless of the transcript",
+                "IMPORTANT identity rule:",
+                "## How to read this transcript"
+            ]
+            if legacyMarkers.contains(where: { existing.contains($0) }) {
+                try? fresh.write(to: url, atomically: true, encoding: .utf8)
+            }
         }
     }
 
@@ -451,6 +475,7 @@ class MOMGenerator {
     }
 
     private let notesPrompt = """
+\(MOMGenerator.promptVersionTag)
 You are generating structured notes from the transcript of a YouTube video,
 lecture, podcast, talk, or other single-source spoken content. Always produce
 the Markdown below — never refuse or output a "not enough content" message.
@@ -495,6 +520,7 @@ TRANSCRIPT:
 """
 
     private let meetingPrompt = """
+\(MOMGenerator.promptVersionTag)
 You are generating Minutes of Meeting (MOM) from a transcript of a meeting,
 call, or 1:1 conversation.
 
@@ -617,6 +643,60 @@ This is the section people open the note for. Be thorough and be specific.
   tasks cluster at the end of calls.
 - If there are genuinely none, write "- [ ] None — no tasks came out of this
   meeting."
+
+## Agent Prompts
+Ready-to-paste prompts for the Action Items that are software work, so a task
+can go straight into a coding agent without being rewritten by hand.
+
+Which tasks get one:
+- Include anything that lands as a code, config, schema, infrastructure, test,
+  or documentation change in a repository.
+- Skip everything else — calls, approvals, chasing people, scheduling,
+  purchasing, decisions still to be made. Forcing those into a prompt produces
+  something nobody can run. Most meetings yield only one or two codeable tasks,
+  and sometimes none.
+- If none qualify, write "- None — no code changes came out of this meeting."
+  and nothing else in this section.
+
+Format each one as a heading followed by a fenced code block, so it can be
+copied in one go:
+
+### <short task name> — <Owner>
+```
+<prompt text>
+```
+
+What goes inside each fenced block, as flowing prose and bullets — not as
+these labels:
+1. One opening sentence stating the goal in the imperative ("Add retry
+   handling to the webhook consumer so transient 5xx responses don't drop
+   events.").
+2. The background the agent needs, drawn from the meeting: the problem being
+   solved, why it came up, constraints that were stated, the deadline, and who
+   wanted it. Someone who wasn't on the call should understand the task from
+   this alone.
+3. The specific changes required, as bullets — behaviour to add or alter,
+   edge cases raised, error handling, anything explicitly ruled in or out
+   during the discussion.
+4. How to tell it's done: the acceptance criteria, and what to verify or test.
+5. Whatever the meeting left unspecified, listed plainly as open points the
+   agent should ask about before it starts.
+
+Rules for these prompts, which matter more than the formatting:
+- NEVER invent file paths, function names, module names, table names, API
+  endpoints, library names, or version numbers. Use only identifiers that were
+  actually said out loud. Where the meeting referred to something vaguely ("the
+  payments service", "that cron job"), keep the vague wording and add it to the
+  open points so the agent asks instead of guessing.
+- Do not guess at the repository's structure, language, or framework. The
+  agent will be run inside the repo and can look for itself.
+- Keep every requirement traceable to something in the transcript. A prompt
+  that smuggles in your own design opinions will send the agent off building
+  the wrong thing.
+- Write the prompt so it reads correctly on its own, without the rest of this
+  document. It will be pasted somewhere else, with no surrounding context.
+- Length follows the task: a one-line config change needs a short prompt, a
+  migration discussed for twenty minutes needs a thorough one.
 
 Rules:
 - Never invent attendees, decisions, owners, blockers, or commitments that

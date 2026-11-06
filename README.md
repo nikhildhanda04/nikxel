@@ -131,12 +131,23 @@ want; the rest keeps working.
 ### Updating
 
 ```sh
+cd nikxel
 git pull
-./build.sh
+./setup.command
 ```
 
+`setup.command` quits the running copy before rebuilding, then relaunches it.
+That quit matters: Nikxel reads your prompt templates and settings once, at
+launch, so a copy left running keeps behaving like the old version even after
+a successful rebuild. `./build.sh` alone updates the binary but not the
+running process.
+
 Your settings, prompts, and custom avatar live in `~/.nikxel/` and survive
-rebuilds.
+rebuilds. Prompt templates are the one thing that updates itself: each shipped
+default carries a version tag, and a copy of yours that is behind is replaced
+on the next launch. Edit the prompts freely — but delete the
+`<!-- nikxel-prompt vN -->` line at the top if you want yours left alone
+permanently.
 
 ## Make your own avatar
 

@@ -113,9 +113,9 @@ bar → **Setup Wizard…**. Four steps:
 | Step | What it does |
 |---|---|
 | **Your avatar** | Keep the bundled character, or make one that looks like you — see [Make your own avatar](#make-your-own-avatar) below. |
-| **Transcription tools** | Checks for `whisper` and `ffmpeg`. If either is missing it offers **Install with Homebrew**, which opens Terminal and runs the install for you. Skippable — only the recording features need them. |
+| **Transcription tools** | Checks for `whisper` and `ffmpeg`, offering **Install with Homebrew** if either is missing. Downloads the speech model whisper.cpp needs, and sets the spoken language. Skippable — only the recording features need them. |
 | **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated Chrome profile; scan the QR with your phone and the wizard detects the login by itself. Only needed if you want Nikxel replying for you during meetings. |
-| **Choose your coding agent** | Claude Code, OpenCode, or Codex — whichever writes your meeting notes and summaries. Agents that aren't installed are greyed out. |
+| **Choose your coding agent** | Claude Code, OpenCode, or Codex — whichever writes your meeting notes and summaries. Ones you don't have are greyed out, with a copyable install command and a Re-check button. |
 
 ### 4. Grant permissions
 
@@ -170,13 +170,47 @@ work — only for the Notes & Meeting features. The setup wizard checks for
 
 | Tool | Purpose | Install |
 |---|---|---|
-| `whisper` (Python) or `whisper-cli` (whisper.cpp) | Speech-to-text | `pip3 install openai-whisper` or `brew install whisper-cpp` |
+| `whisper` (Python) or `whisper-cli` (whisper.cpp) | Speech-to-text | `brew install whisper-cpp` (recommended) or `pip3 install openai-whisper` |
+| ggml speech model | whisper.cpp ships no model of its own | The wizard downloads `ggml-small.bin` (466 MB) to `~/.nikxel/models/` |
 | `ffmpeg` | Mixes mic + system audio in Notes mode | `brew install ffmpeg` |
 | A coding agent | Turns the transcript into Markdown notes | [Claude Code](https://claude.com/claude-code), [OpenCode](https://opencode.ai), or Codex — pick yours in the setup wizard |
 
 Prompt templates live at `~/.nikxel/prompts/notes.md` and
 `~/.nikxel/prompts/meeting.md` after the first run — edit them to taste; the
 app won't overwrite once they exist.
+
+## Languages — English, Hindi, Hinglish
+
+Set the spoken language in the wizard (**Transcription tools** → *Spoken
+language*). It is stored as `transcriptionLanguage` in
+`~/.nikxel/settings.json`.
+
+| Setting | Use it for |
+|---|---|
+| `en` (default) | English, and Hinglish where English words should stay English |
+| `hi` | Mostly-Hindi speech |
+| `auto` | Not recommended — see below |
+
+**Hindi is always written in Latin letters**, never Devanagari, in both the
+transcript and the summary: "main kal meeting mein shamil nahi ho paunga".
+Whisper can't do that on its own (`-l hi` returns Devanagari and `-l en`
+translates the meaning into English instead of writing the Hindi down), so
+Nikxel transcribes in Hindi and romanizes the result itself.
+
+One caveat: English words spoken inside Hindi come back spelled phonetically
+("pheetchhar", "diployo"). The summary prompt tells your coding agent to
+restore the normal spelling, so the MOM reads correctly even when the raw
+transcript doesn't.
+
+Auto-detect is offered but not recommended — measured against the base and
+small models, it put Hindi into **Urdu** script, and on the small model it
+turned plain English into Devanagari gibberish. Naming the language was
+correct in every case tested.
+
+Hindi needs the `small` model or better; `base` transcribes Hindi into Urdu
+script even when told `-l hi`. The wizard downloads `small` for that reason.
+Dropping a `ggml-medium.bin` or `ggml-large-v3-turbo.bin` into
+`~/.nikxel/models/` upgrades it — Nikxel picks the largest model present.
 
 ## Connect Google Calendar (optional)
 
@@ -226,6 +260,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 | Daily summaries | `~/Documents/nikxel/daily/` |
 | Raw day-activity log (JSONL) | `~/Library/Application Support/Nikxel/days/` |
 | Prompt templates | `~/.nikxel/prompts/notes.md` & `meeting.md` |
+| Speech models (whisper.cpp) | `~/.nikxel/models/` |
 | Raw recordings (kept until processed) | `~/.nikxel/recordings/` |
 | MOM workspace / last-run logs | `~/.nikxel/momworkspace/` |
 | Google OAuth creds & token | `~/.nikxel/google_creds.json`, `~/.nikxel/google_token.json` |

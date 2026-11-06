@@ -15,6 +15,16 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
         }
     }
 
+    /// Shell command that installs this agent, shown (and copyable) in the
+    /// setup wizard when it isn't found.
+    var installCommand: String {
+        switch self {
+        case .claude: return "npm install -g @anthropic-ai/claude-code"
+        case .opencode: return "curl -fsSL https://opencode.ai/install | bash"
+        case .codex: return "npm install -g @openai/codex"
+        }
+    }
+
     /// Process names to look for when checking "is this agent running" —
     /// mirrors AgentMonitor.swift's cosmetic `ps aux` detection list.
     var processNames: [String] {
@@ -34,6 +44,7 @@ enum NikxelSettings {
         var userName: String?
         var language: String?
         var waOwnName: String?
+        var transcriptionLanguage: String?
         var connectedAgent: String?
         var whatsappConnected: Bool?
         var onboardingCompleted: Bool?
@@ -98,9 +109,26 @@ enum NikxelSettings {
     /// Ready-to-drop-into-a-prompt instruction honoring `language`.
     static var languageInstruction: String {
         if language.lowercased() == "auto" {
-            return "The source content may be in English, Hindi, Hinglish (mixed), or any other language. Write your output in that SAME language — don't translate to English unless the source itself is already in English."
+            return "The source content may be in English, Hindi, Hinglish (mixed), or any other language. Write your output in that SAME language — don't translate to English unless the source itself is already in English. For Hindi, always write it in Latin letters as Hinglish (e.g. \"kal meeting mein discuss karenge\") — never in Devanagari script. The transcript romanizes Hindi phonetically, so English and technical words may arrive misspelled (\"pheetchhar\", \"diployo\", \"shedyol\"); restore their normal English spelling (feature, deploy, schedule)."
         }
-        return "Always write your output in \(language), regardless of what language the source content is in. Translate as needed."
+        return "Always write your output in \(language), regardless of what language the source content is in. Translate as needed. If that language is Hindi, write it in Latin letters as Hinglish — never in Devanagari script."
+    }
+
+    /// Spoken language passed to whisper: "en", "hi", or "auto".
+    ///
+    /// Deliberately NOT "auto" by default. Measured on the base and small
+    /// models: auto-detect put Hindi speech into Urdu script, and on the small
+    /// model it mangled plain English into Devanagari. Naming the language
+    /// explicitly was correct in every case tested. Hinglish works under "en"
+    /// (English words stay English, Hindi gets rendered in English) or "hi"
+    /// (everything transliterated into Devanagari) -- "en" reads better in a
+    /// meeting summary, so it is the default.
+    static var transcriptionLanguage: String {
+        get {
+            let raw = load().transcriptionLanguage?.trimmingCharacters(in: .whitespaces) ?? ""
+            return raw.isEmpty ? "en" : raw
+        }
+        set { save { $0.transcriptionLanguage = newValue } }
     }
 
     /// Which CLI agent MOMGenerator shells out to. Defaults to Claude Code —

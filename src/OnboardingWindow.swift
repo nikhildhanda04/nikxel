@@ -32,6 +32,13 @@ final class OnboardingWindowController: NSWindowController {
     private var ffmpegFound = false
     private var brewFound = false
     private var depsChecked = false
+    private var modelInstalled = false
+    private var usingWhisperCpp = false
+    private var modelDownloading = false
+    private var modelProgress: Double = 0
+    private var modelError: String?
+    private var modelProgressBar: NSProgressIndicator?
+    private var agentCopied: CodingAgent?
 
     // WhatsApp step
     private var waConnecting = false
@@ -221,6 +228,42 @@ final class OnboardingWindowController: NSWindowController {
         body.addArrangedSubview(depRow("whisper", found: whisperFound, note: "speech-to-text"))
         body.addArrangedSubview(depRow("ffmpeg", found: ffmpegFound, note: "audio decoding"))
 
+        // whisper.cpp (what Homebrew installs) ships no model of its own, so
+        // transcription silently can't run until one is downloaded.
+        if usingWhisperCpp {
+            body.addArrangedSubview(depRow("speech model", found: modelInstalled, note: "needed by whisper.cpp"))
+            if modelDownloading {
+                let bar = NSProgressIndicator()
+                bar.style = .bar
+                bar.isIndeterminate = false
+                bar.minValue = 0
+                bar.maxValue = 1
+                bar.doubleValue = modelProgress
+                bar.translatesAutoresizingMaskIntoConstraints = false
+                bar.widthAnchor.constraint(equalToConstant: 240).isActive = true
+                modelProgressBar = bar
+                body.addArrangedSubview(bar)
+                body.addArrangedSubview(label("Downloading \(WhisperModel.defaultName)…", size: 11, secondary: true, align: .left))
+            } else if !modelInstalled {
+                body.addArrangedSubview(button("Download speech model (\(WhisperModel.defaultDownloadSize))", #selector(downloadModel)))
+            }
+            if let err = modelError {
+                body.addArrangedSubview(label(err, size: 11, color: .systemRed, align: .left))
+            }
+        }
+
+        body.addArrangedSubview(label("Spoken language", bold: true, align: .left))
+        body.addArrangedSubview(label(
+            "Auto-detect is unreliable — it has put Hindi into Urdu script and turned English into gibberish. Naming the language is much more accurate.",
+            size: 11, secondary: true, align: .left
+        ))
+        for (i, option) in Self.languageOptions.enumerated() {
+            let radio = NSButton(radioButtonWithTitle: option.title, target: self, action: #selector(pickLanguage(_:)))
+            radio.tag = i
+            radio.state = option.code == NikxelSettings.transcriptionLanguage ? .on : .off
+            body.addArrangedSubview(radio)
+        }
+
         if depsChecked && !(whisperFound && ffmpegFound) {
             if brewFound {
                 body.addArrangedSubview(button("Install with Homebrew", #selector(installDeps)))
@@ -234,15 +277,13 @@ final class OnboardingWindowController: NSWindowController {
                     size: 11, secondary: true, align: .left
                 ))
             }
-            body.addArrangedSubview(button("Re-check", #selector(recheckDeps)))
         }
+        body.addArrangedSubview(button("Re-check", #selector(recheckDeps)))
 
         nav.addArrangedSubview(button("Back", #selector(backToAvatar)))
         nav.addArrangedSubview(spacer())
-        nav.addArrangedSubview(defaultButton(
-            whisperFound && ffmpegFound ? "Next" : "Skip for now",
-            #selector(depsToWhatsApp)
-        ))
+        let ready = whisperFound && ffmpegFound && (!usingWhisperCpp || modelInstalled)
+        nav.addArrangedSubview(defaultButton(ready ? "Next" : "Skip for now", #selector(depsToWhatsApp)))
     }
 
     private func buildWhatsApp(body: NSStackView, nav: NSStackView) {
@@ -305,7 +346,35 @@ final class OnboardingWindowController: NSWindowController {
             radio.state = (agent == chosenAgent) ? .on : .off
             radio.isEnabled = available
             body.addArrangedSubview(radio)
+
+            // Someone with none of these installed would otherwise hit a dead
+            // end here, so show exactly what to run and let them copy it.
+            if !available {
+                let row = NSStackView()
+                row.orientation = .horizontal
+                row.spacing = 8
+                let cmd = label(agent.installCommand, size: 11, secondary: true, align: .left)
+                cmd.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+                cmd.isSelectable = true
+                row.addArrangedSubview(cmd)
+                let copy = NSButton(
+                    title: agentCopied == agent ? "Copied ✓" : "Copy",
+                    target: self, action: #selector(copyInstallCommand(_:))
+                )
+                copy.bezelStyle = .rounded
+                copy.controlSize = .small
+                copy.tag = i
+                row.addArrangedSubview(copy)
+                row.addArrangedSubview(spacer())
+                body.addArrangedSubview(row)
+            }
         }
+
+        body.addArrangedSubview(label(
+            "Run the command in a terminal, then click Re-check.",
+            size: 11, secondary: true, align: .left
+        ))
+        body.addArrangedSubview(button("Re-check", #selector(recheckAgents)))
 
         nav.addArrangedSubview(button("Back", #selector(backToWhatsApp)))
         nav.addArrangedSubview(spacer())
@@ -340,6 +409,53 @@ final class OnboardingWindowController: NSWindowController {
     @objc private func whatsappToAgent() { go(to: .agent) }
     @objc private func backToWhatsApp() { go(to: .whatsapp) }
     @objc private func recheckDeps() { refreshDeps() }
+    @objc private func recheckAgents() { refreshAvailableAgents() }
+
+    static let languageOptions: [(title: String, code: String)] = [
+        ("English (also best for Hinglish)", "en"),
+        ("Hindi (written as Hinglish)", "hi"),
+        ("Auto-detect (unreliable)", "auto"),
+    ]
+
+    @objc private func pickLanguage(_ sender: NSButton) {
+        guard sender.tag < Self.languageOptions.count else { return }
+        NikxelSettings.transcriptionLanguage = Self.languageOptions[sender.tag].code
+        render()
+    }
+
+    @objc private func copyInstallCommand(_ sender: NSButton) {
+        guard sender.tag < CodingAgent.allCases.count else { return }
+        let agent = CodingAgent.allCases[sender.tag]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(agent.installCommand, forType: .string)
+        agentCopied = agent
+        render()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.step == .agent else { return }
+            self.agentCopied = nil
+            self.render()
+        }
+    }
+
+    @objc private func downloadModel() {
+        modelDownloading = true
+        modelProgress = 0
+        modelError = nil
+        render()
+        WhisperModel.downloadDefault(progress: { [weak self] fraction in
+            // Nudge the existing bar rather than re-rendering the whole step on
+            // every progress callback.
+            self?.modelProgress = fraction
+            self?.modelProgressBar?.doubleValue = fraction
+        }, completion: { [weak self] result in
+            guard let self = self else { return }
+            self.modelDownloading = false
+            if case .failure(let error) = result {
+                self.modelError = "Download failed: \(error.localizedDescription)"
+            }
+            self.refreshDeps()
+        })
+    }
 
     @objc private func pickAgent(_ sender: NSButton) {
         guard sender.tag < CodingAgent.allCases.count else { return }
@@ -446,11 +562,16 @@ final class OnboardingWindowController: NSWindowController {
 
     private func refreshDeps() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let whisper = Transcriber().findBinary() != nil
+            let whisperPath = Transcriber().findBinary()
+            let whisper = whisperPath != nil
+            let isCpp = whisperPath.map { Transcriber.Flavor.of(binary: $0) == .cpp } ?? false
+            let hasModel = WhisperModel.isInstalled
             let ffmpeg = Self.onPath("ffmpeg")
             let brew = Self.onPath("brew")
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.usingWhisperCpp = isCpp
+                self.modelInstalled = hasModel
                 self.whisperFound = whisper
                 self.ffmpegFound = ffmpeg
                 self.brewFound = brew

@@ -49,6 +49,7 @@ enum NikxelSettings {
         var connectedAgent: String?
         var whatsappConnected: Bool?
         var onboardingCompleted: Bool?
+        var botMemoryDays: Int?
     }
 
     private static let fileURL: URL = {
@@ -164,6 +165,17 @@ enum NikxelSettings {
             return raw.isEmpty ? "en" : raw
         }
         set { save { $0.transcriptionLanguage = newValue } }
+    }
+
+    /// How many days of end-of-day summaries the WhatsApp bot gets as context
+    /// before writing a reply. 0 turns it off entirely.
+    ///
+    /// Kept small on purpose: the context is prepended to every reply prompt,
+    /// so each extra day costs latency on every message, and older days are
+    /// rarely what a contact is asking about.
+    static var botMemoryDays: Int {
+        get { max(0, min(14, load().botMemoryDays ?? 3)) }
+        set { save { $0.botMemoryDays = max(0, min(14, newValue)) } }
     }
 
     /// File format for generated notes/MOMs. The Markdown the agent wrote is

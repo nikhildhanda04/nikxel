@@ -50,7 +50,9 @@ class LLMResponder {
     private func buildPrompt(contact: String,
                              history: [(role: String, text: String)],
                              newMessages: [String]) -> String {
-        var p = personality + "\n\nContact: \(contact)\n"
+        var p = personality + "\n\n"
+        p += recentContextBlock()
+        p += "Contact: \(contact)\n"
         if !history.isEmpty {
             p += "\nConversation so far:\n"
             for (role, text) in history.suffix(6) {
@@ -65,6 +67,47 @@ class LLMResponder {
             p += " Match the contact's own language/tone — if they write in Hindi or Hinglish, reply the same way; if they write in English, reply in English."
         }
         return p
+    }
+
+    /// The last few end-of-day summaries, so the bot knows roughly what the
+    /// user has been working on and can answer "any update on X?" instead of
+    /// "I'm not sure, I'll pass it on".
+    ///
+    /// These summaries are detailed -- repos and commits, window titles, which
+    /// apps were used, who else was messaged and called. The bot replies
+    /// automatically to whoever happens to write during a meeting, including
+    /// people who should not learn any of that, so the block below is wrapped
+    /// in an explicit non-disclosure rule. Context for understanding the
+    /// question; not material to volunteer.
+    ///
+    /// Not private: check_bot_memory.swift prints this block and feeds it to a
+    /// real agent to confirm the non-disclosure rules actually hold.
+    func recentContextBlock() -> String {
+        let days = NikxelSettings.botMemoryDays
+        let summaries = DayLogger.recentSummaries(days: days)
+        guard !summaries.isEmpty else { return "" }
+
+        var block = """
+        BACKGROUND -- \(NikxelSettings.userName)'s own notes from the last few days. \
+        This is private. Use it only to understand what the contact is asking about \
+        and to answer naturally when they raise something you recognise.
+
+        Never disclose from it. Specifically:
+        - Don't volunteer project, repo, client or company names, what was built or \
+        committed, meeting topics, or who else they met, called or messaged.
+        - Don't mention these notes exist, and don't say you have access to a log.
+        - If asked what they're working on, stay general ("heads-down on work stuff") \
+        unless this contact clearly already knows the specifics from the conversation.
+        - If a question needs a detail that's only in here, say they'll follow up \
+        themselves rather than answering from it.
+
+
+        """
+        for (day, text) in summaries {
+            block += "--- \(day) ---\n\(text)\n\n"
+        }
+        block += "END OF BACKGROUND.\n\n"
+        return block
     }
 
     private func cleanReply(_ raw: String) -> String? {

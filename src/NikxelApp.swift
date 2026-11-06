@@ -429,7 +429,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             {
               "userName": "\(NikxelSettings.userName)",
               "waOwnName": "\(NikxelSettings.waOwnName)",
-              "language": "auto"
+              "language": "auto",
+              "botMemoryDays": \(NikxelSettings.botMemoryDays)
             }
             """
             try? def.write(to: url, atomically: true, encoding: .utf8)
@@ -440,6 +441,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         userName — your real name, used so meeting MOMs correctly identify "Me" as you (not whoever else gets mentioned on the call).
         waOwnName — your name exactly as it shows in your own WhatsApp account (often your full name) — used to filter your own messages out of chat scraping. Leave as-is if unsure.
         language — "auto" to match whichever language the content is in (English, Hindi, Hinglish, etc.), or a specific language name (e.g. "Hindi") to always force it.
+        botMemoryDays — how many days of your end-of-day summaries the WhatsApp bot reads before replying, so it recognises what someone is asking about. It is told never to disclose from them. 0 turns it off; 3 is the default.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open settings.json")

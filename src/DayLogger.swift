@@ -22,7 +22,7 @@ class DayLogger {
         self.momGenerator = momGenerator
         let home = FileManager.default.homeDirectoryForCurrentUser
         self.logDir = home.appendingPathComponent("Library/Application Support/Nikxel/days", isDirectory: true)
-        self.summaryDir = home.appendingPathComponent("Documents/nikxel/daily", isDirectory: true)
+        self.summaryDir = Self.summaryDirectory
         self.meetingsDir = home.appendingPathComponent("Documents/nikxel/meetings", isDirectory: true)
         self.scanRoot = home.appendingPathComponent("Desktop", isDirectory: true)
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
@@ -97,6 +97,44 @@ class DayLogger {
 
     private func summaryFileURL(for date: Date) -> URL {
         return summaryDir.appendingPathComponent("\(Self.dayKey(date)).md")
+    }
+
+    /// Where the end-of-day summaries live. Static so the WhatsApp bot can
+    /// read them back without owning a DayLogger.
+    static var summaryDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/nikxel/daily", isDirectory: true)
+    }
+
+    /// The most recent `days` end-of-day summaries, newest first, skipping
+    /// days with no summary (the app wasn't running, or it's before 10pm).
+    ///
+    /// Each is truncated: a full day's summary runs to a few KB, and this gets
+    /// prepended to every WhatsApp reply prompt, where it would otherwise
+    /// dominate the actual message and slow every response down.
+    /// `directory` and `now` are injectable so this can be checked against a
+    /// temp folder and a fixed date -- see check_bot_memory.swift.
+    static func recentSummaries(days: Int,
+                                maxCharsPerDay: Int = 1200,
+                                in directory: URL? = nil,
+                                now: Date = Date()) -> [(day: String, text: String)] {
+        guard days > 0 else { return [] }
+        let dir = directory ?? summaryDirectory
+        let cal = Calendar.current
+        var out: [(String, String)] = []
+        // Start at yesterday: today's summary doesn't exist until 10pm, and
+        // looking back `days` from today would silently give one day fewer.
+        for offset in 1...days {
+            guard let date = cal.date(byAdding: .day, value: -offset, to: now) else { continue }
+            let url = dir.appendingPathComponent("\(dayKey(date)).md")
+            guard let raw = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            out.append((dayKey(date), text.count > maxCharsPerDay
+                        ? String(text.prefix(maxCharsPerDay)) + "…"
+                        : text))
+        }
+        return out
     }
 
     private static func dayKey(_ date: Date) -> String {

@@ -259,6 +259,26 @@ Non-code tasks (chasing approvals, booking rooms, making calls) are skipped
 here — they stay in **Action Items** where they belong. A meeting with no
 engineering work just gets *"None"*.
 
+## What the WhatsApp bot knows
+
+While you're in a meeting, the bot reads your last **3 end-of-day summaries**
+before writing a reply, so a contact asking *"any update on that thing?"* gets
+an answer that recognises what they mean instead of a blank "I'll pass it on".
+
+Those summaries are detailed — repos and commits, window titles, meetings, who
+you called and messaged. The bot answers whoever happens to write to you, so
+the context is supplied under an explicit non-disclosure rule: use it to
+understand the question, never to volunteer project or client names, meeting
+topics, or who else you spoke to, and never admit the notes exist. If an answer
+would need a detail only found there, it says you'll follow up yourself.
+
+Tune it with `botMemoryDays` in `~/.nikxel/settings.json` — `0` turns it off,
+`3` is the default, `14` is the maximum. Each extra day is prepended to every
+reply prompt, so it costs latency on every message.
+
+Nothing to set up: summaries are the ones already written to
+`~/Documents/nikxel/daily/` at 10pm. With none yet, the bot behaves as before.
+
 ## Note format — Markdown, PDF or Word
 
 Menu bar → **Note Format** → Markdown (.md) · PDF (.pdf) · Word (.docx).

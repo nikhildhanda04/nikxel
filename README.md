@@ -179,6 +179,23 @@ Prompt templates live at `~/.nikxel/prompts/notes.md` and
 `~/.nikxel/prompts/meeting.md` after the first run — edit them to taste; the
 app won't overwrite once they exist.
 
+## If a summary gets interrupted
+
+Double-clicking the avatar while it's still writing your notes no longer
+starts a new recording — it says *"Still writing your notes…"* instead. The
+menu bar's **Start/Stop Recording** is unguarded, so recording during a
+summary is still possible when you actually mean it.
+
+If a summary never finishes — you quit the app, the Mac slept, the agent
+failed — the transcript is already on disk (saved *before* generation runs)
+and a marker records that a summary is owed. Menu bar → **Regenerate
+Unfinished Summary…** re-runs your agent over that transcript. Nikxel also
+flags leftovers on launch.
+
+Each run now gets its own folder under `~/.nikxel/momworkspace/<timestamp>/`.
+Previously every run wrote to the same `last_*.log` files, so two overlapping
+runs destroyed each other's logs.
+
 ## Note format — Markdown, PDF or Word
 
 Menu bar → **Note Format** → Markdown (.md) · PDF (.pdf) · Word (.docx).

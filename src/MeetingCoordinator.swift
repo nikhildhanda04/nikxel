@@ -9,15 +9,29 @@ class MeetingCoordinator: AudioRecorderDelegate {
     let momGen = MOMGenerator()
     weak var nikxelView: NikxelView?
 
+    /// Set while a recording is being transcribed/summarized. A double-click on
+    /// the avatar used to start a fresh recording here, which buried the work in
+    /// progress: the .writingMOM animation got clobbered by .recording, the new
+    /// (near-empty) recording raised its own "generation failed" alert, and the
+    /// two runs overwrote each other's logs.
+    private(set) var isProcessing = false
+
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         recorder.delegate = self
         requestNotificationPermission()
     }
 
-    func toggleRecording() {
+    /// `force` comes from the menu bar, which stays unguarded as the deliberate
+    /// way to record while a summary is still being written. The avatar's
+    /// double-click does not, because that is the accidental path.
+    func toggleRecording(force: Bool = false) {
         if recorder.isRecording {
             recorder.stop()
+            return
+        }
+        if isProcessing && !force {
+            nikxelView?.pushReminder(id: "nikxel.busy", title: "Still writing your notes…")
             return
         }
         recorder.captureMode = CaptureMode.current
@@ -51,6 +65,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         }
 
         guard let artifacts = artifacts else {
+            isProcessing = false
             notify(title: "Recording failed", body: "No audio file produced.")
             return
         }
@@ -58,6 +73,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         let startedAt = recorder.startedAt ?? Date()
         let durationSec = max(1, Int(Date().timeIntervalSince(startedAt)))
 
+        isProcessing = true
         stateMachine.startWritingMOM()
         switch artifacts {
         case .merged(let audioURL):
@@ -136,6 +152,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
             DispatchQueue.main.async {
                 switch result {
                 case .failure(let err):
+                    self.isProcessing = false
                     self.stateMachine.endWritingMOM()
                     let alert = NSAlert()
                     alert.messageText = mode == .notes ? "Notes Generation Failed" : "MOM Generation Failed"
@@ -144,7 +161,11 @@ class MeetingCoordinator: AudioRecorderDelegate {
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
                 case .success(let outURL):
+                    self.isProcessing = false
+                    // endWritingMOM first: .writingMOM is sticky in setState,
+                    // so triggerMomReady would be swallowed while it's held.
                     self.stateMachine.endWritingMOM()
+                    self.stateMachine.triggerMomReady()
                     let title = mode == .notes ? "Notes ready" : "MOM ready"
                     self.notify(title: title, body: outURL.lastPathComponent, openOnTap: outURL)
                     cleanup()
@@ -155,6 +176,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
     private func reportTranscribeFailure(_ err: Error) {
         DispatchQueue.main.async {
+            self.isProcessing = false
             self.stateMachine.endWritingMOM()
             let alert = NSAlert()
             alert.messageText = "Transcription Failed"

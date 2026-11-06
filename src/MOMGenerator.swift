@@ -136,11 +136,22 @@ class MOMGenerator {
                 // Save the raw transcript before attempting generation, so a
                 // claude failure/timeout/missing-binary still leaves the full
                 // transcript on disk instead of losing it with the recording.
-                try? self.saveTranscript(content: trimmed, mode: mode, startedAt: startedAt)
+                let transcriptURL = try? self.saveTranscript(content: trimmed, mode: mode, startedAt: startedAt)
+
+                // Record that a summary is owed for this transcript. Deleted on
+                // success; anything left behind is an unfinished job that
+                // "Regenerate Unfinished Summary" can pick up later -- including
+                // after a crash or a quit mid-generation.
+                let stem = self.timestampStem(startedAt)
+                self.writeMarker(stem: stem, mode: mode, startedAt: startedAt,
+                                 durationSec: durationSec, transcript: transcriptURL)
+
                 let agent = NikxelSettings.connectedAgent
                 guard let bin = self.findBinary(for: agent) else { throw MOMError.agentNotFound }
-                let output = try self.runTemplate(binary: bin, agent: agent, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec)
+                let runDir = self.workspace.appendingPathComponent(stem, isDirectory: true)
+                let output = try self.runTemplate(binary: bin, agent: agent, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec, runDir: runDir)
                 let outURL = try self.saveOutput(content: output, mode: mode, startedAt: startedAt)
+                self.clearMarker(stem: stem)
                 completion(.success(outURL))
             } catch {
                 completion(.failure(error))
@@ -174,7 +185,7 @@ class MOMGenerator {
         return promptsDir.appendingPathComponent(name)
     }
 
-    private func runTemplate(binary: String, agent: CodingAgent, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int) throws -> String {
+    private func runTemplate(binary: String, agent: CodingAgent, mode: CaptureMode, transcript: String, startedAt: Date, durationSec: Int, runDir: URL) throws -> String {
         let promptURL = promptPath(for: mode)
         let template = (try? String(contentsOf: promptURL, encoding: .utf8)) ?? defaultPrompt(for: mode)
 
@@ -187,7 +198,7 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
 
-        return try executeAgent(binary: binary, agent: agent, prompt: prompt)
+        return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir)
     }
 
     // Run an arbitrary prompt through the agent. Used by DayLogger for EOD
@@ -198,7 +209,13 @@ class MOMGenerator {
         return try executeAgent(binary: bin, agent: agent, prompt: prompt)
     }
 
-    private func executeAgent(binary: String, agent: CodingAgent, prompt: String) throws -> String {
+    private func executeAgent(binary: String, agent: CodingAgent, prompt: String, runDir: URL? = nil) throws -> String {
+        // Each run gets its own directory. These used to be fixed names in one
+        // shared folder, so two overlapping runs -- easy to trigger by starting
+        // a second recording while the first was still summarizing -- wiped
+        // each other's logs, leaving nothing to diagnose a failure with.
+        let workspace = runDir ?? self.workspace
+        try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let backend = AgentBackend.backend(for: agent)
         let promptDump = workspace.appendingPathComponent("last_prompt.txt")
         let stdoutDump = workspace.appendingPathComponent("last_stdout.log")
@@ -323,6 +340,76 @@ class MOMGenerator {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd-HHmmss"
         return fmt.string(from: date)
+    }
+
+    // MARK: - Unfinished jobs
+
+    /// A summary that was started but never written.
+    struct PendingJob {
+        let stem: String
+        let mode: CaptureMode
+        let startedAt: Date
+        let durationSec: Int
+        let transcriptURL: URL
+    }
+
+    private var pendingDir: URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".nikxel/pending", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func writeMarker(stem: String, mode: CaptureMode, startedAt: Date, durationSec: Int, transcript: URL?) {
+        guard let transcript = transcript else { return }
+        let payload: [String: Any] = [
+            "mode": mode == .notes ? "notes" : "meeting",
+            "startedAt": startedAt.timeIntervalSince1970,
+            "durationSec": durationSec,
+            "transcript": transcript.path,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: pendingDir.appendingPathComponent("\(stem).json"))
+    }
+
+    private func clearMarker(stem: String) {
+        try? FileManager.default.removeItem(at: pendingDir.appendingPathComponent("\(stem).json"))
+    }
+
+    /// Summaries that were started but never finished, newest first. A marker
+    /// whose transcript has since vanished is dropped rather than reported.
+    func unfinishedJobs() -> [PendingJob] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: pendingDir.path) else { return [] }
+        var jobs: [PendingJob] = []
+        for name in names where name.hasSuffix(".json") {
+            let url = pendingDir.appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: url),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let modeRaw = obj["mode"] as? String,
+                  let started = obj["startedAt"] as? TimeInterval,
+                  let duration = obj["durationSec"] as? Int,
+                  let path = obj["transcript"] as? String else { continue }
+            guard fm.isReadableFile(atPath: path) else { try? fm.removeItem(at: url); continue }
+            jobs.append(PendingJob(
+                stem: String(name.dropLast(5)),
+                mode: modeRaw == "notes" ? .notes : .meeting,
+                startedAt: Date(timeIntervalSince1970: started),
+                durationSec: duration,
+                transcriptURL: URL(fileURLWithPath: path)
+            ))
+        }
+        return jobs.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    /// Re-runs generation from a saved transcript.
+    func regenerate(_ job: PendingJob, completion: @escaping (Result<URL, Error>) -> Void) {
+        guard let transcript = try? String(contentsOf: job.transcriptURL, encoding: .utf8) else {
+            completion(.failure(MOMError.transcriptEmpty))
+            return
+        }
+        generate(transcript: transcript, mode: job.mode, startedAt: job.startedAt,
+                 durationSec: job.durationSec, completion: completion)
     }
 
     private func seedDefaultPrompts() {

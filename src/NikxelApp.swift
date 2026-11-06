@@ -41,7 +41,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         meetingCoordinator = MeetingCoordinator(stateMachine: stateMachine)
         meetingCoordinator.nikxelView = window.nikxelView
-        window.onDoubleClick = { [weak self] in self?.meetingCoordinator.toggleRecording() }
+        window.onDoubleClick = { [weak self] in self?.meetingCoordinator.toggleRecording(force: false) }
 
         calendarWatcher = GoogleCalendarWatcher(stateMachine: stateMachine)
         calendarWatcher.onReminder = { [weak self] text in self?.showReminder(text: text) }
@@ -101,6 +101,15 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         if !NikxelSettings.onboardingCompleted {
             showOnboarding()
+        }
+
+        // A summary interrupted by a quit or crash leaves its marker behind.
+        let unfinished = meetingCoordinator.momGen.unfinishedJobs()
+        if !unfinished.isEmpty {
+            window.nikxelView?.pushReminder(
+                id: "nikxel.unfinished",
+                title: "\(unfinished.count) summary\(unfinished.count == 1 ? "" : "s") unfinished — see the menu bar"
+            )
         }
     }
 
@@ -198,6 +207,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let editSettings = NSMenuItem(title: "Edit Nikxel Settings (name, language)…", action: #selector(editSettings), keyEquivalent: "")
         editSettings.target = self; menu.addItem(editSettings)
 
+        let regenerate = NSMenuItem(title: "Regenerate Unfinished Summary…", action: #selector(regenerateUnfinished), keyEquivalent: "")
+        regenerate.target = self; menu.addItem(regenerate)
+
         let setupWizard = NSMenuItem(title: "Setup Wizard…", action: #selector(openOnboarding), keyEquivalent: "")
         setupWizard.target = self; menu.addItem(setupWizard)
 
@@ -219,7 +231,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func toggleRecording() {
-        meetingCoordinator.toggleRecording()
+        // Menu bar is the deliberate path, so it isn't blocked while a summary
+        // is still being written.
+        meetingCoordinator.toggleRecording(force: true)
     }
 
     @objc func toggleForceMeeting() {
@@ -325,6 +339,55 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let current = NikxelSettings.noteFormat
         for item in noteFormatItems {
             item.state = (item.representedObject as? String) == current.rawValue ? .on : .off
+        }
+    }
+
+    /// Offers to re-run the newest summary that was started but never written,
+    /// from the transcript saved before generation. This is the recovery path
+    /// for a quit, crash, or agent failure mid-generation.
+    @objc func regenerateUnfinished() {
+        let jobs = meetingCoordinator.momGen.unfinishedJobs()
+        guard let job = jobs.first else {
+            let alert = NSAlert()
+            alert.messageText = "Nothing to regenerate"
+            alert.informativeText = "Every recording you've made has a summary."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        let alert = NSAlert()
+        alert.messageText = "Regenerate this summary?"
+        alert.informativeText = """
+        \(job.mode == .notes ? "Notes" : "Meeting") from \(formatter.string(from: job.startedAt)).
+        The transcript is saved — this re-runs your coding agent over it.
+        \(jobs.count > 1 ? "\n\(jobs.count - 1) more unfinished after this one." : "")
+        """
+        alert.addButton(withTitle: "Regenerate")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        stateMachine.startWritingMOM()
+        meetingCoordinator.momGen.regenerate(job) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.stateMachine.endWritingMOM()
+                switch result {
+                case .success(let url):
+                    self.stateMachine.triggerMomReady()
+                    NSWorkspace.shared.open(url)
+                case .failure(let error):
+                    let fail = NSAlert()
+                    fail.messageText = "Regeneration Failed"
+                    fail.informativeText = "\(error)"
+                    fail.alertStyle = .critical
+                    fail.addButton(withTitle: "OK")
+                    fail.runModal()
+                }
+            }
         }
     }
 

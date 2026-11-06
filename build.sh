@@ -22,6 +22,10 @@ lipo -create -output Nikxel.app/Contents/MacOS/Nikxel build/arm64/Nikxel build/x
 chmod +x Nikxel.app/Contents/MacOS/Nikxel
 rm -rf build
 
+# macOS 15+ stamps com.apple.provenance on files it writes, and codesign
+# refuses to sign a bundle carrying any extended attributes ("resource fork,
+# Finder information, or similar detritus not allowed"). Strip them first.
+xattr -cr Nikxel.app
 codesign --force --deep --sign - Nikxel.app
 echo "Build complete: Nikxel.app"
 file Nikxel.app/Contents/MacOS/Nikxel

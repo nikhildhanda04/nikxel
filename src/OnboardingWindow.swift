@@ -17,6 +17,9 @@ final class OnboardingWindowController: NSWindowController {
     private let momGenerator: MOMGenerator
     private var step: Step = .welcome
 
+    // Welcome step
+    private var nameField: NSTextField?
+
     // Avatar step
     private var previewFrames: [NSImage] = []
     private var previewIndex = 0
@@ -102,6 +105,7 @@ final class OnboardingWindowController: NSWindowController {
         guard let content = window?.contentView else { return }
         content.subviews.forEach { $0.removeFromSuperview() }
         previewImageView = nil
+        nameField = nil
 
         let body = NSStackView()
         body.orientation = .vertical
@@ -149,6 +153,18 @@ final class OnboardingWindowController: NSWindowController {
             "Let's pick your avatar, check the transcription tools, connect WhatsApp auto-replies, and choose which coding agent Nikxel should use — takes about a minute.",
             secondary: true
         ))
+
+        // Meeting summaries label the mic channel with this name. Without it
+        // the summary has to call the user something generic, and a wrong
+        // name is worse than none.
+        body.addArrangedSubview(label("What should Nikxel call you in your notes?", size: 12, secondary: true))
+        let field = NSTextField(string: NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""))
+        field.placeholderString = "Your first name (optional)"
+        field.alignment = .center
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        nameField = field
+        body.addArrangedSubview(field)
 
         nav.addArrangedSubview(spacer())
         nav.addArrangedSubview(defaultButton("Get Started", #selector(nextFromWelcome)))
@@ -400,7 +416,11 @@ final class OnboardingWindowController: NSWindowController {
 
     // MARK: - Navigation actions
 
-    @objc private func nextFromWelcome() { go(to: .avatar) }
+    @objc private func nextFromWelcome() {
+        let typed = nameField?.stringValue.trimmingCharacters(in: .whitespaces) ?? ""
+        if !typed.isEmpty { NikxelSettings.userName = typed }
+        go(to: .avatar)
+    }
     @objc private func backToWelcome() { go(to: .welcome) }
     @objc private func avatarToDeps() { go(to: .deps) }
     @objc private func backToAvatar() { go(to: .avatar) }

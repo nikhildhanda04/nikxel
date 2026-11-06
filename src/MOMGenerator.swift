@@ -428,7 +428,11 @@ class MOMGenerator {
                     "Write the MOM in the SAME language as the transcript",
                     "translate the section headings to match",
                     "ALWAYS write the notes in English regardless of the transcript",
-                    "ALWAYS write the MOM in English regardless of the transcript"
+                    "ALWAYS write the MOM in English regardless of the transcript",
+                    // Pre-speaker-identification MOM prompt: collapsed every
+                    // remote participant into one "Others" and buried action
+                    // items at the bottom with no blockers section.
+                    "IMPORTANT identity rule:"
                 ]
                 if legacyMarkers.contains(where: { existing.contains($0) }) {
                     try? fresh.write(to: url, atomically: true, encoding: .utf8)
@@ -492,19 +496,61 @@ TRANSCRIPT:
 
     private let meetingPrompt = """
 You are generating Minutes of Meeting (MOM) from a transcript of a meeting,
-call, or 1:1 conversation. The transcript is pre-labeled with speakers:
-  "Me" = {{user_name}}, the user who recorded this meeting (microphone input)
-  "Others" = everyone else on the call (system audio output)
+call, or 1:1 conversation.
 
-IMPORTANT identity rule: "Me" is specifically {{user_name}} — nobody else.
-If a name mentioned anywhere in the transcript happens to resemble, sound
-like, or be associated with someone else on the call, do NOT reassign "Me"'s
-lines to them, and do NOT describe "Me" as if they were a different person.
-Conversely, don't attribute something "Others" said to {{user_name}}/"Me"
-just because the topic involves {{user_name}}. When referring to the user by
-name anywhere in the output, use {{user_name}}, not a guessed or inferred name.
-Multiple distinct people may be collapsed under "Others" — use context clues
-(names, turn-taking, topic switches) to distinguish them where you can.
+## How to read this transcript
+
+Every line is "[timestamp] Channel: text". There are only two channels, and
+they are AUDIO CHANNELS, NOT PEOPLE:
+
+  "Me"     = the microphone. Exactly one person: {{user_name}}, who recorded
+             this meeting.
+  "Others" = the speaker output. EVERYONE ELSE on the call, mixed together.
+             This may be one person or six. The label never changes even when
+             the person talking does.
+
+Your first job is to work out how many distinct people are hiding behind
+"Others", and which lines belong to which of them.
+
+### Separating the people inside "Others"
+
+Use the evidence actually present in the transcript:
+- Self-introductions ("Hi, this is Priya", "Rohan here").
+- Direct address and handoffs ("Sam, what do you think?", "over to you, Ann")
+  — the lines that follow usually belong to the person just addressed.
+- Someone answering a question that was clearly put to a specific person.
+- Continuity of role and topic: whoever owns the design discussion through the
+  call is one person; whoever keeps answering budget questions is another.
+- Timestamp gaps between consecutive "Others" lines. A noticeable pause often
+  marks a turn change; continuous back-to-back lines usually do not.
+- Shifts in how someone speaks: a different register, filler words, or
+  language mix is a real signal.
+
+### Speaker rules (these matter — getting them wrong is worse than being vague)
+
+- Give every distinct person ONE stable label and use it everywhere in the
+  output. Use a real name only when the transcript gives you evidence for it.
+  Otherwise use "Speaker 2", "Speaker 3", … numbered by when they first speak
+  ("Me" is effectively speaker 1).
+- Never collapse two different people into one label. If two people clearly
+  spoke, list two speakers — even if one of them has no name.
+- Never split one person into two just because they paused or changed topic.
+- A name MENTIONED in the meeting is not automatically a SPEAKER. People get
+  talked about while absent. Only treat a name as a speaker when someone
+  addresses them and they respond, or they introduce themselves.
+- When you genuinely cannot separate them, say so plainly: list
+  "Others — multiple participants, could not be separated reliably" and
+  attribute those lines to "Others". An honest "Others" beats a confident
+  wrong name.
+
+### Who "Me" is
+
+"Me" is exactly one person: {{user_name}}. Never reassign "Me"'s lines to
+anyone else, never describe "Me" as if they were another participant, and
+never attribute something "Others" said to "Me" just because the topic
+involves them. If {{user_name}} is literally "Me", then no name was
+configured — refer to that person as "Me" throughout and do NOT invent or
+guess a name for them.
 
 Always produce the Markdown below — never refuse, never output a "not a real
 meeting" message, and never claim "no credible conversation occurred" or any
@@ -513,9 +559,9 @@ meeting and fill in every section from what was said. A short, casual, or
 non-English meeting is still a meeting.
 
 {{language_instruction}}
-Section headings (Attendees, Summary, Decisions, etc.) stay in English
-regardless, so the structure is always scannable — only the content inside
-each section follows the language rule above.
+Section headings stay in English regardless, so the structure is always
+scannable — only the content inside each section follows the language rule
+above.
 
 Recorded: {{date}}
 Duration: {{duration}}
@@ -524,36 +570,62 @@ Output this exact Markdown structure (keep section headings in English):
 
 # Meeting — {{date}}
 
-## Attendees
-- {{user_name}} (Me) — (infer role/context if possible)
-- Others — list distinct participants you can identify by name or context; if
-  indistinguishable, write "Others (1 or more participants)".
-
 ## Summary
-3-5 sentences capturing what was discussed and the overall outcome.
+A complete picture of the meeting in 5-8 sentences: what it was about, the
+main threads of discussion, what was agreed, and where things landed. Someone
+who missed the call should be able to read only this and know what happened.
+
+## Speakers
+- {{user_name}} (Me) — role/context if the transcript shows it.
+- One line per distinct person you identified in "Others", with the label you
+  will use for them below and the evidence you used ("introduced themselves",
+  "addressed as Priya", "answered all the pricing questions").
 
 ## Per-Speaker Highlights
-**{{user_name}} (Me):** what the user contributed, asked, proposed, or committed to.
-**Others:** what the other side contributed, asked, proposed, or committed to.
-  If you identified specific people by name, give each their own line.
+**{{user_name}} (Me):** what they contributed, asked, proposed, pushed back on,
+or committed to.
+**<each speaker from the Speakers list>:** the same, one block per person. Use
+the exact same label you listed above.
 
 ## Decisions
-- Concrete decisions made during the meeting. If none, write "- None."
+- The actual decisions reached — what was decided, and by whom if the
+  transcript shows it. Only things genuinely settled during the call, not
+  options that were merely discussed. If none, write "- None."
 
-## Action Items
-- [ ] Task — Owner ({{user_name}} / name from Others) — due date if mentioned.
-- If none, write "- None mentioned."
+## Blockers & Risks
+- Anything stopping work: dependencies, missing approvals, people waiting on
+  each other, technical obstacles, deadline or resource risks raised.
+- Note who is blocked and on what. If none, write "- None."
 
 ## Open Questions
-- Unresolved questions or follow-ups flagged for later. If none, write "- None."
+- Questions raised and left unanswered, and points parked for later.
+- If none, write "- None."
+
+## Action Items
+This is the section people open the note for. Be thorough and be specific.
+- Format every task as: `- [ ] **Task** — Owner: <name or Unassigned> — Due: <date or Not specified>`
+- Write each task as a complete, self-contained instruction. "Send Priya the
+  updated pricing sheet" — not "pricing sheet". Someone should be able to act
+  on the bullet without reading the rest of the note.
+- Include tasks that were assigned AND tasks someone took on themselves
+  ("I'll check with finance" is a task owned by that speaker).
+- Include things the meeting clearly implied need doing, but only when the
+  transcript supports them.
+- Owner is the speaker label from the Speakers section. If nobody picked it
+  up, write "Unassigned".
+- Scan the entire transcript for these, including the last few minutes —
+  tasks cluster at the end of calls.
+- If there are genuinely none, write "- [ ] None — no tasks came out of this
+  meeting."
 
 Rules:
-- Never invent attendees, decisions, owners, or commitments not in the transcript.
-- Attribute action items to the speaker who took them on.
+- Never invent attendees, decisions, owners, blockers, or commitments that
+  aren't in the transcript.
+- Keep speaker labels identical across every section.
 - Output ONLY the Markdown — no preamble, no closing remarks, no commentary.
 
 ---
-TRANSCRIPT (labeled by speaker):
+TRANSCRIPT (labeled by audio channel, not by person):
 {{transcript}}
 """
 }

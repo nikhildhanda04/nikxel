@@ -410,8 +410,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let url = dir.appendingPathComponent("bot_personality.txt")
         // Seed default if missing so the editor opens with something useful.
         if !FileManager.default.fileExists(atPath: url.path) {
+            let name = NikxelSettings.userName
             let def = """
-            You are Nikhil's friendly AI assistant. You're responding to WhatsApp messages while Nikhil is in a meeting. Be casual, warm, and helpful. Keep responses concise (1-3 sentences). Be honest -- say you're Nikhil's assistant, don't pretend to be him.
+            You are \(name)'s friendly AI assistant. You're responding to WhatsApp messages while \(name) is in a meeting. Be casual, warm, and helpful. Keep responses concise (1-3 sentences). Be honest -- say you're \(name)'s assistant, don't pretend to be them.
             """
             try? def.write(to: url, atomically: true, encoding: .utf8)
         }
@@ -426,8 +427,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !FileManager.default.fileExists(atPath: url.path) {
             let def = """
             {
-              "userName": "Nikhil",
-              "waOwnName": "Nikhil Dhanda",
+              "userName": "\(NikxelSettings.userName)",
+              "waOwnName": "\(NikxelSettings.waOwnName)",
               "language": "auto"
             }
             """

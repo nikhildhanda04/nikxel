@@ -75,16 +75,50 @@ enum NikxelSettings {
     /// knows exactly who "Me" (the mic-channel speaker) actually is instead
     /// of guessing from context and occasionally attributing "Me"'s words to
     /// someone else mentioned in the conversation, or vice versa.
+    ///
+    /// Unset falls back to the macOS account's first name, then to "Me". It
+    /// used to fall back to the author's own name, which meant every other
+    /// person who installed Nikxel got summaries calling them Nikhil.
     static var userName: String {
         get {
             let raw = load().userName?.trimmingCharacters(in: .whitespaces) ?? ""
-            return raw.isEmpty ? "Nikhil" : raw
+            if !raw.isEmpty { return raw }
+            return accountFirstName ?? "Me"
         }
         set { save { $0.userName = newValue } }
     }
 
+    /// True once the user has actually told us their name -- the prompt uses
+    /// this to decide between naming them and referring to them neutrally,
+    /// rather than asserting a guessed name as fact.
+    static var hasUserName: Bool {
+        !(load().userName?.trimmingCharacters(in: .whitespaces) ?? "").isEmpty
+    }
+
+    /// First word of the macOS account's full name ("Prince Choudhary" ->
+    /// "Prince"). nil when the account name is a bare username like "admin"
+    /// or an email, which would read worse than no name at all.
+    static var accountFirstName: String? {
+        firstName(fullName: NSFullUserName(), account: NSUserName())
+    }
+
+    /// Split out from `accountFirstName` so it can be checked without a real
+    /// macOS account -- see check_user_name.swift.
+    static func firstName(fullName: String, account: String) -> String? {
+        let full = fullName.trimmingCharacters(in: .whitespaces)
+        guard let first = full.split(separator: " ").first.map(String.init),
+              first.count > 1,
+              // Letters only: rules out "admin2", emails, and "MacBook-Air".
+              first.rangeOfCharacter(from: CharacterSet.letters.inverted) == nil,
+              // A single word identical to the short username is a login, not
+              // a name ("princechoudhary"). With a surname attached it's real.
+              full.contains(" ") || first.lowercased() != account.lowercased()
+        else { return nil }
+        return first.prefix(1).uppercased() + first.dropFirst()
+    }
+
     /// The user's own display name as it appears in THEIR WhatsApp account
-    /// (often the full name, e.g. "Nikhil Dhanda") — used to filter the
+    /// (often the full name, e.g. "Priya Sharma") — used to filter the
     /// user's own messages/rows out of chat scraping. Falls back to
     /// `userName` if not set separately.
     static var waOwnName: String {

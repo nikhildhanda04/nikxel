@@ -69,28 +69,32 @@ class LLMResponder {
         return p
     }
 
-    /// The last few end-of-day summaries, so the bot knows roughly what the
-    /// user has been working on and can answer "any update on X?" instead of
-    /// "I'm not sure, I'll pass it on".
+    /// Everything the bot knows about what the user is up to: what they are
+    /// doing right now, how today has gone so far, and the last few end-of-day
+    /// summaries. Lets it answer "any update on X?" instead of "I'm not sure,
+    /// I'll pass it on".
     ///
-    /// These summaries are detailed -- repos and commits, window titles, which
-    /// apps were used, who else was messaged and called. The bot replies
-    /// automatically to whoever happens to write during a meeting, including
-    /// people who should not learn any of that, so the block below is wrapped
-    /// in an explicit non-disclosure rule. Context for understanding the
-    /// question; not material to volunteer.
+    /// These are detailed -- repos and commits, window titles, which apps were
+    /// used, who else was messaged and called. The bot replies automatically to
+    /// whoever happens to write, including people who should not learn any of
+    /// that, so the block is wrapped in an explicit non-disclosure rule.
+    /// Context for understanding the question; not material to volunteer.
     ///
     /// Not private: check_bot_memory.swift prints this block and feeds it to a
     /// real agent to confirm the non-disclosure rules actually hold.
     func recentContextBlock() -> String {
         let days = NikxelSettings.botMemoryDays
         let summaries = DayLogger.recentSummaries(days: days)
-        guard !summaries.isEmpty else { return "" }
+        let live = NikxelSettings.waWorkContext
+            ? (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting) ?? "")
+            : ""
+        guard !summaries.isEmpty || !live.isEmpty else { return "" }
 
         var block = """
-        BACKGROUND -- \(NikxelSettings.userName)'s own notes from the last few days. \
-        This is private. Use it only to understand what the contact is asking about \
-        and to answer naturally when they raise something you recognise.
+        BACKGROUND -- \(NikxelSettings.userName)'s own notes on what they are \
+        doing. This is private. Use it only to understand what the contact is \
+        asking about and to answer naturally when they raise something you \
+        recognise.
 
         Never disclose from it. Specifically:
         - Don't volunteer project, repo, client or company names, what was built or \
@@ -100,9 +104,14 @@ class LLMResponder {
         unless this contact clearly already knows the specifics from the conversation.
         - If a question needs a detail that's only in here, say they'll follow up \
         themselves rather than answering from it.
+        - Whether they are in a meeting or free right now IS fine to share -- that \
+        is the one thing a person waiting on a reply actually needs to know.
 
 
         """
+        if !live.isEmpty {
+            block += "RIGHT NOW:\n\(live)\n\n"
+        }
         for (day, text) in summaries {
             block += "--- \(day) ---\n\(text)\n\n"
         }

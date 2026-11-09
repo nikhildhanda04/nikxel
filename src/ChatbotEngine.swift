@@ -24,6 +24,47 @@ func cblog(_ msg: String) {
     NSLog("%{public}@", msg)
 }
 
+// MARK: - Reply gate
+
+/// Whether a given unread chat earns a reply right now. Pulled out of
+/// `ChatbotEngine` as a pure function because this is the part with the
+/// branches worth checking -- see check_wa_bot.swift.
+enum WABotGate {
+    enum Decision: Equatable {
+        case reply
+        /// Eligible, but the unattended timer hasn't run out. Stays pending.
+        case wait
+        /// Never, for this reason. Dropped.
+        case skip(String)
+    }
+
+    static func decide(chat: WAUnreadChat,
+                       pendingSince: Date,
+                       now: Date,
+                       inMeeting: Bool,
+                       mode: WABotMode,
+                       groupReplies: Bool,
+                       unattendedSeconds: TimeInterval) -> Decision {
+        if chat.isGroup {
+            guard groupReplies else { return .skip("group chats off") }
+            guard chat.mentioned else { return .skip("group, user not tagged") }
+        }
+        // A meeting is the one state where every mode answers at once: the
+        // point of the feature is covering for someone who cannot type.
+        if inMeeting { return .reply }
+        switch mode {
+        case .meetings:
+            return .skip("no meeting")
+        case .always:
+            return .reply
+        case .unattended:
+            return now.timeIntervalSince(pendingSince) >= unattendedSeconds
+                ? .reply
+                : .wait
+        }
+    }
+}
+
 // MARK: - ChatbotEngine
 
 class ChatbotEngine {
@@ -31,7 +72,12 @@ class ChatbotEngine {
 
     private var timer: Timer?
     private var llm: LLMResponder?
-    private let pollInterval: TimeInterval = 5
+    /// Fast while a meeting is on (a stand-in reply is only useful if it is
+    /// prompt); slow the rest of the day, where the bot is either waiting out
+    /// an unattended timer measured in minutes or just idling.
+    private let meetingPollInterval: TimeInterval = 5
+    private let idlePollInterval: TimeInterval = 20
+    private var currentInterval: TimeInterval = 0
     // Short cooldown only — the baseline-delta logic in performCheck already
     // prevents replying to the same message twice, so the cooldown only has
     // to throttle pathological bursts (e.g. WhatsApp reordering the sidebar
@@ -42,8 +88,21 @@ class ChatbotEngine {
     private var baselineCounts: [String: Int] = [:]
     // Cooldown: contact → last reply time.
     private var lastReplyTime: [String: Date] = [:]
-    // Conversation history (per-contact, per-meeting).
+    // Conversation history, per contact. Capped -- in the always-on modes there
+    // is no meeting boundary to clear it at, and only the last few turns are
+    // ever put in the prompt anyway.
     private var conversationHistory: [String: [(role: String, text: String)]] = [:]
+    private let historyCap = 12
+
+    /// Messages seen but not yet answered, keyed the same way as `baselineCounts`.
+    /// An entry lives from the moment new unread arrives until either the bot
+    /// replies or the user reads the chat themselves.
+    private struct Pending {
+        var chat: WAUnreadChat
+        var newCount: Int
+        let since: Date
+    }
+    private var pending: [String: Pending] = [:]
 
     private(set) var activeContactName: String?
     private var cancelled = false
@@ -56,12 +115,33 @@ class ChatbotEngine {
         set {
             UserDefaults.standard.set(newValue, forKey: "nikxel.botEnabled")
             if newValue {
-                if MeetingDetector.shared.isInMeeting { cancelled = false; startPolling() }
+                if shouldRun { cancelled = false; startPolling() }
             } else {
                 cancelled = true
                 stopPolling()
                 setActiveContact(nil)   // clears the "X is texting" bubble immediately
             }
+        }
+    }
+
+    /// Whether the poller has any reason to be running: the user has the bot
+    /// on, and either a meeting is live or the chosen mode covers the rest of
+    /// the day too.
+    private var shouldRun: Bool {
+        isEnabled && (MeetingDetector.shared.isInMeeting
+                      || NikxelSettings.waBotMode.runsOutsideMeetings)
+    }
+
+    /// Called when the mode or group setting changes from the menu, so the
+    /// poller starts, stops or re-paces without waiting for a meeting edge.
+    func applyModeChange() {
+        if shouldRun {
+            cancelled = false
+            startPolling()
+        } else {
+            cancelled = true
+            stopPolling()
+            setActiveContact(nil)
         }
     }
 
@@ -74,8 +154,9 @@ class ChatbotEngine {
             self, selector: #selector(meetingStateChanged),
             name: .meetingStateChanged, object: nil
         )
-        cblog("ChatbotEngine: started (Chrome JS mode)")
-        if MeetingDetector.shared.isInMeeting { startPolling() }
+        cblog("ChatbotEngine: started (Chrome JS mode, mode=\(NikxelSettings.waBotMode.rawValue))")
+        cancelled = false
+        if shouldRun { startPolling() }
     }
 
     func stop() {
@@ -87,17 +168,26 @@ class ChatbotEngine {
     private func reset() {
         cancelled = true; pollingInProgress = false; baselineReady = false
         baselineCounts.removeAll(); lastReplyTime.removeAll()
-        conversationHistory.removeAll(); setActiveContact(nil)
+        conversationHistory.removeAll(); pending.removeAll(); setActiveContact(nil)
     }
 
     @objc private func meetingStateChanged(_ notification: Notification) {
         let on = MeetingDetector.shared.isInMeeting
-        cblog("ChatbotEngine: meeting \(on ? "STARTED" : "ENDED")")
+        let allDay = NikxelSettings.waBotMode.runsOutsideMeetings
+        cblog("ChatbotEngine: meeting \(on ? "STARTED" : "ENDED") (allDay=\(allDay))")
         if on {
-            cancelled = false; baselineReady = false
-            baselineCounts.removeAll(); lastReplyTime.removeAll()
-            conversationHistory.removeAll()
+            // Meeting-only mode treats each meeting as a fresh session; an
+            // all-day mode has been running and keeps its baseline, otherwise
+            // every meeting would re-ignore whatever was already unread.
+            if !allDay {
+                baselineReady = false
+                baselineCounts.removeAll(); lastReplyTime.removeAll()
+                conversationHistory.removeAll(); pending.removeAll()
+            }
+            cancelled = false
             startPolling()
+        } else if allDay {
+            startPolling()   // re-paces to the idle interval
         } else {
             cancelled = true; stopPolling(); reset()
         }
@@ -106,16 +196,19 @@ class ChatbotEngine {
     // MARK: - Polling
 
     private func startPolling() {
-        guard timer == nil else { return }
         guard isEnabled else { return }
-        cblog("ChatbotEngine: polling every \(pollInterval)s")
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+        let want = MeetingDetector.shared.isInMeeting ? meetingPollInterval : idlePollInterval
+        if timer != nil && currentInterval == want { return }
+        timer?.invalidate()
+        currentInterval = want
+        cblog("ChatbotEngine: polling every \(want)s")
+        timer = Timer.scheduledTimer(withTimeInterval: want, repeats: true) { [weak self] _ in
             self?.checkAndReply()
         }
         checkAndReply()
     }
 
-    private func stopPolling() { timer?.invalidate(); timer = nil }
+    private func stopPolling() { timer?.invalidate(); timer = nil; currentInterval = 0 }
 
     private func checkAndReply() {
         guard !cancelled, !pollingInProgress else { return }
@@ -132,7 +225,13 @@ class ChatbotEngine {
         // 1. Get all unread chats via Chrome JS (fast — no AX traversal needed).
         let unreadChats = ChromeWhatsApp.unreadChats()
         cblog("ChatbotEngine: unread=\(unreadChats.count)")
-        guard !unreadChats.isEmpty, !cancelled else { setActiveContact(nil); return }
+        guard !cancelled else { setActiveContact(nil); return }
+        if unreadChats.isEmpty {
+            // Nothing unread at all -> nothing is waiting on us any more.
+            if !pending.isEmpty { cblog("ChatbotEngine: inbox clear — dropped \(pending.count) pending") }
+            pending.removeAll()
+            setActiveContact(nil); return
+        }
 
         // 2. First poll: build baseline. Don't set lastReplyTime — baseline is
         // for "what was already unread before I joined the meeting", not for
@@ -154,51 +253,107 @@ class ChatbotEngine {
         // Without this, a contact that had 3 unread at meeting start, was
         // read on phone, then sends 1 new msg, looks like 1 ≤ 3 and the
         // bot stays silent.
+        //
+        // Leaving the unread list is also exactly what "the user attended to
+        // it" looks like, so any pending reply for that chat is dropped here.
+        // That is the whole point of `.unattended` mode: answer the phone only
+        // after it has rung long enough that nobody else is going to.
         let currentKeys = Set(unreadChats.map {
             $0.name.lowercased().trimmingCharacters(in: .whitespaces)
         })
         for key in Array(baselineCounts.keys) where !currentKeys.contains(key) {
             baselineCounts[key] = 0
         }
+        for key in Array(pending.keys) where !currentKeys.contains(key) {
+            cblog("ChatbotEngine: drop pending '\(key)' — user read it")
+            pending[key] = nil
+        }
 
-        // 3b. Only act on unread count INCREASES. Capture the delta now so
-        // step 5 can read exactly that many incoming messages, even though
-        // we update the baseline up-front (to avoid re-triggering on the
-        // next poll if reply send fails).
-        var newChats: [WAUnreadChat] = []
-        var deltas: [String: Int] = [:]
+        // 3b. Fold unread count INCREASES into `pending`. The baseline moves
+        // immediately so the same message is never counted twice, but the delta
+        // is held until the gate actually lets a reply out — in `.unattended`
+        // mode that can be minutes later, or never.
+        //
+        // `since` is the FIRST unanswered message, not the latest: someone who
+        // keeps typing shouldn't keep pushing their own timer back.
         for chat in unreadChats {
             guard !cancelled else { break }
             let key = chat.name.lowercased().trimmingCharacters(in: .whitespaces)
             let baseline = baselineCounts[key] ?? 0
             if chat.unread > baseline {
-                newChats.append(chat)
-                deltas[key] = chat.unread - baseline
+                let delta = chat.unread - baseline
                 baselineCounts[key] = chat.unread
+                if var p = pending[key] {
+                    p.newCount += delta
+                    p.chat = chat
+                    pending[key] = p
+                } else {
+                    pending[key] = Pending(chat: chat, newCount: delta, since: Date())
+                }
+            } else if pending[key] != nil {
+                // Still waiting on this one — refresh the row so a mention
+                // badge that only appeared on a later message is seen.
+                pending[key]?.chat = chat
             }
         }
-        guard !newChats.isEmpty else { setActiveContact(nil); return }
-        cblog("ChatbotEngine: newUnreads=\(newChats.count) — \(newChats.map(\.name))")
+        guard !pending.isEmpty else { setActiveContact(nil); return }
 
-        // 4. Process each new unread.
-        for chat in newChats {
+        // 3c. Decide, per chat, whether a reply goes out now.
+        let now = Date()
+        let inMeeting = MeetingDetector.shared.isInMeeting
+        let mode = NikxelSettings.waBotMode
+        let groupReplies = NikxelSettings.waGroupReplies
+        let unattendedSeconds = TimeInterval(NikxelSettings.waUnattendedMinutes * 60)
+        var due: [Pending] = []
+        for (key, p) in pending {
+            switch WABotGate.decide(chat: p.chat, pendingSince: p.since, now: now,
+                                    inMeeting: inMeeting, mode: mode,
+                                    groupReplies: groupReplies,
+                                    unattendedSeconds: unattendedSeconds) {
+            case .reply:
+                due.append(p)
+                pending[key] = nil
+            case .wait:
+                break
+            case .skip(let why):
+                cblog("ChatbotEngine: skip '\(p.chat.name)' — \(why)")
+                pending[key] = nil
+            }
+        }
+        guard !due.isEmpty else { setActiveContact(nil); return }
+        cblog("ChatbotEngine: replying to \(due.count) — \(due.map { $0.chat.name })")
+
+        // 4. Process each due chat.
+        for p in due {
             guard !cancelled else { break }
+            let chat = p.chat
             let key = chat.name.lowercased().trimmingCharacters(in: .whitespaces)
 
-            // Cooldown (120 s).
+            // Cooldown.
             if let last = lastReplyTime[key], Date().timeIntervalSince(last) < replyCooldown {
                 cblog("ChatbotEngine: skip '\(chat.name)' — cooldown")
                 continue
             }
 
             // 5. Read only the NEW incoming messages — the ones that arrived
-            // during the meeting. `chat.unread` is WhatsApp's own unread
-            // counter; reading exactly that many incoming bubbles avoids
-            // pulling in stale conversation history.
+            // while the user wasn't answering. Reading exactly that many
+            // incoming bubbles avoids pulling in stale conversation history.
             setActiveContact(chat.name)
             ChromeWhatsApp.clickChat(name: chat.name)
             Thread.sleep(forTimeInterval: 0.6)
-            let newCount = max(1, deltas[key] ?? 1)
+
+            // 5b. Second opinion on group-ness, now that the chat is open. The
+            // sidebar heuristic can miss (a group whose last message happens to
+            // carry no sender prefix), and replying into a group the user never
+            // opted into is the expensive mistake.
+            if !chat.isGroup && ChromeWhatsApp.openChatIsGroup() {
+                if !groupReplies || !chat.mentioned {
+                    cblog("ChatbotEngine: '\(chat.name)' is a group after all — not replying")
+                    setActiveContact(nil); continue
+                }
+            }
+
+            let newCount = max(1, p.newCount)
             let messages = ChromeWhatsApp.readMessages(count: newCount)
             cblog("ChatbotEngine: '\(chat.name)' new=\(newCount) msgs=\(messages.count)")
 
@@ -229,9 +384,10 @@ class ChatbotEngine {
             Thread.sleep(forTimeInterval: 0.3)
 
             lastReplyTime[key] = Date()
-            if conversationHistory[key] == nil { conversationHistory[key] = [] }
-            for msg in messages { conversationHistory[key]?.append(("them", msg)) }
-            conversationHistory[key]?.append(("bot", replyText))
+            var h = conversationHistory[key] ?? []
+            for msg in messages { h.append(("them", msg)) }
+            h.append(("bot", replyText))
+            conversationHistory[key] = Array(h.suffix(historyCap))
             Thread.sleep(forTimeInterval: 0.6)
         }
         setActiveContact(nil)

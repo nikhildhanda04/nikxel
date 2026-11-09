@@ -23,6 +23,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var modeMeetingItem: NSMenuItem?
     private var forceMeetingItem: NSMenuItem?
     private var botMenuItem: NSMenuItem?
+    private var waModeItems: [NSMenuItem] = []
+    private var waGroupItem: NSMenuItem?
+    private var waContextItem: NSMenuItem?
     private var googleSyncMenuItem: NSMenuItem?
     private var templateMenu: NSMenu?
 
@@ -163,11 +166,41 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         self.muteMenuItem = mute
         refreshMuteMenuItem()
 
-        let bot = NSMenuItem(title: "WhatsApp Auto-Replies: On",
+        let waItem = NSMenuItem(title: "WhatsApp Bot", action: nil, keyEquivalent: "")
+        let waMenu = NSMenu()
+
+        let bot = NSMenuItem(title: "Auto-Replies: On",
                              action: #selector(toggleBotEnabled), keyEquivalent: "")
-        bot.target = self; menu.addItem(bot)
+        bot.target = self; waMenu.addItem(bot)
         self.botMenuItem = bot
-        refreshBotMenuItem()
+
+        waMenu.addItem(NSMenuItem.separator())
+        waMenu.addItem(sectionHeader("Reply…"))
+        for mode in WABotMode.allCases {
+            let item = NSMenuItem(title: mode.displayName, action: #selector(setWABotMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            waMenu.addItem(item)
+            waModeItems.append(item)
+        }
+
+        waMenu.addItem(NSMenuItem.separator())
+        let groups = NSMenuItem(title: "Group Chats: Off",
+                                action: #selector(toggleWAGroups), keyEquivalent: "")
+        groups.target = self; waMenu.addItem(groups)
+        self.waGroupItem = groups
+
+        let ctx = NSMenuItem(title: "Knows What You're Working On: On",
+                             action: #selector(toggleWAWorkContext), keyEquivalent: "")
+        ctx.target = self; waMenu.addItem(ctx)
+        self.waContextItem = ctx
+
+        let editPersonalityWA = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
+        editPersonalityWA.target = self; waMenu.addItem(editPersonalityWA)
+
+        waItem.submenu = waMenu
+        menu.addItem(waItem)
+        refreshWAMenu()
 
         let modeItem = NSMenuItem(title: "Capture Mode", action: nil, keyEquivalent: "")
         let modeSubmenu = NSMenu()
@@ -217,9 +250,6 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let connectReminders = NSMenuItem(title: "Connect Apple Reminders…", action: #selector(connectAppleReminders), keyEquivalent: "")
         connectReminders.target = self; menu.addItem(connectReminders)
-
-        let editPersonality = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
-        editPersonality.target = self; menu.addItem(editPersonality)
 
         let templateItem = NSMenuItem(title: "Summary Template", action: nil, keyEquivalent: "")
         let templateSubmenu = NSMenu()
@@ -285,13 +315,59 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func toggleBotEnabled() {
         ChatbotEngine.shared.isEnabled.toggle()
-        refreshBotMenuItem()
+        refreshWAMenu()
     }
 
-    private func refreshBotMenuItem() {
+    @objc func setWABotMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = WABotMode(rawValue: raw) else { return }
+        NikxelSettings.waBotMode = mode
+        ChatbotEngine.shared.applyModeChange()
+        refreshWAMenu()
+    }
+
+    @objc func toggleWAGroups() {
+        NikxelSettings.waGroupReplies.toggle()
+        refreshWAMenu()
+    }
+
+    @objc func toggleWAWorkContext() {
+        NikxelSettings.waWorkContext.toggle()
+        refreshWAMenu()
+    }
+
+    private func refreshWAMenu() {
         let on = ChatbotEngine.shared.isEnabled
         botMenuItem?.state = on ? .on : .off
-        botMenuItem?.title = on ? "WhatsApp Auto-Replies: On" : "WhatsApp Auto-Replies: Off"
+        botMenuItem?.title = on ? "Auto-Replies: On" : "Auto-Replies: Off"
+
+        let mode = NikxelSettings.waBotMode
+        for item in waModeItems {
+            let isCurrent = (item.representedObject as? String) == mode.rawValue
+            item.state = isCurrent ? .on : .off
+        }
+        // Only the unattended mode has a delay to name, and it's edited in
+        // settings.json rather than here -- a submenu of minute choices for a
+        // number nobody changes twice isn't worth the clicks.
+        if let item = waModeItems.first(where: { ($0.representedObject as? String) == WABotMode.unattended.rawValue }) {
+            item.title = "Any time, if unanswered for \(NikxelSettings.waUnattendedMinutes) min"
+        }
+
+        let groups = NikxelSettings.waGroupReplies
+        waGroupItem?.state = groups ? .on : .off
+        waGroupItem?.title = groups ? "Group Chats: Only When Tagged" : "Group Chats: Off"
+
+        let ctx = NikxelSettings.waWorkContext
+        waContextItem?.state = ctx ? .on : .off
+        waContextItem?.title = ctx ? "Knows What You're Working On: On"
+                                  : "Knows What You're Working On: Off"
+    }
+
+    /// A disabled item used as a label inside a submenu.
+    private func sectionHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
     }
 
     @objc func setModeNotes() {
@@ -591,6 +667,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               "waOwnName": "\(NikxelSettings.waOwnName)",
               "language": "auto",
               "botMemoryDays": \(NikxelSettings.botMemoryDays),
+              "waUnattendedMinutes": \(NikxelSettings.waUnattendedMinutes),
               "googleSyncEnabled": \(NikxelSettings.googleSyncEnabled)
             }
             """
@@ -604,6 +681,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         language — "auto" to match whichever language the content is in (English, Hindi, Hinglish, etc.), or a specific language name (e.g. "Hindi") to always force it.
         botMemoryDays — how many days of your end-of-day summaries the WhatsApp bot reads before replying, so it recognises what someone is asking about. It is told never to disclose from them. 0 turns it off; 3 is the default.
         summaryTemplate — which template in ~/.nikxel/templates/ shapes your summaries (developer, hr, project-manager, co-founder, default, or one you made). Pick it from the Summary Template menu instead of editing this by hand.
+        waUnattendedMinutes — in "Any time, if unanswered" mode, how many minutes a message must sit unread before the bot answers it. 5 is the default.
         googleSyncEnabled — whether a finished meeting summary offers to add its Action Items to Google Tasks and its follow-ups to your calendar. Nothing is ever added without you confirming the list first.
         """
         alert.alertStyle = .informational

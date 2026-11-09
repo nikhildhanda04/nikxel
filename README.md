@@ -155,7 +155,7 @@ bar → **Setup Wizard…**. Four steps:
 |---|---|
 | **Your avatar** | Keep the bundled character, or make one that looks like you — see [Make your own avatar](#make-your-own-avatar) below. |
 | **Transcription tools** | Checks for `whisper` and `ffmpeg`, offering **Install with Homebrew** if either is missing. Downloads the speech model whisper.cpp needs, and sets the spoken language. Skippable — only the recording features need them. |
-| **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated Chrome profile; scan the QR with your phone and the wizard detects the login by itself. Only needed if you want Nikxel replying for you during meetings. |
+| **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated Chrome profile; scan the QR with your phone and the wizard detects the login by itself. Only needed if you want Nikxel replying for you — during meetings, or all day (see *When the WhatsApp bot replies*). |
 | **Choose your coding agent** | Claude Code, OpenCode, or Codex — whichever writes your meeting notes and summaries. Ones you don't have are greyed out, with a copyable install command and a Re-check button. |
 
 ### 4. Grant permissions
@@ -374,25 +374,79 @@ If you were using `~/.nikxel/summary_style.txt` from before templates existed,
 whatever you wrote in it is carried over as a template called **My Style** and
 selected for you.
 
-## What the WhatsApp bot knows
+## When the WhatsApp bot replies
 
-While you're in a meeting, the bot reads your last **3 end-of-day summaries**
-before writing a reply, so a contact asking *"any update on that thing?"* gets
-an answer that recognises what they mean instead of a blank "I'll pass it on".
+Menu bar → **WhatsApp Bot**. Everything here is off or conservative by default;
+upgrading never puts your bot on the air more than it already was.
 
-Those summaries are detailed — repos and commits, window titles, meetings, who
+| Setting | Options |
+|---|---|
+| **Auto-Replies** | On / Off. The master switch — off means silent everywhere. |
+| **Reply…** | **Only during meetings** (default) · **Any time, if unanswered for N min** · **Any time, immediately** |
+| **Group Chats** | **Off** (default) / **Only When Tagged** |
+| **Knows What You're Working On** | On (default) / Off |
+
+**Only during meetings** is the original behaviour: you're visibly busy, so a
+stand-in reply beats silence, and it goes out within seconds.
+
+**Any time, if unanswered** is the one to pick if you want the bot on all day.
+It waits until a message has sat genuinely unread for `waUnattendedMinutes`
+(5 by default, editable in `~/.nikxel/settings.json`, max 120) before saying
+anything — so you always get first refusal, and it only steps in once it's
+clear nobody else is going to. Reading the chat yourself at any point cancels
+the pending reply. During a meeting it still answers immediately: telling
+someone you're in a meeting five minutes late is worse than useless.
+
+**Any time, immediately** has no gate at all. The bot will routinely beat you
+to the reply.
+
+### Groups
+
+Off by default, and deliberately not a plain on/off: when enabled, only
+messages that **@-mention you** are answered. Most group traffic isn't
+addressed to you, and a bot that replies to all of it is the fastest way to get
+muted by everyone you know.
+
+Group detection reads the sidebar row *without opening the chat* — opening one
+marks it read and hides it from your phone, which is exactly the damage the
+filter exists to prevent. WhatsApp Web gives two signals there: the default
+group avatar, and the sender prefix groups put on the preview line
+(`Asha: on my way`). Neither is a documented API, so a group with a group photo
+whose last message carries no prefix can slip through; a second check runs once
+the chat is open and blocks the reply even though the chat has already been
+marked read.
+
+### What it knows
+
+The bot reads your last **3 end-of-day summaries** before writing a reply, so a
+contact asking *"any update on that thing?"* gets an answer that recognises
+what they mean instead of a blank "I'll pass it on".
+
+With **Knows What You're Working On** on (the default) it also gets a short
+*right now* block: whether you're in a meeting, the app and window you're in,
+today's totals (`3h 20m coding · 2 meetings`), and today's commits and
+uncommitted work. Without it, the entire current day is a blind spot until the
+10pm summary exists — which is the day people are most likely to ask about.
+
+Those notes are detailed — repos and commits, window titles, meetings, who
 you called and messaged. The bot answers whoever happens to write to you, so
 the context is supplied under an explicit non-disclosure rule: use it to
 understand the question, never to volunteer project or client names, meeting
 topics, or who else you spoke to, and never admit the notes exist. If an answer
 would need a detail only found there, it says you'll follow up yourself.
 
-Tune it with `botMemoryDays` in `~/.nikxel/settings.json` — `0` turns it off,
-`3` is the default, `14` is the maximum. Each extra day is prepended to every
-reply prompt, so it costs latency on every message.
+One exception to the non-disclosure rule: **whether you're in a meeting or free
+right now is fine to share.** That's the one thing someone waiting on a reply
+actually needs.
+
+Tune the history with `botMemoryDays` in `~/.nikxel/settings.json` — `0` turns
+it off, `3` is the default, `14` is the maximum. Each extra day is prepended to
+every reply prompt, so it costs latency on every message. The *right now* block
+is recomputed at most once every two minutes, since it shells out to git.
 
 Nothing to set up: summaries are the ones already written to
-`~/Documents/nikxel/daily/` at 10pm. With none yet, the bot behaves as before.
+`~/Documents/nikxel/daily/` at 10pm. With none yet, the bot falls back to the
+*right now* block alone.
 
 ## Note format — Markdown, PDF or Word
 

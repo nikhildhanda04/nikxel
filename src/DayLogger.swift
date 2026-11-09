@@ -3,6 +3,10 @@ import AppKit
 import ApplicationServices
 
 class DayLogger {
+    /// The one instance, so LLMResponder can ask what today looks like without
+    /// NikxelApp threading a reference through MOMGenerator into the chatbot.
+    private(set) static weak var current: DayLogger?
+
     private let momGenerator: MOMGenerator
     private let logDir: URL
     private let summaryDir: URL
@@ -27,6 +31,7 @@ class DayLogger {
         self.scanRoot = home.appendingPathComponent("Desktop", isDirectory: true)
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: summaryDir, withIntermediateDirectories: true)
+        DayLogger.current = self
     }
 
     func start() {
@@ -146,6 +151,51 @@ class DayLogger {
         stats.messages = WhatsAppActivityLogger.readLog(file: "chats", for: date).count
 
         return stats
+    }
+
+    // MARK: - Live context
+
+    private var liveCache: (text: String, at: Date, inMeeting: Bool)?
+    /// `aggregateGit` shells out to git once per repo under ~/Desktop, and a
+    /// busy chat can ask for this several times a minute. Two minutes is well
+    /// inside "what are you working on right now".
+    private let liveCacheTTL: TimeInterval = 120
+
+    /// What the user is doing right now and what today has looked like so far,
+    /// as a few short lines. Fills the gap the end-of-day summaries leave: until
+    /// 10pm, the whole current day is invisible to the WhatsApp bot, which is
+    /// exactly the day someone is most likely to be asking about.
+    func liveContext(inMeeting: Bool) -> String {
+        // The meeting flag is part of the key, not just the payload: a meeting
+        // can start or end inside the TTL, and "in a meeting right now" is the
+        // one line in here the bot is allowed to repeat out loud.
+        if let c = liveCache, c.inMeeting == inMeeting,
+           Date().timeIntervalSince(c.at) < liveCacheTTL {
+            return c.text
+        }
+        var lines: [String] = []
+        lines.append(inMeeting ? "- In a meeting right now." : "- Not in a meeting right now.")
+
+        if let last = lastSample {
+            let title = last.title.trimmingCharacters(in: .whitespaces)
+            lines.append(title.isEmpty
+                ? "- Currently in: \(last.app)"
+                : "- Currently in: \(last.app) — \"\(title.prefix(90))\"")
+        }
+
+        if let digest = Self.digestLine(dayStats(for: Date())) {
+            lines.append("- Today so far: \(digest)")
+        }
+
+        let git = aggregateGit(for: Date())
+        if !git.isEmpty {
+            lines.append("- Code today:\n" + git.split(separator: "\n")
+                .prefix(14).map { "  " + $0 }.joined(separator: "\n"))
+        }
+
+        let text = lines.joined(separator: "\n")
+        liveCache = (text, Date(), inMeeting)
+        return text
     }
 
     // MARK: - Sampling

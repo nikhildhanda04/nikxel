@@ -36,6 +36,35 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
     }
 }
 
+/// When the WhatsApp bot is allowed to answer on the user's behalf.
+///
+/// `.meetings` is the original (and still default) behaviour: the user is
+/// visibly busy, so a stand-in reply is clearly better than silence. The other
+/// two run all day, which is a bigger promise -- hence `.unattended` as the
+/// recommended always-on setting: it only speaks once a message has sat
+/// genuinely unanswered, so the user still gets first refusal on everything.
+enum WABotMode: String, CaseIterable {
+    /// Only while MeetingDetector says a meeting is on. Replies immediately.
+    case meetings
+    /// Any time, but only after the message has gone unanswered for
+    /// `waUnattendedMinutes`. During a meeting, replies immediately -- waiting
+    /// five minutes to tell someone "he's in a meeting" defeats the point.
+    case unattended
+    /// Any time, immediately. The bot will often beat the user to the reply.
+    case always
+
+    var displayName: String {
+        switch self {
+        case .meetings: return "Only during meetings"
+        case .unattended: return "Any time, if unanswered for a while"
+        case .always: return "Any time, immediately"
+        }
+    }
+
+    /// Whether this mode wants the poller running outside a meeting.
+    var runsOutsideMeetings: Bool { self != .meetings }
+}
+
 /// User-editable preferences shared across the meeting/notes/chat/daily-summary
 /// LLM pipelines. Backed by a small JSON file (not UserDefaults) so it's easy
 /// for the user to open and edit directly, same as `bot_personality.txt`.
@@ -52,6 +81,10 @@ enum NikxelSettings {
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
         var summaryTemplate: String?
+        var waBotMode: String?
+        var waGroupReplies: Bool?
+        var waUnattendedMinutes: Int?
+        var waWorkContext: Bool?
     }
 
     private static let fileURL: URL = {
@@ -190,6 +223,43 @@ enum NikxelSettings {
     static var googleSyncEnabled: Bool {
         get { load().googleSyncEnabled ?? true }
         set { save { $0.googleSyncEnabled = newValue } }
+    }
+
+    /// When the WhatsApp bot may reply. See `WABotMode`.
+    static var waBotMode: WABotMode {
+        get { WABotMode(rawValue: load().waBotMode ?? "") ?? .meetings }
+        set { save { $0.waBotMode = newValue.rawValue } }
+    }
+
+    /// Whether group chats are eligible for auto-replies at all.
+    ///
+    /// Off by default, and deliberately not a plain on/off: when enabled, only
+    /// messages that @-mention the user are answered. A bot that replies to
+    /// every message in every group is the fastest way to get the user muted by
+    /// everyone they know, and most group traffic isn't addressed to them.
+    static var waGroupReplies: Bool {
+        get { load().waGroupReplies ?? false }
+        set { save { $0.waGroupReplies = newValue } }
+    }
+
+    /// How long a message must sit unanswered before `.unattended` mode replies.
+    /// Clamped to 1...120 minutes.
+    static var waUnattendedMinutes: Int {
+        get { max(1, min(120, load().waUnattendedMinutes ?? 5)) }
+        set { save { $0.waUnattendedMinutes = max(1, min(120, newValue)) } }
+    }
+
+    /// Whether the bot is told what the user is doing right now and today so
+    /// far (foreground app, meeting state, today's totals) on top of the
+    /// `botMemoryDays` of finished day summaries.
+    ///
+    /// On by default: without it the bot answers "any update on X?" with
+    /// nothing useful until the 10pm summary exists, so the whole current day
+    /// is a blind spot. Everything it adds is covered by the same
+    /// non-disclosure rules as the day summaries.
+    static var waWorkContext: Bool {
+        get { load().waWorkContext ?? true }
+        set { save { $0.waWorkContext = newValue } }
     }
 
     /// Which summary template is active -- the slug of a file in

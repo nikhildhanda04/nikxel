@@ -8,6 +8,13 @@ struct WAUnreadChat: Codable {
     var unread: Int
     let text: String
     var index: Int?
+    /// Detected from the sidebar row, WITHOUT opening the chat -- opening one
+    /// marks it read and hides it from the user's phone, which is exactly the
+    /// damage a group filter is supposed to prevent.
+    var isGroup: Bool
+    /// True when the row carries WhatsApp's own @-mention badge, or the preview
+    /// text names the user with an "@".
+    var mentioned: Bool
 }
 
 /// A lightweight snapshot of a chat row's preview text (any chat, not just unread).
@@ -105,6 +112,12 @@ enum ChromeWhatsApp {
     private static var cdp: CDPClient?
     private static let cdpLock = NSLock()
 
+    /// A Swift string as a JS string literal, quotes included.
+    private static func jsString(_ s: String) -> String {
+        "\"" + s.replacingOccurrences(of: "\\", with: "\\\\")
+                 .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
     private static func ensureCDP() -> CDPClient? {
         cdpLock.lock(); defer { cdpLock.unlock() }
         if let c = cdp, c.isConnected { return c }
@@ -139,14 +152,21 @@ enum ChromeWhatsApp {
     }
 
     /// Get all unread chats from the sidebar.
+    ///
+    /// Also reports whether each row is a group and whether the user was
+    /// @-mentioned in it, so `ChatbotEngine` can drop group chatter before
+    /// clicking anything.
     static func unreadChats() -> [WAUnreadChat] {
         guard let c = ensureCDP() else { return [] }
-        let escapedSelf = NikxelSettings.waOwnName
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        let own = NikxelSettings.waOwnName
+        let escapedSelf = jsString(own)
+        // Mentions are written "@Firstname" far more often than "@Full Name",
+        // so match on the first word too.
+        let escapedFirst = jsString(own.split(separator: " ").first.map(String.init) ?? own)
         let js = """
         (function(){
-            var SELF_NAME = \"\(escapedSelf)\";
+            var SELF_NAME = \(escapedSelf);
+            var SELF_FIRST = \(escapedFirst);
             var result = [];
             var labels = document.querySelectorAll('span[aria-label]');
             for (var i = 0; i < labels.length; i++) {
@@ -155,19 +175,47 @@ enum ChromeWhatsApp {
                 if (!m) continue;
                 var row = labels[i].closest('[role="row"]');
                 if (!row) continue;
-                var titleEl = row.querySelector('span[title]');
-                var name = titleEl ? (titleEl.getAttribute('title') || '').trim() : '';
+                var titled = row.querySelectorAll('span[title]');
+                var name = titled.length ? (titled[0].getAttribute('title') || '').trim() : '';
                 if (!name) {
                     var dirEl = row.querySelector('span[dir="auto"]');
                     name = dirEl ? dirEl.textContent.trim() : '';
                 }
                 if (!name) continue;
                 if (name === 'Message yourself' || name === SELF_NAME) continue;
+
+                // WhatsApp Web shows the last message under the chat name, and
+                // in a GROUP it is prefixed with the sender ("Asha: on my way").
+                // One-to-one previews carry no prefix. That prefix is the only
+                // group signal available without opening the chat, alongside
+                // the default-group avatar icon.
+                var preview = titled.length > 1 ? (titled[1].getAttribute('title') || '').trim() : '';
+                if (!preview) preview = row.textContent.trim();
+                var prefix = preview.match(/^([^:]{1,30}):\\s/);
+                var prefixName = prefix ? prefix[1].trim() : '';
+                var isGroup = !!row.querySelector('[data-icon="default-group"], [data-icon="group"]');
+                if (!isGroup && prefixName
+                    && prefixName !== 'You' && prefixName !== 'Draft'
+                    && prefixName !== name
+                    && !/^(https?|www)$/i.test(prefixName)) {
+                    isGroup = true;
+                }
+
+                var mentioned = !!row.querySelector('[data-icon="mention"], [data-icon="mentioned"]')
+                    || /mention/i.test(ar)
+                    || !!row.querySelector('[aria-label*="mention" i], [aria-label*="Mention"]');
+                if (!mentioned && SELF_FIRST) {
+                    mentioned = preview.indexOf('@' + SELF_FIRST) >= 0
+                        || preview.indexOf('@' + SELF_NAME) >= 0;
+                }
+
                 result.push({
                     name: name,
                     unread: parseInt(m[1]),
                     text: row.textContent.trim().substring(0, 300),
-                    index: i
+                    index: i,
+                    isGroup: isGroup,
+                    mentioned: mentioned
                 });
             }
             return JSON.stringify(result.slice(0, 50));
@@ -176,6 +224,29 @@ enum ChromeWhatsApp {
         guard let json = c.eval(js),
               let data = json.data(using: .utf8) else { return [] }
         return (try? JSONDecoder().decode([WAUnreadChat].self, from: data)) ?? []
+    }
+
+    /// Second opinion on "is the open conversation a group", taken after the
+    /// chat is on screen: two or more distinct senders in the loaded history is
+    /// something a one-to-one chat cannot produce. Backs up the sidebar
+    /// heuristic before a reply actually goes out -- by this point the chat has
+    /// already been marked read, but an unwanted reply is the worse half.
+    static func openChatIsGroup() -> Bool {
+        guard let c = ensureCDP() else { return false }
+        let js = """
+        (function(){
+            if (document.querySelector('header [data-icon="default-group"], header [data-icon="group"]')) return 'true';
+            var bubbles = document.querySelectorAll('.copyable-text[data-pre-plain-text]');
+            var senders = {};
+            for (var i = 0; i < bubbles.length; i++) {
+                var pre = bubbles[i].getAttribute('data-pre-plain-text') || '';
+                var m = pre.match(/^\\[[^\\]]+\\]\\s*(.+?):\\s*$/);
+                if (m) senders[m[1].trim()] = 1;
+            }
+            return Object.keys(senders).length > 2 ? 'true' : 'false';
+        })()
+        """
+        return c.eval(js) == "true"
     }
 
     /// Open the chat for `name`. Returns a rect (viewport coords) of the

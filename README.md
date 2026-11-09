@@ -488,10 +488,20 @@ pricing deck by Friday" — it's filed to **Google Tasks** (the list that shows 
 in Gmail and Calendar's side panel, and in the Google Tasks app) with the
 contact's name in the notes. Pure chatter files nothing.
 
-It needs the **Tasks** permission, which an account connected before Nikxel
-could write to Google won't have — that grant was calendar-read-only. The first
-task that gets dropped for this raises a bubble offering to reconnect; it's one
-click and nothing else changes.
+Two things have to be in place, and Nikxel tells you which one is missing
+rather than dropping tasks into a log file:
+
+1. **The Tasks permission.** An account connected before Nikxel could write to
+   Google won't have it — that grant was calendar-read-only. A dropped task
+   raises a 🔑 bubble offering to reconnect; one click, nothing else changes.
+2. **The Tasks API switched on** for the Google Cloud project behind your
+   `google_creds.json`. Enabling Calendar does not enable Tasks: a project that
+   has never used it answers `403 … has not been used in project … or it is
+   disabled`. That one raises a 🔧 bubble that opens the exact console page to
+   switch it on.
+
+Either bubble appears at most once per launch, so a misconfigured account
+doesn't produce one per message.
 
 This costs no extra time: the agent is already reading the message to answer it,
 so it just appends one marker line, which is stripped before the reply is sent

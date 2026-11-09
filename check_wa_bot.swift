@@ -240,6 +240,20 @@ struct CheckWABot {
         // Containment still has to reject a genuinely wrong chat.
         assert(!verifyPasses(header: "Dadaji", target: "Krishna Sharma"))
 
+        // --- Google's "API not switched on" 403 ------------------------------
+        // Verbatim from a real response. Every chat task after this one would
+        // have failed the same way, in a log file nobody opens.
+        let disabled = "Google Tasks API has not been used in project 115572520981 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/tasks.googleapis.com/overview?project=115572520981 then retry. If you enabled this API recently, wait a few minutes."
+        assert(GoogleSync.isAPIDisabled(disabled))
+        assert(GoogleSync.consoleURL(in: disabled)
+               == "https://console.developers.google.com/apis/api/tasks.googleapis.com/overview?project=115572520981",
+               "the console link must survive intact up to the next space — got \(GoogleSync.consoleURL(in: disabled) ?? "nil")")
+        // An ordinary failure is not an API-disabled one and carries no link.
+        assert(!GoogleSync.isAPIDisabled("Rate limit exceeded"))
+        assert(GoogleSync.consoleURL(in: "Rate limit exceeded") == nil)
+        // A 401 is handled by the token refresh, not by nagging about the API.
+        assert(!GoogleSync.isAPIDisabled("Request had invalid authentication credentials"))
+
         // --- Browser detection ----------------------------------------------
         // Arc is Chromium but ignores --user-data-dir, so there is no way to get
         // an isolated profile out of it; driving the user's own logged-in

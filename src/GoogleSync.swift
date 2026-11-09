@@ -332,12 +332,43 @@ enum GoogleSync {
 
     // MARK: - Tasks out of WhatsApp chats
 
-    /// Fired at most once per launch, when a chat task is dropped because the
-    /// Google account was connected before Nikxel could write to Tasks. Wired
-    /// to the avatar card in NikxelApp -- without it the user's tasks vanish
-    /// into a log file they have no reason to open.
-    static var onTasksScopeMissing: (() -> Void)?
-    private static var warnedTaskScope = false
+    /// Why a chat task couldn't be filed, when it's something the user can
+    /// actually fix.
+    enum ChatTaskBlock {
+        /// Connected before Nikxel could write; one click re-grants.
+        case needsReconnect
+        /// The Tasks API isn't switched on for the OAuth project. Nothing in
+        /// Nikxel can do this -- it's a toggle in the Cloud console.
+        case apiDisabled(consoleURL: String?)
+        case other(String)
+    }
+
+    /// Fired at most once per launch when a chat task is blocked. Wired to the
+    /// avatar card in NikxelApp -- without it the user's tasks vanish into a log
+    /// file they have no reason to open.
+    static var onChatTaskBlocked: ((ChatTaskBlock) -> Void)?
+    private static var warnedTaskBlock = false
+
+    private static func reportBlocked(_ b: ChatTaskBlock) {
+        guard !warnedTaskBlock else { return }
+        warnedTaskBlock = true
+        DispatchQueue.main.async { onChatTaskBlocked?(b) }
+    }
+
+    /// Google answers a switched-off API with a 403 naming the console page
+    /// that turns it on. Lift that URL so the card can open it directly.
+    static func consoleURL(in message: String) -> String? {
+        guard let r = message.range(of: "https://console.developers.google.com/") else { return nil }
+        let tail = message[r.lowerBound...]
+        let cut = tail.firstIndex(where: { $0 == " " || $0 == "\n" }) ?? tail.endIndex
+        return String(tail[..<cut])
+    }
+
+    /// Whether an API error means "this API is not switched on for the project".
+    static func isAPIDisabled(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("has not been used in project") || m.contains("is disabled")
+    }
 
     /// File one task that came out of a chat message.
     ///
@@ -362,10 +393,7 @@ enum GoogleSync {
         }
         guard GoogleAuth.shared.hasScope("https://www.googleapis.com/auth/tasks") else {
             cblog("GoogleSync: chat task '\(clean)' not filed — reconnect Google to grant Tasks access")
-            if !warnedTaskScope {
-                warnedTaskScope = true
-                DispatchQueue.main.async { onTasksScopeMissing?() }
-            }
+            reportBlocked(.needsReconnect)
             completion?("missing scope"); return
         }
         GoogleAuth.shared.withAccessToken { token in
@@ -379,6 +407,12 @@ enum GoogleSync {
                  token: token) { _, err in
                 if let err = err {
                     cblog("GoogleSync: chat task '\(clean)' failed — \(err)")
+                    // Measured: a project that has never used Tasks answers 403
+                    // with exactly this, and every task after it would have
+                    // failed the same silent way.
+                    reportBlocked(isAPIDisabled(err)
+                        ? .apiDisabled(consoleURL: consoleURL(in: err))
+                        : .other(err))
                 } else {
                     cblog("GoogleSync: filed chat task '\(clean)' (from \(contact))")
                 }

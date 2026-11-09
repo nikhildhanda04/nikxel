@@ -79,13 +79,30 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         chatbotEngine.onRepliesSent = { [weak self] batch, drafted in
             self?.showReplyCard(batch, drafted: drafted)
         }
-        GoogleSync.onTasksScopeMissing = { [weak self] in
-            self?.window.nikxelView?.showCard(
-                icon: "🔑", title: "Reconnect Google to file tasks",
-                lines: ["Your account was connected before Nikxel could write to Tasks.",
-                        "Tap to reconnect — one click, nothing else changes."],
-                kind: .warning, lifetime: .infinity,
-                action: { self?.calendarWatcher.reauthenticate() })
+        GoogleSync.onChatTaskBlocked = { [weak self] block in
+            guard let self = self else { return }
+            switch block {
+            case .needsReconnect:
+                self.window.nikxelView?.showCard(
+                    icon: "🔑", title: "Reconnect Google to file tasks",
+                    lines: ["Your account was connected before Nikxel could write to Tasks.",
+                            "Tap to reconnect — one click, nothing else changes."],
+                    kind: .warning, lifetime: .infinity,
+                    action: { [weak self] in self?.calendarWatcher.reauthenticate() })
+            case .apiDisabled(let url):
+                self.window.nikxelView?.showCard(
+                    icon: "🔧", title: "Turn on the Google Tasks API",
+                    lines: ["Your Google project hasn't enabled Tasks, so nothing can be filed.",
+                            url == nil ? "Enable it in the Google Cloud console."
+                                       : "Tap to open the page that switches it on."],
+                    kind: .warning, lifetime: .infinity,
+                    action: url.flatMap(URL.init(string:)).map { u in { NSWorkspace.shared.open(u) } })
+            case .other(let reason):
+                self.window.nikxelView?.showCard(
+                    icon: "⚠️", title: "Couldn't file a task from a chat",
+                    lines: [String(reason.prefix(160))],
+                    kind: .warning, lifetime: 30)
+            }
         }
         whatsAppActivityLogger = WhatsAppActivityLogger.shared
 

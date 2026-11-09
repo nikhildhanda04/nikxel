@@ -413,12 +413,33 @@ muted by everyone you know.
 
 Group detection reads the sidebar row *without opening the chat* — opening one
 marks it read and hides it from your phone, which is exactly the damage the
-filter exists to prevent. WhatsApp Web gives two signals there: the default
-group avatar, and the sender prefix groups put on the preview line
-(`Asha: on my way`). Neither is a documented API, so a group with a group photo
-whose last message carries no prefix can slip through; a second check runs once
-the chat is open and blocks the reply even though the chat has already been
-marked read.
+filter exists to prevent.
+
+The signal is WhatsApp's own markup. A group row renders its last message as
+*sender*, a literal `:&nbsp;` separator, then the text; a one-to-one row goes
+straight to the text. That separator is the test, and the sender's name comes
+out of it for free. Verified against a real chat list: 4 groups and 18
+one-to-one chats, all correctly classified.
+
+Once a chat is open there's a second, authoritative signal — WhatsApp labels
+the message box *"Type a message to **group** Warrior Tennis"* — which backs up
+the sidebar check before any reply goes out. That qualifier is English, so under
+a non-English WhatsApp UI only the sidebar check (which is language-independent)
+applies.
+
+### What the bot can read
+
+Replies are written from the actual messages, read out of the open conversation.
+Direction comes from WhatsApp's `data-pre-plain-text` where it exists (text from
+a saved contact or a group member), from the bubble's tail marker otherwise, and
+is inherited from the message above when neither is present — a tail marks only
+the *first* bubble of a run, so without that last step the newest message, the
+one being answered, gets dropped.
+
+**Stickers, images and voice notes read as nothing**, and a chat with nothing
+readable is skipped rather than answered — there's no text in them to reply to,
+and replying anyway means answering a message the bot never read. Messages from
+numbers WhatsApp can't name are covered by the tail marker.
 
 ### Draft only
 

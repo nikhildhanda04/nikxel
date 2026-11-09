@@ -16,7 +16,8 @@ struct CheckWABot {
 
     static func chat(group: Bool = false, mentioned: Bool = false) -> WAUnreadChat {
         WAUnreadChat(name: "Asha", unread: 1, text: "hi", index: 0,
-                     isGroup: group, mentioned: mentioned)
+                     isGroup: group, mentioned: mentioned,
+                     sender: group ? "Someone" : "", preview: "hi")
     }
 
     static func decide(_ c: WAUnreadChat,
@@ -207,6 +208,37 @@ struct CheckWABot {
         let broken = LLMResponder.extractTask("Fine. [[TASK: never closed")
         assert(broken.task == nil)
         assert(broken.body == "Fine. [[TASK: never closed")
+
+        // --- Conversation label -> (name, isGroup) --------------------------
+        // The exact strings WhatsApp Web was observed to emit. Leaving the
+        // "group" qualifier in the name made the engine's "am I in the right
+        // chat" check fail for every group, so a tagged group message the user
+        // had explicitly allowed was aborted instead of answered.
+        let oneToOne = ChromeWhatsApp.parseConversationLabel("Kirti Forklyft")
+        assert(oneToOne.name == "Kirti Forklyft" && !oneToOne.isGroup)
+
+        let grp = ChromeWhatsApp.parseConversationLabel("group Warrior Tennis 🎾")
+        assert(grp.isGroup, "the leading qualifier is the only reliable group signal in the page")
+        assert(grp.name == "Warrior Tennis 🎾", "the qualifier must not survive into the name — got '\(grp.name)'")
+
+        let grp2 = ChromeWhatsApp.parseConversationLabel("group Produce POS App Dev")
+        assert(grp2.isGroup && grp2.name == "Produce POS App Dev")
+
+        // A contact whose name merely begins with "group" is not a group.
+        let tricky = ChromeWhatsApp.parseConversationLabel("Groupon Support")
+        assert(!tricky.isGroup && tricky.name == "Groupon Support",
+               "\"group\" must be a whole word, not a prefix — got \(tricky)")
+
+        // And the name the engine compares against must pass its own check.
+        func verifyPasses(header: String, target: String) -> Bool {
+            let a = header.lowercased().trimmingCharacters(in: .whitespaces)
+            let b = target.lowercased().trimmingCharacters(in: .whitespaces)
+            return a == b || a.hasPrefix(b) || b.hasPrefix(a) || a.contains(b)
+        }
+        assert(verifyPasses(header: grp.name, target: "Warrior Tennis 🎾"))
+        assert(verifyPasses(header: oneToOne.name, target: "Kirti Forklyft"))
+        // Containment still has to reject a genuinely wrong chat.
+        assert(!verifyPasses(header: "Dadaji", target: "Krishna Sharma"))
 
         // --- Browser detection ----------------------------------------------
         // Arc is Chromium but ignores --user-data-dir, so there is no way to get

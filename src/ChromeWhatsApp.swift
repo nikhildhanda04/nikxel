@@ -15,6 +15,11 @@ struct WAUnreadChat: Codable {
     /// True when the row carries WhatsApp's own @-mention badge, or the preview
     /// text names the user with an "@".
     var mentioned: Bool
+    /// Who sent the last message, when the row says so. Groups only -- a
+    /// one-to-one row has no sender element, which is how `isGroup` is decided.
+    var sender: String
+    /// The last message, bidi control marks stripped.
+    var preview: String
 }
 
 /// A lightweight snapshot of a chat row's preview text (any chat, not just unread).
@@ -114,9 +119,34 @@ enum ChromeBot {
     /// We invoke the binary directly (not `open -na`) because `open` can attach
     /// to / get cleaned up alongside the user's main browser instance, dropping
     /// the debug listener.
+    private static var lastLaunchAttempt: Date?
+    private static let launchLock = NSLock()
+
+    private static func waitForPort(_ seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if isPortOpen() { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return false
+    }
+
     @discardableResult
     static func launchIfNeeded() -> Bool {
         if isPortOpen() { return true }
+        launchLock.lock(); defer { launchLock.unlock() }
+        if isPortOpen() { return true }   // another caller got there first
+
+        // A cold browser opening a brand-new profile takes well over the 6s
+        // this used to allow: measured at ~15s on a first run. Returning false
+        // then made the setup wizard accuse the user of a port conflict, and
+        // had the engine fire a second launch at the same --user-data-dir. Wait
+        // on the instance already starting instead of racing it.
+        if let last = lastLaunchAttempt, Date().timeIntervalSince(last) < 90 {
+            cblog("ChromeBot: a launch is already in flight — waiting for port \(debugPort)")
+            return waitForPort(25)
+        }
+
         try? FileManager.default.createDirectory(
             atPath: profileDir, withIntermediateDirectories: true)
         guard let browser = availableBrowser() else {
@@ -141,13 +171,11 @@ enum ChromeBot {
             cblog("ChromeBot: failed to launch \(browser.name) — \(error)")
             return false
         }
+        lastLaunchAttempt = Date()
         cblog("ChromeBot: launched \(browser.name)")
-        // Wait up to ~6 s for the port to come up.
-        for _ in 0..<12 {
-            Thread.sleep(forTimeInterval: 0.5)
-            if isPortOpen() { return true }
-        }
-        return false
+        let up = waitForPort(30)
+        if !up { cblog("ChromeBot: \(browser.name) started but port \(debugPort) never opened") }
+        return up
     }
 }
 
@@ -205,6 +233,23 @@ enum ChromeWhatsApp {
     /// Also reports whether each row is a group and whether the user was
     /// @-mentioned in it, so `ChatbotEngine` can drop group chatter before
     /// clicking anything.
+    ///
+    /// The group test reads WhatsApp's own markup rather than guessing from
+    /// text. Inside `[data-testid="last-msg-status"]` a group row looks like:
+    ///
+    ///     <span title="Happy Diwali" data-testid="last-msg-status">
+    ///       <div><div><span dir="auto">PM Prince</span></div></div>
+    ///       <span>:&nbsp;</span>
+    ///       <span dir="ltr">Happy Diwali</span>
+    ///
+    /// A one-to-one row has no sender element and no ":&nbsp;" separator -- it
+    /// goes straight to the message, or to a `chat-msg-symbol` for media. That
+    /// separator span is therefore the signal, and the sender name next to it
+    /// comes out for free.
+    ///
+    /// An earlier version read the sender out of the row's `title` attribute.
+    /// It never worked: the title holds the message only, so every group in a
+    /// real chat list came back as a one-to-one.
     static func unreadChats() -> [WAUnreadChat] {
         guard let c = ensureCDP() else { return [] }
         let own = NikxelSettings.waOwnName
@@ -216,6 +261,9 @@ enum ChromeWhatsApp {
         (function(){
             var SELF_NAME = \(escapedSelf);
             var SELF_FIRST = \(escapedFirst);
+            // WhatsApp wraps every title in bidi isolates; a regex anchored at
+            // ^ would otherwise be looking at U+202A.
+            var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
             var result = [];
             var labels = document.querySelectorAll('span[aria-label]');
             for (var i = 0; i < labels.length; i++) {
@@ -224,8 +272,12 @@ enum ChromeWhatsApp {
                 if (!m) continue;
                 var row = labels[i].closest('[role="row"]');
                 if (!row) continue;
-                var titled = row.querySelectorAll('span[title]');
-                var name = titled.length ? (titled[0].getAttribute('title') || '').trim() : '';
+
+                // The row has TWO span[title]: the chat name and the message
+                // preview. Pick the name by excluding the preview rather than
+                // by document order.
+                var nameEl = row.querySelector('span[title]:not([data-testid="last-msg-status"])');
+                var name = nameEl ? (nameEl.getAttribute('title') || '').replace(BIDI, '').trim() : '';
                 if (!name) {
                     var dirEl = row.querySelector('span[dir="auto"]');
                     name = dirEl ? dirEl.textContent.trim() : '';
@@ -233,26 +285,29 @@ enum ChromeWhatsApp {
                 if (!name) continue;
                 if (name === 'Message yourself' || name === SELF_NAME) continue;
 
-                // WhatsApp Web shows the last message under the chat name, and
-                // in a GROUP it is prefixed with the sender ("Asha: on my way").
-                // One-to-one previews carry no prefix. That prefix is the only
-                // group signal available without opening the chat, alongside
-                // the default-group avatar icon.
-                var preview = titled.length > 1 ? (titled[1].getAttribute('title') || '').trim() : '';
-                if (!preview) preview = row.textContent.trim();
-                var prefix = preview.match(/^([^:]{1,30}):\\s/);
-                var prefixName = prefix ? prefix[1].trim() : '';
-                var isGroup = !!row.querySelector('[data-icon="default-group"], [data-icon="group"]');
-                if (!isGroup && prefixName
-                    && prefixName !== 'You' && prefixName !== 'Draft'
-                    && prefixName !== name
-                    && !/^(https?|www)$/i.test(prefixName)) {
-                    isGroup = true;
+                var status = row.querySelector('[data-testid="last-msg-status"]');
+                var preview = status ? (status.getAttribute('title') || '').replace(BIDI, '').trim() : '';
+
+                var isGroup = false, sender = '';
+                if (status) {
+                    for (var k = 0; k < status.children.length; k++) {
+                        // trim() drops the &nbsp;, leaving a bare colon.
+                        if ((status.children[k].textContent || '').trim() === ':') {
+                            isGroup = true;
+                            break;
+                        }
+                    }
+                    if (isGroup) {
+                        var auto = status.querySelector('span[dir="auto"]');
+                        if (auto) sender = (auto.textContent || '').replace(BIDI, '').trim();
+                    }
+                }
+                if (!isGroup) {
+                    isGroup = !!row.querySelector('[data-icon="default-group"], [data-icon="group"]');
                 }
 
-                var mentioned = !!row.querySelector('[data-icon="mention"], [data-icon="mentioned"]')
-                    || /mention/i.test(ar)
-                    || !!row.querySelector('[aria-label*="mention" i], [aria-label*="Mention"]');
+                var mentioned = !!row.querySelector('[data-icon*="mention" i], [aria-label*="mention" i]')
+                    || /mention/i.test(ar);
                 if (!mentioned && SELF_FIRST) {
                     mentioned = preview.indexOf('@' + SELF_FIRST) >= 0
                         || preview.indexOf('@' + SELF_NAME) >= 0;
@@ -264,7 +319,9 @@ enum ChromeWhatsApp {
                     text: row.textContent.trim().substring(0, 300),
                     index: i,
                     isGroup: isGroup,
-                    mentioned: mentioned
+                    mentioned: mentioned,
+                    sender: sender,
+                    preview: preview
                 });
             }
             return JSON.stringify(result.slice(0, 50));
@@ -273,29 +330,6 @@ enum ChromeWhatsApp {
         guard let json = c.eval(js),
               let data = json.data(using: .utf8) else { return [] }
         return (try? JSONDecoder().decode([WAUnreadChat].self, from: data)) ?? []
-    }
-
-    /// Second opinion on "is the open conversation a group", taken after the
-    /// chat is on screen: two or more distinct senders in the loaded history is
-    /// something a one-to-one chat cannot produce. Backs up the sidebar
-    /// heuristic before a reply actually goes out -- by this point the chat has
-    /// already been marked read, but an unwanted reply is the worse half.
-    static func openChatIsGroup() -> Bool {
-        guard let c = ensureCDP() else { return false }
-        let js = """
-        (function(){
-            if (document.querySelector('header [data-icon="default-group"], header [data-icon="group"]')) return 'true';
-            var bubbles = document.querySelectorAll('.copyable-text[data-pre-plain-text]');
-            var senders = {};
-            for (var i = 0; i < bubbles.length; i++) {
-                var pre = bubbles[i].getAttribute('data-pre-plain-text') || '';
-                var m = pre.match(/^\\[[^\\]]+\\]\\s*(.+?):\\s*$/);
-                if (m) senders[m[1].trim()] = 1;
-            }
-            return Object.keys(senders).length > 2 ? 'true' : 'false';
-        })()
-        """
-        return c.eval(js) == "true"
     }
 
     /// Open the chat for `name`. Returns a rect (viewport coords) of the
@@ -346,9 +380,15 @@ enum ChromeWhatsApp {
         return true
     }
 
-    /// Read the contact name of the conversation currently open in the
-    /// right pane. Parsed from the input's `aria-label`.
-    static func conversationHeader() -> String? {
+    /// Name and group-ness of the conversation currently open in the right
+    /// pane, read from the message box's own aria-label.
+    ///
+    /// WhatsApp writes "Type a message to Kirti Forklyft" for a one-to-one and
+    /// "Type a message to group Warrior Tennis" for a group. That one word is
+    /// the only authoritative group signal in the page -- both heuristics tried
+    /// before it (a `default-group` icon, counting distinct senders in the
+    /// loaded history) returned false on real groups.
+    static func openConversation() -> (name: String, isGroup: Bool)? {
         guard let c = ensureCDP() else { return nil }
         let js = """
         (function(){
@@ -368,46 +408,128 @@ enum ChromeWhatsApp {
             return '';
         })()
         """
-        return c.eval(js)
+        guard let label = c.eval(js), !label.isEmpty else { return nil }
+        return parseConversationLabel(label)
+    }
+
+    /// Split out from `openConversation` so the qualifier handling can be
+    /// checked against the exact strings WhatsApp was observed to emit --
+    /// see check_wa_bot.swift.
+    static func parseConversationLabel(_ label: String) -> (name: String, isGroup: Bool) {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        if trimmed.lowercased().hasPrefix("group ") {
+            return (String(trimmed.dropFirst("group ".count)).trimmingCharacters(in: .whitespaces), true)
+        }
+        return (trimmed, false)
+    }
+
+    /// Just the name, with any "group " qualifier removed.
+    ///
+    /// Leaving that word in broke the engine's "am I in the right chat" check
+    /// for every group: "group Warrior Tennis" never matched "Warrior Tennis",
+    /// so a tagged group message the user had explicitly allowed was aborted
+    /// instead of answered.
+    static func conversationHeader() -> String? {
+        openConversation()?.name
+    }
+
+    /// Whether the open conversation is a group.
+    ///
+    /// ponytail: the "group " qualifier is English, so this reads as a
+    /// one-to-one under a non-English WhatsApp UI. The sidebar check in
+    /// `unreadChats` is language-independent and is the one that actually
+    /// gates replies; this is the backstop. Upgrade path is matching the label
+    /// against the clicked chat name and treating any leading extra word as
+    /// the qualifier, whatever language it is in.
+    static func openChatIsGroup() -> Bool {
+        openConversation()?.isGroup ?? false
     }
 
     /// Read the last `count` INCOMING messages from the open conversation.
     ///
-    /// WhatsApp Web no longer uses `.message-in/.message-out` classes. Each
-    /// bubble carries a `.copyable-text[data-pre-plain-text]` div whose attr
-    /// has the canonical form `"[12:34 pm, 18/06/2026] Sender Name: "`. We
-    /// parse the sender out and drop bubbles authored by `userOwnName` so
-    /// the bot doesn't quote itself or the user's own prior messages.
+    /// Direction is resolved per row, in this order:
+    ///
+    /// 1. `data-pre-plain-text` -- `"[12:34 pm, 18/06/2026] Sender Name: "`.
+    ///    Names the sender outright. Present for text from a resolvable sender,
+    ///    which covers saved contacts and group members.
+    /// 2. `tail-in` / `tail-out`, the SVG title on a bubble's tail.
+    /// 3. Inherited from the row above.
+    ///
+    /// Step 3 is not a nicety. A tail marks only the FIRST bubble of a run, so
+    /// in any run of two or more the NEWEST message carries neither signal --
+    /// and that is exactly the message the bot is answering. Measured on a real
+    /// group, the latest message was dropped without it. Hence the walk is
+    /// oldest-to-newest, carrying direction forward, rather than newest-first.
+    ///
+    /// A row is only taken if it has `.selectable-text`. Using the row's own
+    /// textContent instead pulled in the SVG title of every icon on the bubble:
+    /// a voice note read as "ic-downloadic-headphones-filledic-bookmark-filled
+    /// 9:27 pm". Stickers, images and voice notes therefore yield nothing,
+    /// which is right -- there is no text in them to reply to.
     static func readMessages(count: Int = 6, userOwnName: String = NikxelSettings.waOwnName) -> [String] {
         guard let c = ensureCDP() else { return [] }
-        let escapedSelf = userOwnName
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedSelf = jsString(userOwnName)
         let js = """
         (function(){
-            var SELF = \"\(escapedSelf)\";
-            var bubbles = Array.from(document.querySelectorAll('.copyable-text[data-pre-plain-text]'));
+            var SELF = \(escapedSelf);
+            var main = document.querySelector('#main');
+            if (!main) return '[]';
+            var rows = main.querySelectorAll('[role="row"]');
             var inbound = [];
-            // Walk newest → oldest, keep only inbound, stop once we have N.
-            for (var i = bubbles.length - 1; i >= 0 && inbound.length < \(count); i--) {
-                var b = bubbles[i];
-                var pre = b.getAttribute('data-pre-plain-text') || '';
-                var m = pre.match(/^\\[[^\\]]+\\]\\s*(.+?):\\s*$/);
-                if (!m) continue;
-                var sender = m[1].trim();
-                if (sender === SELF || sender.indexOf(SELF) === 0) continue;
-                var txt = (b.textContent || '').trim();
-                // Strip the trailing "12:34 pm" timestamp WhatsApp appends
-                // inside the bubble's textContent.
-                txt = txt.replace(/\\s*\\d{1,2}:\\d{2}\\s*[ap]m\\s*$/i, '').trim();
-                if (txt) inbound.unshift(txt);
+            var carried = null;   // direction of the last row we could place
+            for (var i = 0; i < rows.length; i++) {
+                var row = rows[i];
+                var rowText = row.textContent || '';
+                var dir = null;
+
+                var pre = row.querySelector('[data-pre-plain-text]');
+                if (pre) {
+                    var m = (pre.getAttribute('data-pre-plain-text') || '')
+                        .match(/^\\[[^\\]]+\\]\\s*(.+?):\\s*$/);
+                    if (m) {
+                        var sender = m[1].trim();
+                        dir = (sender === SELF || sender.indexOf(SELF) === 0) ? 'out' : 'in';
+                    }
+                }
+                if (dir === null) {
+                    if (/tail-out/.test(rowText)) dir = 'out';
+                    else if (/tail-in/.test(rowText)) dir = 'in';
+                }
+                if (dir === null) dir = carried;   // same run as the row above
+                if (dir !== null) carried = dir;
+                if (dir !== 'in') continue;
+
+                var sel = row.querySelector('.selectable-text');
+                if (!sel) continue;
+                var txt = (sel.textContent || '')
+                    .replace(/\\s*\\d{1,2}:\\d{2}\\s*[ap]m\\s*$/i, '')
+                    .trim();
+                if (txt) inbound.push(txt);
             }
-            return JSON.stringify(inbound);
+            return JSON.stringify(inbound.slice(-\(count)));
         })()
         """
         guard let json = c.eval(js),
               let data = json.data(using: .utf8) else { return [] }
         return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+    }
+
+    /// Block until the open conversation has actually rendered its messages.
+    ///
+    /// The message pane is virtualised and populates after the click settles;
+    /// querying too early returns zero rows, which `readMessages` cannot tell
+    /// apart from "nothing to read". A real chat measured zero rows at the 0.6s
+    /// the engine used to allow.
+    @discardableResult
+    static func waitForMessages(timeout: TimeInterval = 4) -> Bool {
+        guard let c = ensureCDP() else { return false }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let n = c.eval("(function(){var m=document.querySelector('#main');return m ? String(m.querySelectorAll('[role=\"row\"]').length) : '0';})()")
+            if let n = n, let count = Int(n), count > 0 { return true }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        return false
     }
 
     /// Snapshot of every visible chat row's preview text, NOT just unread

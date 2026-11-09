@@ -387,7 +387,19 @@ class ChatbotEngine {
             // incoming bubbles avoids pulling in stale conversation history.
             setActiveContact(chat.name)
             ChromeWhatsApp.clickChat(name: chat.name)
-            Thread.sleep(forTimeInterval: 0.6)
+            // Wait for the message pane to actually populate rather than
+            // guessing at a sleep: it is virtualised, and 0.6s measured zero
+            // rows on a real chat, which reads as "nothing to say".
+            //
+            // A pane that never renders is a transient failure, not an empty
+            // chat, so the message goes back on the pending pile to be tried
+            // again next poll. Dropping it would lose that message for good:
+            // the baseline has already moved past it.
+            if !ChromeWhatsApp.waitForMessages() {
+                cblog("ChatbotEngine: '\(chat.name)' pane didn't render — retrying next poll")
+                pending[key] = p
+                setActiveContact(nil); continue
+            }
 
             // 5b. Second opinion on group-ness, now that the chat is open. The
             // sidebar heuristic can miss (a group whose last message happens to
@@ -404,6 +416,14 @@ class ChatbotEngine {
             let messages = ChromeWhatsApp.readMessages(count: newCount)
             cblog("ChatbotEngine: '\(chat.name)' new=\(newCount) msgs=\(messages.count)")
 
+            // Nothing readable -- a sticker, an image, or a sender WhatsApp
+            // won't name. Replying anyway handed the model an empty "their
+            // latest message" and let it answer something it had never read.
+            guard !messages.isEmpty else {
+                cblog("ChatbotEngine: skip '\(chat.name)' — nothing readable in the new messages")
+                setActiveContact(nil); continue
+            }
+
             // 6. Generate reply.
             let history = conversationHistory[key] ?? []
             guard let reply = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "), history: history) else {
@@ -418,7 +438,12 @@ class ChatbotEngine {
             if let header = ChromeWhatsApp.conversationHeader() {
                 let a = header.lowercased().trimmingCharacters(in: .whitespaces)
                 let b = chat.name.lowercased().trimmingCharacters(in: .whitespaces)
-                if a != b && !a.hasPrefix(b) && !b.hasPrefix(a) {
+                // `contains` as well as the prefix tests: WhatsApp qualifies a
+                // group's label with a leading word ("group Warrior Tennis"),
+                // and that word is localised, so it cannot all be stripped by
+                // name. Containment covers whatever the qualifier turns out to
+                // be while still catching a genuinely wrong chat.
+                if a != b && !a.hasPrefix(b) && !b.hasPrefix(a) && !a.contains(b) {
                     cblog("ChatbotEngine: VERIFY FAILED header='\(header)' target='\(chat.name)' — ABORT")
                     setActiveContact(nil); continue
                 }

@@ -216,9 +216,8 @@ Every MOM has the same sections, in this order:
 **Blockers & Risks** · **Open Questions** · **Action Items** ·
 **Follow-Up Meetings** · **Agent Prompts**
 
-…unless you've told it otherwise — see
-[your own summary style](#your-own-summary-style). Three of these are worth
-knowing about.
+…unless you've picked a different [summary template](#summary-templates) or
+written your own. Three of these are worth knowing about.
 
 ### Speakers
 
@@ -278,28 +277,62 @@ sync more often") and meetings that already exist are left out entirely.
 These are what [Google Calendar sync](#connect-your-google-account-optional)
 turns into real events.
 
-### Your own summary style
+### Summary templates
 
-Menu bar → **Edit Summary Style…** opens `~/.nikxel/summary_style.txt`. Write
-plain instructions, one per line, the way you'd tell a person:
+A developer, an HR lead, a project manager and a founder want genuinely
+different things out of the same call. Menu bar → **Summary Template** picks
+which shape you get:
+
+| Template | What it changes |
+|---|---|
+| **Default (balanced)** | The built-in structure, unchanged. |
+| **Developer** | Keeps Agent Prompts. Records the rejected options and why. Preserves endpoint paths, table names, flags and versions verbatim. Adds **Technical Context** for the numbers and constraints that aren't tasks, and **Review Notes** if a PR was discussed. Separates work that can start from work waiting on a decision. |
+| **Project Manager** | Opens with **Status at a Glance**. Demands an owner and a date on every item, and lists the ones that have neither under **Gaps**. Adds **Scope & Timeline Changes** (before → after) and **Dependencies**. Orders blockers by how many people they're holding up. |
+| **HR** | Drops Agent Prompts. Adds **Commitments Made** — anything promised to a person, quoted in the words it was made in — and **Concerns Raised**, in the person's own words. Renames Per-Speaker Highlights to Per-Person Notes. Quotes contested wording exactly, and explicitly won't diagnose anyone or infer anything personal that wasn't volunteered. |
+| **Co-founder** | Decision-first. Puts **Needs a Decision From Me** right under the summary. Adds **Money** (every figure with its units, never rounded) and **Commitments to Outsiders**. Records what was traded away, not just what was chosen. Drops Agent Prompts and keeps the whole thing short. |
+
+Every one of them is a plain text file in `~/.nikxel/templates/`, holding
+nothing but instructions:
 
 ```
-Keep the summary to three sentences.
-Drop the Agent Prompts section, I don't use a coding agent.
-Add a "## Costs" section for anything with a budget attached.
-Put Action Items first, before the summary.
-Write owners as first names only.
+Drop the Agent Prompts section entirely.
+Rename "Per-Speaker Highlights" to "## Per-Person Notes".
+Add a "## Commitments Made" section near the top: anything promised to a
+person — compensation, title, leave, timelines, headcount, training…
 ```
 
-They're added to the prompt your coding agent runs and override the built-in
-structure wherever the two disagree — including dropping a section or adding
-one that isn't listed. Lines starting with `#` are ignored, so the examples
-seeded into the file are safe to leave there. An empty file means "use the
-defaults". Changes take effect on your next recording.
+So you can edit any of them, and write your own:
 
-One thing style instructions can't override: the rules against inventing
-content. Attendees, decisions, owners, dates, file paths and identifiers still
-come only from what was actually said.
+- **Edit "<name>"…** opens the active template in your editor. Lines starting
+  with `#` are ignored, so the notes in the file are safe to leave there.
+- **New Template…** names a new one — "Client Calls", "Design Review", "Board"
+  — either blank or copying the one you're on.
+- **Reset "<name>" to Default…** restores a built-in template to the shipped
+  version. Nikxel never overwrites a template you've edited, so this is the
+  only way back.
+- **Delete "<name>"…** removes one of yours and falls back to Default.
+
+Changes take effect on your next recording.
+
+Templates are an *overlay* on the prompt, not a replacement for it — which is
+why they're a dozen lines rather than two hundred, and why they keep working
+when the speaker-separation rules improve. If you want to rewrite the whole
+thing, `~/.nikxel/prompts/meeting.md` is still there.
+
+Three things a template cannot override:
+
+- **Inventing content.** Attendees, decisions, owners, numbers, dates, file
+  paths and identifiers still come only from what was actually said. A section
+  with nothing to fill it gets `- None.`
+- **The two heading names** `## Action Items` and `## Follow-Up Meetings`, which
+  are read back when [sending tasks to Google](#sending-a-meetings-tasks-to-google).
+  Everything else can be renamed.
+- **Instructions that don't fit.** A template is written with meetings in mind;
+  anything in it that makes no sense for a lecture or a podcast is ignored.
+
+If you were using `~/.nikxel/summary_style.txt` from before templates existed,
+whatever you wrote in it is carried over as a template called **My Style** and
+selected for you.
 
 ## What the WhatsApp bot knows
 
@@ -420,8 +453,8 @@ Menu bar → **Setup Wizard…** → **Your avatar**. See
 [Make your own avatar](#make-your-own-avatar).
 
 ### Change what your summaries contain
-Menu bar → **Edit Summary Style…**. See
-[your own summary style](#your-own-summary-style).
+Menu bar → **Summary Template** — Developer, Project Manager, HR, Co-founder,
+or one you write yourself. See [summary templates](#summary-templates).
 
 ### Switch which coding agent writes your notes
 Menu bar → **Setup Wizard…** → **Choose your coding agent**.
@@ -443,6 +476,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 - **Transcription**: shells out to `whisper` / `whisper.cpp`, plain text for Notes, SRT for Meeting (so timestamps can interleave speakers)
 - **MOM generation**: shells out to your chosen agent (Claude Code / OpenCode / Codex) in headless one-shot mode; output is Markdown. The raw transcript is written to disk *before* generation runs, so a failed or timed-out summary never costs you the transcript.
 - **Sprite import**: chroma-keys the magenta out, detects the row/column grid from background gaps instead of assuming an even division, and scales all 40 frames by one shared factor
+- **Summary templates**: plain-text instruction files in `~/.nikxel/templates/`, injected into the prompt as `{{custom_instructions}}` — an overlay on the shipped prompt rather than a copy of it, so templates don't go stale when the prompt improves
 - **Google sync**: one OAuth grant (`GoogleAuth`) shared by the calendar poll and the task/event writer; the writer parses the Markdown the agent already wrote rather than making a second LLM call, which is why **Action Items** and **Follow-Up Meetings** have a fixed line format
 - **Calendar / reminders**: Google Calendar v3 REST API on a 30 s poll; EventKit for Apple Reminders with `EKEventStoreChanged` notifications + `NSWorkspace.didWake` for wake-from-sleep refresh
 - **Daily summary**: 15 s `NSWorkspace.frontmostApplication` + AX `kAXFocusedWindowAttribute`/`kAXTitleAttribute` polling → JSONL day-log; aggregated at 10 pm with `git log`/`git diff`, today's MOMs, Claude Code JSONL session transcripts, and `sqlite3` queries against the opencode database; narrative written by your chosen coding agent
@@ -456,7 +490,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 | Daily summaries | `~/Documents/nikxel/daily/` |
 | Raw day-activity log (JSONL) | `~/Library/Application Support/Nikxel/days/` |
 | Prompt templates | `~/.nikxel/prompts/notes.md` & `meeting.md` |
-| Your summary style instructions | `~/.nikxel/summary_style.txt` |
+| Summary templates (one file each) | `~/.nikxel/templates/*.txt` |
 | Speech models (whisper.cpp) | `~/.nikxel/models/` |
 | Raw recordings (kept until processed) | `~/.nikxel/recordings/` |
 | MOM workspace / last-run logs | `~/.nikxel/momworkspace/` |

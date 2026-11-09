@@ -20,14 +20,28 @@ enum GoogleSync {
         var owner: String
         var due: Date?
 
+        /// Owner with the "(Me)" marker removed. The Speakers section labels
+        /// the user as "Jake (Me)", so that -- not a bare first name -- is what
+        /// actually lands in the Owner field, and comparing it raw against the
+        /// user's name never matched.
+        var normalizedOwner: String {
+            owner.replacingOccurrences(of: "(Me)", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespaces)
+        }
+
+        /// True when this is the user's own task, or nobody's.
+        func isMine(ownName: String) -> Bool {
+            let o = normalizedOwner
+            return o.isEmpty
+                || o.caseInsensitiveCompare(ownName) == .orderedSame
+                || o.caseInsensitiveCompare("Me") == .orderedSame
+                || o.caseInsensitiveCompare("Unassigned") == .orderedSame
+        }
+
         /// Other people's tasks get their name up front, so a glance at the
         /// Google Tasks list shows whose it is -- Tasks has no assignee field.
         func taskTitle(ownName: String) -> String {
-            let mine = owner.isEmpty
-                || owner.caseInsensitiveCompare(ownName) == .orderedSame
-                || owner.caseInsensitiveCompare("Me") == .orderedSame
-                || owner.caseInsensitiveCompare("Unassigned") == .orderedSame
-            return mine ? title : "[\(owner)] \(title)"
+            isMine(ownName: ownName) ? title : "[\(normalizedOwner)] \(title)"
         }
     }
 
@@ -320,7 +334,7 @@ enum GoogleSync {
                                    completion: @escaping (String?) -> Void) {
         var body: [String: Any] = ["title": item.taskTitle(ownName: ownName)]
         var notes = "From \(note.lastPathComponent)"
-        if !item.owner.isEmpty { notes = "Owner: \(item.owner)\n" + notes }
+        if !item.isMine(ownName: ownName) { notes = "Owner: \(item.normalizedOwner)\n" + notes }
         body["notes"] = notes
         if let due = item.due {
             // Google Tasks stores a date only; the time part is ignored but the

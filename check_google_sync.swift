@@ -79,6 +79,24 @@ struct CheckGoogleSync {
         assert(items[0].taskTitle(ownName: "Rohan") == "Send Priya the updated pricing sheet",
                "matching the user's own name means no prefix")
 
+        // The Speakers section labels the user "Jake (Me)", so that is the
+        // owner string that really arrives -- it must read as the user's own
+        // task, not get prefixed with their own name.
+        let labelled = GoogleSync.parseActionItems(
+            "## Action Items\n- [ ] **Approve the comp review** — Owner: Jake (Me) — Due: Not specified", tz: tz)
+        assert(labelled.count == 1)
+        assert(labelled[0].normalizedOwner == "Jake", labelled[0].normalizedOwner)
+        assert(labelled[0].isMine(ownName: "Jake"))
+        assert(labelled[0].taskTitle(ownName: "Jake") == "Approve the comp review",
+               "got: \(labelled[0].taskTitle(ownName: "Jake"))")
+        assert(labelled[0].taskTitle(ownName: "Anjali") == "[Jake] Approve the comp review",
+               "somebody else's task keeps the name, without the (Me) marker")
+
+        // A trailing note after the Due field must not become a due date.
+        let trailing = GoogleSync.parseActionItems(
+            "## Action Items\n- [ ] **Ship the guard** — Owner: Unassigned — Due: Not specified — *Waiting on the ticket.*", tz: tz)
+        assert(trailing.count == 1 && trailing[0].due == nil, "trailing prose must not parse as a date")
+
         // --- Follow-ups ------------------------------------------------------
         let ups = GoogleSync.parseFollowUps(note, tz: tz)
         assert(ups.count == 1, "only the one with a real date AND time, got \(ups.count): \(ups.map(\.title))")

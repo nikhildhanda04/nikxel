@@ -24,6 +24,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var forceMeetingItem: NSMenuItem?
     private var botMenuItem: NSMenuItem?
     private var googleSyncMenuItem: NSMenuItem?
+    private var templateMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         stateMachine = StateMachine()
@@ -77,6 +78,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             object: nil
         )
 
+        SummaryTemplates.seedIfMissing()
         setupMenuBar()
         agentMonitor.startMonitoring()
         inputHandler.startMonitoring()
@@ -211,8 +213,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let editPersonality = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
         editPersonality.target = self; menu.addItem(editPersonality)
 
-        let editStyle = NSMenuItem(title: "Edit Summary Style…", action: #selector(editSummaryStyle), keyEquivalent: "")
-        editStyle.target = self; menu.addItem(editStyle)
+        let templateItem = NSMenuItem(title: "Summary Template", action: nil, keyEquivalent: "")
+        let templateSubmenu = NSMenu()
+        templateItem.submenu = templateSubmenu
+        templateMenu = templateSubmenu
+        rebuildTemplateMenu()
+        menu.addItem(templateItem)
 
         let editSettings = NSMenuItem(title: "Edit Nikxel Settings (name, language)…", action: #selector(editSettings), keyEquivalent: "")
         editSettings.target = self; menu.addItem(editSettings)
@@ -419,24 +425,130 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         googleSyncMenuItem?.title = "Send Meeting Tasks to Google: \(NikxelSettings.googleSyncEnabled ? "On" : "Off")"
     }
 
-    /// Opens the free-text file that customizes how summaries are written.
-    @objc func editSummaryStyle() {
-        NikxelSettings.seedSummaryStyleIfMissing()
+    // MARK: - Summary templates
+
+    /// Rebuilt rather than mutated, because creating or deleting a template
+    /// changes the list itself, not just which row is ticked.
+    private func rebuildTemplateMenu() {
+        guard let menu = templateMenu else { return }
+        menu.removeAllItems()
+        let active = NikxelSettings.summaryTemplate
+
+        for t in SummaryTemplates.available() {
+            let item = NSMenuItem(title: t.name, action: #selector(selectTemplate(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = t.slug
+            item.state = t.slug == active ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        let activeName = SummaryTemplates.displayName(for: active)
+
+        let edit = NSMenuItem(title: "Edit \u{201C}\(activeName)\u{201D}…", action: #selector(editActiveTemplate), keyEquivalent: "")
+        edit.target = self; menu.addItem(edit)
+
+        let newItem = NSMenuItem(title: "New Template…", action: #selector(newTemplate), keyEquivalent: "")
+        newItem.target = self; menu.addItem(newItem)
+
+        if SummaryTemplates.isShipped(active) {
+            let reset = NSMenuItem(title: "Reset \u{201C}\(activeName)\u{201D} to Default…", action: #selector(resetActiveTemplate), keyEquivalent: "")
+            reset.target = self; menu.addItem(reset)
+        } else {
+            let del = NSMenuItem(title: "Delete \u{201C}\(activeName)\u{201D}…", action: #selector(deleteActiveTemplate), keyEquivalent: "")
+            del.target = self; menu.addItem(del)
+        }
+
+        let folder = NSMenuItem(title: "Open Templates Folder", action: #selector(openTemplatesFolder), keyEquivalent: "")
+        folder.target = self; menu.addItem(folder)
+    }
+
+    @objc func selectTemplate(_ sender: NSMenuItem) {
+        guard let slug = sender.representedObject as? String else { return }
+        NikxelSettings.summaryTemplate = slug
+        rebuildTemplateMenu()
+    }
+
+    @objc func editActiveTemplate() {
+        let slug = NikxelSettings.summaryTemplate
         let alert = NSAlert()
-        alert.messageText = "How should your summaries be written?"
+        alert.messageText = "Editing \u{201C}\(SummaryTemplates.displayName(for: slug))\u{201D}"
         alert.informativeText = """
-        Write plain instructions, one per line — the same way you'd tell a person. They are added to the prompt your coding agent runs, and override the built-in structure wherever the two disagree.
+        Write plain instructions, one per line — the same way you'd tell a person. They're added to the prompt your coding agent runs and override the built-in structure: drop a section you don't use, add one you do, change the order, set the length or the tone.
 
-        You can drop sections you don't use, add ones you do, change the order, set the length, or change how owners and dates are written.
+        Lines starting with # are ignored, so the notes already in the file are safe to leave there.
 
-        Lines starting with # are ignored, so the examples in the file are safe to leave in place.
-
-        Takes effect on your next recording. Nikxel never invents content to satisfy a style instruction — attendees, decisions, owners and dates still come only from the transcript.
+        Takes effect on your next recording. Nikxel still won't invent content to satisfy an instruction — attendees, decisions, owners, numbers and dates come only from the transcript.
         """
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Open summary_style.txt")
-        alert.runModal()
-        NSWorkspace.shared.open(NikxelSettings.summaryStyleURL)
+        alert.addButton(withTitle: "Open \(slug).txt")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        NSWorkspace.shared.open(SummaryTemplates.activeURL)
+    }
+
+    @objc func newTemplate() {
+        let active = NikxelSettings.summaryTemplate
+        let alert = NSAlert()
+        alert.messageText = "New summary template"
+        alert.informativeText = "Name it after the kind of meeting or the role it's for — \"Client Calls\", \"Design Review\", \"Board\"."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "Template name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Create, starting blank")
+        alert.addButton(withTitle: "Create, copying \u{201C}\(SummaryTemplates.displayName(for: active))\u{201D}")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let copyFrom = response == .alertSecondButtonReturn ? active : nil
+
+        guard let slug = SummaryTemplates.create(named: name, copying: copyFrom) else {
+            let fail = NSAlert()
+            fail.messageText = "Couldn't create that template"
+            fail.informativeText = SummaryTemplates.slugify(name).isEmpty
+                ? "Give it a name with at least one letter or number in it."
+                : "A template with that name already exists. Pick a different name, or edit the existing one."
+            fail.addButton(withTitle: "OK")
+            fail.runModal()
+            return
+        }
+        NikxelSettings.summaryTemplate = slug
+        rebuildTemplateMenu()
+        NSWorkspace.shared.open(SummaryTemplates.url(for: slug))
+    }
+
+    @objc func resetActiveTemplate() {
+        let slug = NikxelSettings.summaryTemplate
+        let name = SummaryTemplates.displayName(for: slug)
+        let alert = NSAlert()
+        alert.messageText = "Reset \u{201C}\(name)\u{201D} to the built-in version?"
+        alert.informativeText = "Anything you've written in \(slug).txt will be replaced. Your other templates aren't touched."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SummaryTemplates.reset(slug)
+    }
+
+    @objc func deleteActiveTemplate() {
+        let slug = NikxelSettings.summaryTemplate
+        let name = SummaryTemplates.displayName(for: slug)
+        let alert = NSAlert()
+        alert.messageText = "Delete \u{201C}\(name)\u{201D}?"
+        alert.informativeText = "\(slug).txt is removed and summaries go back to the Default template."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SummaryTemplates.delete(slug)
+        rebuildTemplateMenu()
+    }
+
+    @objc func openTemplatesFolder() {
+        NSWorkspace.shared.open(SummaryTemplates.templatesDir)
     }
 
     @objc func connectAppleReminders() {
@@ -483,6 +595,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         waOwnName — your name exactly as it shows in your own WhatsApp account (often your full name) — used to filter your own messages out of chat scraping. Leave as-is if unsure.
         language — "auto" to match whichever language the content is in (English, Hindi, Hinglish, etc.), or a specific language name (e.g. "Hindi") to always force it.
         botMemoryDays — how many days of your end-of-day summaries the WhatsApp bot reads before replying, so it recognises what someone is asking about. It is told never to disclose from them. 0 turns it off; 3 is the default.
+        summaryTemplate — which template in ~/.nikxel/templates/ shapes your summaries (developer, hr, project-manager, co-founder, default, or one you made). Pick it from the Summary Template menu instead of editing this by hand.
         googleSyncEnabled — whether a finished meeting summary offers to add its Action Items to Google Tasks and its follow-ups to your calendar. Nothing is ever added without you confirming the list first.
         """
         alert.alertStyle = .informational

@@ -51,6 +51,7 @@ enum NikxelSettings {
         var onboardingCompleted: Bool?
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
+        var summaryTemplate: String?
     }
 
     private static let fileURL: URL = {
@@ -191,67 +192,49 @@ enum NikxelSettings {
         set { save { $0.googleSyncEnabled = newValue } }
     }
 
-    /// Free-text file where the user says how they want their summaries
-    /// written -- extra sections, sections to drop, length, tone.
+    /// Which summary template is active -- the slug of a file in
+    /// `~/.nikxel/templates/`. See SummaryTemplates, which owns the files.
     ///
-    /// Deliberately a plain text file and not a set of toggles: "skip the agent
-    /// prompts", "keep the summary to three sentences" and "add a Costs
-    /// section" are all the same kind of instruction to a model, and a checkbox
-    /// per section would cover none of the ones nobody thought of. Same
-    /// approach as bot_personality.txt.
-    static let summaryStyleURL: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".nikxel", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("summary_style.txt")
-    }()
-
-    /// The seeded file is self-documenting, so `#` lines are stripped rather
-    /// than handed to the model as instructions.
-    static var summaryStyle: String {
-        guard let raw = try? String(contentsOf: summaryStyleURL, encoding: .utf8) else { return "" }
-        return raw.components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// "default" is a template whose every line is a comment, so the shipped
+    /// prompt is used unchanged unless somebody picks a role or writes their own.
+    static var summaryTemplate: String {
+        get {
+            let raw = load().summaryTemplate?.trimmingCharacters(in: .whitespaces) ?? ""
+            return raw.isEmpty ? "default" : raw
+        }
+        set { save { $0.summaryTemplate = newValue } }
     }
 
-    /// Ready-to-drop-into-a-prompt form of `summaryStyle`. Empty when the user
-    /// has not customized anything, so the default prompt is unchanged.
+    /// The active template's instructions, comments stripped.
+    static var summaryStyle: String { SummaryTemplates.activeInstructions }
+
+    /// Ready-to-drop-into-a-prompt form of `summaryStyle`. Empty when the
+    /// active template adds nothing, so the default prompt is unchanged.
     static var summaryStyleInstruction: String {
         let style = summaryStyle
         guard !style.isEmpty else { return "" }
         return """
         HOUSE STYLE -- the person this summary is for has asked for the following. \
         These override the section-by-section instructions below wherever the two \
-        disagree, including dropping a section entirely or adding one that isn't \
-        listed. They do NOT override the rules about never inventing content: \
-        attendees, decisions, owners, dates, file paths and identifiers still come \
-        only from the transcript.
+        disagree, including dropping a section entirely, renaming one, reordering \
+        them, or adding one that isn't listed.
+
+        Three limits on that, which the house style cannot override:
+        - Never invent content to satisfy a style instruction. Attendees, \
+        decisions, owners, dates, numbers, file paths and identifiers still come \
+        only from the transcript. If a requested section has nothing in the \
+        transcript to fill it, write "- None." rather than producing something.
+        - If you keep an action-items or follow-up-meetings section, keep its \
+        heading spelled exactly "## Action Items" and "## Follow-Up Meetings". \
+        Those two are read back by name when sending tasks to Google Tasks and \
+        Calendar, and a renamed heading silently stops that working.
+        - These instructions were written with meetings in mind. If one of them \
+        makes no sense for the content you were actually given, ignore that one.
 
         \(style)
 
         END OF HOUSE STYLE.
         """
-    }
-
-    /// Seeds the commented template so the editor opens with something useful.
-    static func seedSummaryStyleIfMissing() {
-        guard !FileManager.default.fileExists(atPath: summaryStyleURL.path) else { return }
-        let template = """
-        # How you want your meeting summaries written.
-        # Write plain instructions, one per line. Lines starting with # are ignored.
-        # Delete these examples and write your own -- an empty file means "use the defaults".
-        #
-        # Examples:
-        #   Keep the summary to three sentences.
-        #   Drop the Agent Prompts section, I don't use a coding agent.
-        #   Add a "## Costs" section for anything with a number or a budget attached.
-        #   Put Action Items first, before the summary.
-        #   Write owners as first names only.
-        #   Always include a one-line "what changed since last time" note.
-        """
-        try? template.write(to: summaryStyleURL, atomically: true, encoding: .utf8)
     }
 
     /// File format for generated notes/MOMs. The Markdown the agent wrote is

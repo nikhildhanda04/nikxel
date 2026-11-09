@@ -22,6 +22,8 @@
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>ATSApplicationFontsPath</key>
+    <string>Fonts</string>
     <key>NSCalendarsUsageDescription</key>
     <string>Nikxel reads upcoming events to show meeting reminders.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
@@ -34,5 +36,9 @@
     <string>Nikxel shows reminders due today as bubbles above the avatar so you can tick them off without opening Reminders.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>Nikxel shows reminders due today as bubbles above the avatar so you can tick them off without opening Reminders.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Nikxel checks your browser tabs for an active Google Meet so it can show a meeting indicator and let the chatbot reply on your behalf.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Nikxel reads WhatsApp Web to auto-reply to messages while you're in a meeting.</string>
 </dict>
 </plist>

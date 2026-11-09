@@ -29,6 +29,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var waDraftItem: NSMenuItem?
     private var waQuietItem: NSMenuItem?
     private var waChatTasksItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
+    private var checkingForUpdates = false
     private var googleSyncMenuItem: NSMenuItem?
     private var templateMenu: NSMenu?
 
@@ -319,6 +321,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let setupWizard = NSMenuItem(title: "Setup Wizard…", action: #selector(openOnboarding), keyEquivalent: "")
         setupWizard.target = self; menu.addItem(setupWizard)
+
+        let update = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        update.target = self; menu.addItem(update)
+        self.updateMenuItem = update
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "Quit Nikxel", action: #selector(quitApp), keyEquivalent: "q")
@@ -788,6 +794,105 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.addButton(withTitle: "Open settings.json")
         alert.runModal()
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Updates
+
+    @objc func checkForUpdates() {
+        guard !checkingForUpdates else { return }
+        checkingForUpdates = true
+        updateMenuItem?.title = "Checking for Updates…"
+        updateMenuItem?.isEnabled = false
+        Updater.check { [weak self] result in
+            guard let self = self else { return }
+            self.checkingForUpdates = false
+            self.updateMenuItem?.title = "Check for Updates…"
+            self.updateMenuItem?.isEnabled = true
+            switch result {
+            case .failure(let err):
+                self.showUpdateAlert(title: "Couldn't check for updates",
+                                     body: err.localizedDescription,
+                                     style: .warning)
+            case .success(let status):
+                self.presentUpdate(status)
+            }
+        }
+    }
+
+    private func presentUpdate(_ status: Updater.Status) {
+        guard !status.isUpToDate else {
+            showUpdateAlert(title: "Nikxel is up to date",
+                            body: "You're on the latest version (\(status.currentCommit)).",
+                            style: .informational)
+            return
+        }
+
+        let n = status.behind
+        var body = status.subjects.prefix(10).map { "• \($0)" }.joined(separator: "\n")
+        if status.subjects.count > 10 { body += "\n• …and \(status.subjects.count - 10) more" }
+
+        // A fast-forward pull needs main and a clean tree. Say which one is in
+        // the way rather than letting the script discover it and roll back.
+        if !status.canAutoUpdate {
+            if status.branch != "main" {
+                body += "\n\nYou're on the \"\(status.branch)\" branch, not main, so Nikxel won't pull for you. Switch to main first."
+            }
+            if status.dirty {
+                body += "\n\nYou have uncommitted changes, which would block the pull. Commit or stash them first."
+            }
+        }
+
+        let alert = NSAlert()
+        alert.messageText = n == 1 ? "1 update available" : "\(n) updates available"
+        alert.informativeText = body
+        alert.alertStyle = .informational
+        if status.canAutoUpdate {
+            alert.addButton(withTitle: "Update and Restart")
+        }
+        alert.addButton(withTitle: "Not Now")
+        alert.addButton(withTitle: "View on GitHub")
+
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn where status.canAutoUpdate:
+            startUpdate(status)
+        case .alertThirdButtonReturn where status.canAutoUpdate,
+             .alertSecondButtonReturn where !status.canAutoUpdate:
+            if let url = URL(string: "https://github.com/nikhildhanda04/nikxel/commits/main") {
+                NSWorkspace.shared.open(url)
+            }
+        default:
+            break
+        }
+    }
+
+    private func startUpdate(_ status: Updater.Status) {
+        guard Updater.updateAndRestart(repo: status.repo) else {
+            showUpdateAlert(title: "Couldn't start the update",
+                            body: "Nikxel couldn't write its update script to the temporary folder. Nothing has changed — update by hand with:\n\ncd \(status.repo.path)\ngit pull\n./setup.command",
+                            style: .warning)
+            return
+        }
+        // The script is waiting for this process to go away before it touches
+        // the binary, so quitting IS the next step, not an abandonment.
+        window.nikxelView?.showCard(
+            icon: "⬇️", title: "Updating…",
+            lines: ["Nikxel will quit, rebuild and come back in a moment."],
+            kind: .info, lifetime: 10)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { NSApp.terminate(nil) }
+    }
+
+    private func showUpdateAlert(title: String, body: String, style: NSAlert.Style) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.alertStyle = style
+        alert.addButton(withTitle: "OK")
+        if style == .warning { alert.addButton(withTitle: "Open Update Log") }
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn, style == .warning {
+            NSWorkspace.shared.open(Updater.logURL)
+        }
     }
 
     @objc func quitApp() { NSApp.terminate(nil) }

@@ -5,3 +5,9 @@
 /tmp/
 *.pyc
 __pycache__/
+
+# Google OAuth. The real ones live in ~/.nikxel/, but a copy of the downloaded
+# client JSON often sits in the working directory while setting it up -- this
+# makes sure `git add .` can never publish it.
+google_creds.json
+google_token.json

@@ -177,6 +177,19 @@ git pull
 ./setup.command
 ```
 
+That's the whole thing — same command as the install. There's no in-app
+updater, so nothing tells you a new version exists; to see what you'd be
+getting, `git fetch && git log --oneline HEAD..origin/main`.
+
+Lost your clone, or installed by downloading the repo as a ZIP? Clone it
+properly once (`git clone https://github.com/nikhildhanda04/nikxel.git`) and
+run `./setup.command` from there. Your settings in `~/.nikxel/` are picked up
+by whichever copy you launch, so nothing is lost — delete the old folder
+afterwards so you don't run a stale build by accident.
+
+The build output (`Nikxel.app/Contents/MacOS/Nikxel` and its signature) is not
+tracked by git, so rebuilding never leaves changes that block the next pull.
+
 `setup.command` quits the running copy before rebuilding, then relaunches it.
 That quit matters: Nikxel reads your prompt templates and settings once, at
 launch, so a copy left running keeps behaving like the old version even after

@@ -44,14 +44,27 @@ enum WABotGate {
                        inMeeting: Bool,
                        mode: WABotMode,
                        groupReplies: Bool,
-                       unattendedSeconds: TimeInterval) -> Decision {
+                       unattendedSeconds: TimeInterval,
+                       blocked: Bool = false,
+                       quietHours: Bool = false) -> Decision {
+        // The never-reply list beats everything, including a live meeting. The
+        // whole value of writing a name down is that it then needs no thought.
+        if blocked { return .skip("on your never-reply list") }
+
         if chat.isGroup {
             guard groupReplies else { return .skip("group chats off") }
             guard chat.mentioned else { return .skip("group, user not tagged") }
         }
         // A meeting is the one state where every mode answers at once: the
-        // point of the feature is covering for someone who cannot type.
+        // point of the feature is covering for someone who cannot type. It also
+        // overrides quiet hours -- if you're in a meeting at 3am you're awake.
         if inMeeting { return .reply }
+
+        // Checked after the meeting short-circuit and before the mode, so a
+        // message that arrives at 2am is held rather than dropped: `.wait`
+        // keeps it pending and it goes out once the quiet hours end.
+        if quietHours { return .wait }
+
         switch mode {
         case .meetings:
             return .skip("no meeting")
@@ -62,6 +75,19 @@ enum WABotGate {
                 ? .reply
                 : .wait
         }
+    }
+
+    /// Whether `date` falls inside the quiet window, wrapping past midnight
+    /// when `from` is later than `to` (22→8, the normal case). `from == to` is
+    /// treated as no quiet hours rather than all of them: a zero-length window
+    /// is what you get from a half-filled settings file, and silencing the bot
+    /// completely is what the Off switch is for.
+    static func isQuietHour(_ date: Date, from: Int, to: Int,
+                            calendar: Calendar = .current) -> Bool {
+        guard from != to else { return false }
+        let h = calendar.component(.hour, from: date)
+        return from < to ? (h >= from && h < to)
+                         : (h >= from || h < to)
     }
 }
 
@@ -103,6 +129,18 @@ class ChatbotEngine {
         let since: Date
     }
     private var pending: [String: Pending] = [:]
+
+    /// Fired on the main thread after a batch of replies, with one entry per
+    /// contact answered and whether they were drafted rather than sent. Wired
+    /// to the avatar card in NikxelApp.
+    var onRepliesSent: (([Delivered], Bool) -> Void)?
+
+    struct Delivered {
+        let contact: String
+        let text: String
+        /// Task filed to Google Tasks off the back of this message, if any.
+        let task: String?
+    }
 
     private(set) var activeContactName: String?
     private var cancelled = false
@@ -304,12 +342,19 @@ class ChatbotEngine {
         let mode = NikxelSettings.waBotMode
         let groupReplies = NikxelSettings.waGroupReplies
         let unattendedSeconds = TimeInterval(NikxelSettings.waUnattendedMinutes * 60)
+        let blockList = WAContactLists.names(.neverReply)
+        let quiet = NikxelSettings.waQuietHours
+            && WABotGate.isQuietHour(now,
+                                     from: NikxelSettings.waQuietFrom,
+                                     to: NikxelSettings.waQuietTo)
         var due: [Pending] = []
         for (key, p) in pending {
             switch WABotGate.decide(chat: p.chat, pendingSince: p.since, now: now,
                                     inMeeting: inMeeting, mode: mode,
                                     groupReplies: groupReplies,
-                                    unattendedSeconds: unattendedSeconds) {
+                                    unattendedSeconds: unattendedSeconds,
+                                    blocked: WAContactLists.matches(blockList, contact: p.chat.name),
+                                    quietHours: quiet) {
             case .reply:
                 due.append(p)
                 pending[key] = nil
@@ -321,7 +366,9 @@ class ChatbotEngine {
             }
         }
         guard !due.isEmpty else { setActiveContact(nil); return }
-        cblog("ChatbotEngine: replying to \(due.count) — \(due.map { $0.chat.name })")
+        let draftOnly = NikxelSettings.waDraftOnly
+        cblog("ChatbotEngine: \(draftOnly ? "drafting for" : "replying to") \(due.count) — \(due.map { $0.chat.name })")
+        var delivered: [Delivered] = []
 
         // 4. Process each due chat.
         for p in due {
@@ -359,10 +406,11 @@ class ChatbotEngine {
 
             // 6. Generate reply.
             let history = conversationHistory[key] ?? []
-            guard let replyText = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "), history: history) else {
+            guard let reply = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "), history: history) else {
                 cblog("ChatbotEngine: LLM nil for '\(chat.name)'")
                 setActiveContact(nil); continue
             }
+            let replyText = reply.text
             guard !cancelled else { break }
             cblog("ChatbotEngine: reply='\(replyText.prefix(80))...'")
 
@@ -377,18 +425,36 @@ class ChatbotEngine {
                 cblog("ChatbotEngine: verified '\(chat.name)'")
             }
 
-            // 8. Send.
-            let sent = ChromeWhatsApp.sendMessage(replyText)
-            cblog("ChatbotEngine: send=\(sent)")
+            // 8. Send -- or, in draft mode, type it and stop.
+            let ok = draftOnly ? ChromeWhatsApp.draftMessage(replyText)
+                               : ChromeWhatsApp.sendMessage(replyText)
+            cblog("ChatbotEngine: \(draftOnly ? "draft" : "send")=\(ok)")
             guard !cancelled else { break }
             Thread.sleep(forTimeInterval: 0.3)
+            guard ok else { setActiveContact(nil); continue }
 
+            // 9. A task the contact asked for, if the reply pass found one.
+            // Fire-and-forget: it no-ops without a connected Google account and
+            // must never hold up the next chat in the batch.
+            if let task = reply.task {
+                GoogleSync.createChatTask(title: task, from: chat.name)
+            }
+
+            delivered.append(Delivered(contact: chat.name, text: replyText, task: reply.task))
             lastReplyTime[key] = Date()
             var h = conversationHistory[key] ?? []
             for msg in messages { h.append(("them", msg)) }
-            h.append(("bot", replyText))
+            // A draft is not a turn in the conversation -- it hasn't happened
+            // yet, and the user may well delete it. Recording it would have the
+            // next reply refer back to something never said.
+            if !draftOnly { h.append(("bot", replyText)) }
             conversationHistory[key] = Array(h.suffix(historyCap))
             Thread.sleep(forTimeInterval: 0.6)
+        }
+
+        if !delivered.isEmpty {
+            let batch = delivered
+            DispatchQueue.main.async { [weak self] in self?.onRepliesSent?(batch, draftOnly) }
         }
         setActiveContact(nil)
     }

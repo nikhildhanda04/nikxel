@@ -26,6 +26,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var waModeItems: [NSMenuItem] = []
     private var waGroupItem: NSMenuItem?
     private var waContextItem: NSMenuItem?
+    private var waDraftItem: NSMenuItem?
+    private var waQuietItem: NSMenuItem?
+    private var waChatTasksItem: NSMenuItem?
     private var googleSyncMenuItem: NSMenuItem?
     private var templateMenu: NSMenu?
 
@@ -73,6 +76,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         meetingDetector = MeetingDetector.shared
         chatbotEngine = ChatbotEngine.shared
+        chatbotEngine.onRepliesSent = { [weak self] batch, drafted in
+            self?.showReplyCard(batch, drafted: drafted)
+        }
         whatsAppActivityLogger = WhatsAppActivityLogger.shared
 
         NotificationCenter.default.addObserver(
@@ -190,13 +196,35 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         groups.target = self; waMenu.addItem(groups)
         self.waGroupItem = groups
 
+        let draft = NSMenuItem(title: "Draft Only (don't send): Off",
+                               action: #selector(toggleWADraftOnly), keyEquivalent: "")
+        draft.target = self; waMenu.addItem(draft)
+        self.waDraftItem = draft
+
+        let quiet = NSMenuItem(title: "Quiet Hours: Off",
+                               action: #selector(toggleWAQuietHours), keyEquivalent: "")
+        quiet.target = self; waMenu.addItem(quiet)
+        self.waQuietItem = quiet
+
         let ctx = NSMenuItem(title: "Knows What You're Working On: On",
                              action: #selector(toggleWAWorkContext), keyEquivalent: "")
         ctx.target = self; waMenu.addItem(ctx)
         self.waContextItem = ctx
 
+        let chatTasks = NSMenuItem(title: "Tasks from Chats: On",
+                                   action: #selector(toggleWAChatTasks), keyEquivalent: "")
+        chatTasks.target = self; waMenu.addItem(chatTasks)
+        self.waChatTasksItem = chatTasks
+
+        waMenu.addItem(NSMenuItem.separator())
         let editPersonalityWA = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
         editPersonalityWA.target = self; waMenu.addItem(editPersonalityWA)
+
+        let editTrusted = NSMenuItem(title: "Edit Trusted Contacts…", action: #selector(editTrustedContacts), keyEquivalent: "")
+        editTrusted.target = self; waMenu.addItem(editTrusted)
+
+        let editNever = NSMenuItem(title: "Edit Never-Reply List…", action: #selector(editNeverReply), keyEquivalent: "")
+        editNever.target = self; waMenu.addItem(editNever)
 
         waItem.submenu = waMenu
         menu.addItem(waItem)
@@ -336,6 +364,36 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refreshWAMenu()
     }
 
+    @objc func toggleWADraftOnly() {
+        NikxelSettings.waDraftOnly.toggle()
+        refreshWAMenu()
+    }
+
+    @objc func toggleWAQuietHours() {
+        NikxelSettings.waQuietHours.toggle()
+        refreshWAMenu()
+    }
+
+    @objc func toggleWAChatTasks() {
+        NikxelSettings.waChatTasks.toggle()
+        refreshWAMenu()
+    }
+
+    @objc func editTrustedContacts() {
+        NSWorkspace.shared.open(WAContactLists.seedIfMissing(.trusted))
+    }
+
+    @objc func editNeverReply() {
+        NSWorkspace.shared.open(WAContactLists.seedIfMissing(.neverReply))
+    }
+
+    /// "22" -> "10pm". Menu titles read better than 24h clock time here.
+    private static func hourLabel(_ h: Int) -> String {
+        let suffix = h < 12 ? "am" : "pm"
+        let twelve = h % 12 == 0 ? 12 : h % 12
+        return "\(twelve)\(suffix)"
+    }
+
     private func refreshWAMenu() {
         let on = ChatbotEngine.shared.isEnabled
         botMenuItem?.state = on ? .on : .off
@@ -361,6 +419,21 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         waContextItem?.state = ctx ? .on : .off
         waContextItem?.title = ctx ? "Knows What You're Working On: On"
                                   : "Knows What You're Working On: Off"
+
+        let draft = NikxelSettings.waDraftOnly
+        waDraftItem?.state = draft ? .on : .off
+        waDraftItem?.title = draft ? "Draft Only (don't send): On"
+                                   : "Draft Only (don't send): Off"
+
+        let quiet = NikxelSettings.waQuietHours
+        waQuietItem?.state = quiet ? .on : .off
+        waQuietItem?.title = quiet
+            ? "Quiet Hours: \(Self.hourLabel(NikxelSettings.waQuietFrom))–\(Self.hourLabel(NikxelSettings.waQuietTo))"
+            : "Quiet Hours: Off"
+
+        let chatTasks = NikxelSettings.waChatTasks
+        waChatTasksItem?.state = chatTasks ? .on : .off
+        waChatTasksItem?.title = chatTasks ? "Tasks from Chats: On" : "Tasks from Chats: Off"
     }
 
     /// A disabled item used as a label inside a submenu.
@@ -682,6 +755,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         botMemoryDays — how many days of your end-of-day summaries the WhatsApp bot reads before replying, so it recognises what someone is asking about. It is told never to disclose from them. 0 turns it off; 3 is the default.
         summaryTemplate — which template in ~/.nikxel/templates/ shapes your summaries (developer, hr, project-manager, co-founder, default, or one you made). Pick it from the Summary Template menu instead of editing this by hand.
         waUnattendedMinutes — in "Any time, if unanswered" mode, how many minutes a message must sit unread before the bot answers it. 5 is the default.
+        waQuietFrom / waQuietTo — the hours (0-23) quiet hours run between; 22 and 8 by default. Turn them on or off from the WhatsApp Bot menu.
         googleSyncEnabled — whether a finished meeting summary offers to add its Action Items to Google Tasks and its follow-ups to your calendar. Nothing is ever added without you confirming the list first.
         """
         alert.alertStyle = .informational
@@ -691,6 +765,35 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func quitApp() { NSApp.terminate(nil) }
+
+    /// Bubble after the bot has been round a batch of chats. Drafts get a
+    /// sterner card than sent replies: a draft is unfinished business sitting in
+    /// a chat window, so it stays until clicked and clicking opens the browser.
+    private func showReplyCard(_ batch: [ChatbotEngine.Delivered], drafted: Bool) {
+        guard !batch.isEmpty else { return }
+        var lines = batch.prefix(3).map { d -> String in
+            let snippet = d.text.replacingOccurrences(of: "\n", with: " ")
+            // 45 keeps a bullet to two rendered lines at the card's width; at
+            // 60 a three-contact batch grew taller than the avatar.
+            return "\(d.contact) — \(snippet.prefix(45))\(snippet.count > 45 ? "…" : "")"
+        }
+        if batch.count > 3 { lines.append("…and \(batch.count - 3) more") }
+        let tasks = batch.compactMap(\.task)
+        if !tasks.isEmpty {
+            lines.append("Added \(tasks.count) task\(tasks.count == 1 ? "" : "s") to Google Tasks")
+        }
+
+        window.nikxelView?.showCard(
+            icon: drafted ? "✍️" : "💬",
+            title: drafted
+                ? "\(batch.count) draft\(batch.count == 1 ? "" : "s") waiting"
+                : "Replied for you",
+            lines: lines,
+            bulleted: true,
+            kind: drafted ? .warning : .success,
+            lifetime: drafted ? .infinity : 25,
+            action: drafted ? { ChromeWhatsApp.activate() } : nil)
+    }
 
     private func showReminder(text: String) {
         window.nikxelView?.reminderText = text

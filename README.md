@@ -155,7 +155,7 @@ bar → **Setup Wizard…**. Four steps:
 |---|---|
 | **Your avatar** | Keep the bundled character, or make one that looks like you — see [Make your own avatar](#make-your-own-avatar) below. |
 | **Transcription tools** | Checks for `whisper` and `ffmpeg`, offering **Install with Homebrew** if either is missing. Downloads the speech model whisper.cpp needs, and sets the spoken language. Skippable — only the recording features need them. |
-| **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated Chrome profile; scan the QR with your phone and the wizard detects the login by itself. Only needed if you want Nikxel replying for you — during meetings, or all day (see *When the WhatsApp bot replies*). |
+| **Connect WhatsApp** | Optional. Opens WhatsApp Web in an isolated browser profile; scan the QR with your phone and the wizard detects the login by itself. Needs a Chromium-based browser installed — **Chrome, Brave, Edge, Chromium, Vivaldi or Opera**; it tells you so instead of waiting forever if you have none. Only needed if you want Nikxel replying for you — during meetings, or all day (see *When the WhatsApp bot replies*). |
 | **Choose your coding agent** | Claude Code, OpenCode, or Codex — whichever writes your meeting notes and summaries. Ones you don't have are greyed out, with a copyable install command and a Re-check button. |
 
 ### 4. Grant permissions
@@ -384,7 +384,11 @@ upgrading never puts your bot on the air more than it already was.
 | **Auto-Replies** | On / Off. The master switch — off means silent everywhere. |
 | **Reply…** | **Only during meetings** (default) · **Any time, if unanswered for N min** · **Any time, immediately** |
 | **Group Chats** | **Off** (default) / **Only When Tagged** |
+| **Draft Only (don't send)** | Off (default) / On |
+| **Quiet Hours** | **10pm–8am** (default) / Off |
 | **Knows What You're Working On** | On (default) / Off |
+| **Tasks from Chats** | On (default) / Off |
+| Edit Bot Personality… · Edit Trusted Contacts… · Edit Never-Reply List… | opens the file |
 
 **Only during meetings** is the original behaviour: you're visibly busy, so a
 stand-in reply beats silence, and it goes out within seconds.
@@ -415,6 +419,61 @@ group avatar, and the sender prefix groups put on the preview line
 whose last message carries no prefix can slip through; a second check runs once
 the chat is open and blocks the reply even though the chat has already been
 marked read.
+
+### Draft only
+
+Types the reply into the real chat and stops — no Enter. You see exactly what
+it would have said, in context, and send it with one keystroke or delete it.
+The honest way to start using any of this.
+
+Drafts are **not** recorded as part of the conversation: a draft hasn't happened
+yet and you may well bin it, so counting it would have the next reply refer back
+to something that was never said. WhatsApp keeps a draft per chat, so a batch
+leaves each one waiting in its own conversation, and the bubble that follows
+stays on screen until you click it.
+
+### Quiet hours
+
+On by default, 10pm–8am. Nothing good comes of a bot that's awake when you
+aren't. The window wraps past midnight; change it with `waQuietFrom` /
+`waQuietTo` (hours, 0–23) in `~/.nikxel/settings.json`.
+
+A message that lands at 2am is **held, not dropped** — it goes out once the quiet
+hours end. A live meeting overrides the whole thing, on the grounds that if
+you're in a meeting at 3am you're awake.
+
+### Who it will and won't talk to
+
+Two plain-text lists in `~/.nikxel/`, one name per line, `#` for comments. Both
+are re-read on every message, so an edit takes effect immediately.
+
+| File | Effect |
+|---|---|
+| `never_reply.txt` | Never answered. Beats every other setting — not during meetings, not when tagged in a group, not ever. |
+| `trusted_contacts.txt` | The non-disclosure rules below are relaxed: these people get the specifics instead of "heads-down on work stuff". |
+
+Write the name as it appears in your chat list. A first name on its own is
+enough as long as it's **3+ characters** — `Asha` matches the chat *Asha Verma*.
+Shorter entries must match exactly, so a stray `Jo` can't silence Joanna,
+Jonathan and John at once.
+
+Only put someone on the trusted list if they'd already be told. A co-founder,
+your own team. Not a client, not a group.
+
+### Tasks from chats
+
+When a message contains something you actually have to **do** — "send the
+pricing deck by Friday" — it's filed to **Google Tasks** with the contact's name
+in the notes. Pure chatter files nothing.
+
+This costs no extra time: the agent is already reading the message to answer it,
+so it just appends one marker line, which is stripped before the reply is sent
+and never reaches the contact. It silently does nothing until you've connected a
+Google account with Tasks access.
+
+The task keeps whatever date the contact wrote, inside the title ("Send the deck
+to Priya **by Friday**"), rather than being parsed into a real due date. A task
+filed under the wrong Friday is worse than one with no date at all.
 
 ### What it knows
 

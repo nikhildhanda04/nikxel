@@ -85,6 +85,11 @@ enum NikxelSettings {
         var waGroupReplies: Bool?
         var waUnattendedMinutes: Int?
         var waWorkContext: Bool?
+        var waDraftOnly: Bool?
+        var waQuietHours: Bool?
+        var waQuietFrom: Int?
+        var waQuietTo: Int?
+        var waChatTasks: Bool?
     }
 
     private static let fileURL: URL = {
@@ -260,6 +265,50 @@ enum NikxelSettings {
     static var waWorkContext: Bool {
         get { load().waWorkContext ?? true }
         set { save { $0.waWorkContext = newValue } }
+    }
+
+    /// Type the reply into WhatsApp's message box and stop there, instead of
+    /// pressing Enter.
+    ///
+    /// The honest way to start: you see exactly what the bot would have said,
+    /// in the real chat, and send it with one keystroke or delete it. Off by
+    /// default because the feature's whole point is answering while you can't.
+    static var waDraftOnly: Bool {
+        get { load().waDraftOnly ?? false }
+        set { save { $0.waDraftOnly = newValue } }
+    }
+
+    /// Don't answer between `waQuietFrom` and `waQuietTo`. On by default --
+    /// nothing good comes of a bot that is awake when you aren't, and the
+    /// setting does nothing at all in meetings-only mode, where a meeting is
+    /// already the trigger.
+    static var waQuietHours: Bool {
+        get { load().waQuietHours ?? true }
+        set { save { $0.waQuietHours = newValue } }
+    }
+
+    /// Hour (0-23) quiet hours begin. Default 22.
+    static var waQuietFrom: Int {
+        get { max(0, min(23, load().waQuietFrom ?? 22)) }
+        set { save { $0.waQuietFrom = max(0, min(23, newValue)) } }
+    }
+
+    /// Hour (0-23) quiet hours end. Default 8. Wraps past midnight when it is
+    /// less than `waQuietFrom`, which is the normal case.
+    static var waQuietTo: Int {
+        get { max(0, min(23, load().waQuietTo ?? 8)) }
+        set { save { $0.waQuietTo = max(0, min(23, newValue)) } }
+    }
+
+    /// Whether a chat message that is plainly an ask ("send the deck by Friday")
+    /// becomes a Google Task.
+    ///
+    /// On by default and still free: it rides the reply the agent is already
+    /// writing rather than making a second call, and does nothing until a
+    /// Google account with Tasks access is connected.
+    static var waChatTasks: Bool {
+        get { load().waChatTasks ?? true }
+        set { save { $0.waChatTasks = newValue } }
     }
 
     /// Which summary template is active -- the slug of a file in

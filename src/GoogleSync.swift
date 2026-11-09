@@ -330,6 +330,52 @@ enum GoogleSync {
         }
     }
 
+    // MARK: - Tasks out of WhatsApp chats
+
+    /// File one task that came out of a chat message.
+    ///
+    /// Silent, unlike `offer`: a modal per WhatsApp message would be worse than
+    /// the problem it solves, and this only ever writes to the user's own task
+    /// list. No-ops -- with a log line, not an alert -- when Google isn't
+    /// connected or was connected before Nikxel could write, so the bot never
+    /// nags about a feature the user hasn't set up.
+    ///
+    /// ponytail: title only, no due date. Any "by Friday" the contact wrote
+    /// stays inside the title, which Google Tasks shows in full. Parsing a date
+    /// out of chat prose is a bigger job than the value, and a task filed under
+    /// the wrong Friday is worse than one with no date at all.
+    static func createChatTask(title: String, from contact: String,
+                               completion: ((String?) -> Void)? = nil) {
+        guard NikxelSettings.waChatTasks else { completion?("chat tasks off"); return }
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { completion?("empty title"); return }
+        guard GoogleAuth.shared.isAuthorized else {
+            cblog("GoogleSync: chat task '\(clean)' not filed — no Google account connected")
+            completion?("not connected"); return
+        }
+        guard GoogleAuth.shared.hasScope("https://www.googleapis.com/auth/tasks") else {
+            cblog("GoogleSync: chat task '\(clean)' not filed — reconnect Google to grant Tasks access")
+            completion?("missing scope"); return
+        }
+        GoogleAuth.shared.withAccessToken { token in
+            guard let token = token else {
+                cblog("GoogleSync: chat task '\(clean)' not filed — couldn't refresh the Google login")
+                completion?("no token"); return
+            }
+            post("https://tasks.googleapis.com/tasks/v1/lists/@default/tasks",
+                 body: ["title": clean,
+                        "notes": "From a WhatsApp message from \(contact)."],
+                 token: token) { _, err in
+                if let err = err {
+                    cblog("GoogleSync: chat task '\(clean)' failed — \(err)")
+                } else {
+                    cblog("GoogleSync: filed chat task '\(clean)' (from \(contact))")
+                }
+                completion?(err)
+            }
+        }
+    }
+
     private static func createTask(_ item: ActionItem, ownName: String, note: URL, token: String,
                                    completion: @escaping (String?) -> Void) {
         var body: [String: Any] = ["title": item.taskTitle(ownName: ownName)]

@@ -24,7 +24,9 @@ struct CheckWABot {
                        inMeeting: Bool = false,
                        mode: WABotMode = .meetings,
                        groups: Bool = false,
-                       unattendedMinutes: Double = 5) -> D {
+                       unattendedMinutes: Double = 5,
+                       blocked: Bool = false,
+                       quiet: Bool = false) -> D {
         let now = Date(timeIntervalSince1970: 1_000_000)
         return WABotGate.decide(
             chat: c,
@@ -33,7 +35,15 @@ struct CheckWABot {
             inMeeting: inMeeting,
             mode: mode,
             groupReplies: groups,
-            unattendedSeconds: unattendedMinutes * 60)
+            unattendedSeconds: unattendedMinutes * 60,
+            blocked: blocked,
+            quietHours: quiet)
+    }
+
+    static func at(_ hour: Int) -> Date {
+        var c = DateComponents()
+        c.year = 2026; c.month = 11; c.day = 9; c.hour = hour; c.minute = 30
+        return Calendar.current.date(from: c)!
     }
 
     static func isSkip(_ d: D) -> Bool { if case .skip = d { return true }; return false }
@@ -103,6 +113,113 @@ struct CheckWABot {
         assert(WABotMode(rawValue: "") == nil)
         assert(WABotMode(rawValue: "sometimes") == nil)
         assert((WABotMode(rawValue: "sometimes") ?? .meetings) == .meetings)
+
+        // --- Never-reply list beats everything -----------------------------
+        for mode in WABotMode.allCases {
+            assert(isSkip(decide(one, inMeeting: true, mode: mode, blocked: true)),
+                   "a blocked contact is never answered, meeting or not (\(mode.rawValue))")
+            assert(isSkip(decide(groupTagged, inMeeting: true, mode: mode,
+                                 groups: true, blocked: true)),
+                   "blocked beats a group tag too (\(mode.rawValue))")
+        }
+
+        // --- Quiet hours ----------------------------------------------------
+        // Held, not dropped: the message goes out when the quiet window ends.
+        assert(decide(one, mode: .always, quiet: true) == .wait,
+               "quiet hours hold a message rather than discarding it")
+        assert(decide(one, waitedMinutes: 99, mode: .unattended, quiet: true) == .wait,
+               "a long-expired timer still waits out quiet hours")
+        // A meeting means you're awake.
+        assert(decide(one, inMeeting: true, mode: .always, quiet: true) == .reply)
+        // Blocked still wins over the hold.
+        assert(isSkip(decide(one, mode: .always, blocked: true, quiet: true)))
+
+        // Wraparound window 22 -> 8: the normal case, spanning midnight.
+        for h in [22, 23, 0, 3, 7] {
+            assert(WABotGate.isQuietHour(at(h), from: 22, to: 8), "hour \(h) is inside 22->8")
+        }
+        for h in [8, 9, 13, 21] {
+            assert(!WABotGate.isQuietHour(at(h), from: 22, to: 8), "hour \(h) is outside 22->8")
+        }
+        // Same-day window 13 -> 14 (a lunch hour), no wraparound.
+        assert(WABotGate.isQuietHour(at(13), from: 13, to: 14))
+        assert(!WABotGate.isQuietHour(at(14), from: 13, to: 14), "the end hour is exclusive")
+        assert(!WABotGate.isQuietHour(at(12), from: 13, to: 14))
+        // A zero-length window is a half-filled settings file, not "silent all
+        // day" -- that is what the Off switch is for.
+        for h in [0, 9, 22] {
+            assert(!WABotGate.isQuietHour(at(h), from: 9, to: 9))
+        }
+
+        // --- Contact-list matching ------------------------------------------
+        let list = WAContactLists.parse("""
+        # a comment
+        Asha
+
+        Rahul Mehta
+          Priya Sharma
+        Jo
+        """)
+        assert(list == ["Asha", "Rahul Mehta", "Priya Sharma", "Jo"],
+               "comments and blanks stripped, indentation trimmed — got \(list)")
+        assert(WAContactLists.matches(list, contact: "Asha"))
+        assert(WAContactLists.matches(list, contact: "asha"), "case-insensitive")
+        assert(WAContactLists.matches(list, contact: "Asha Verma"),
+               "a first name on the list matches the full chat name")
+        assert(WAContactLists.matches(list, contact: "Rahul Mehta"))
+        assert(WAContactLists.matches(list, contact: "Rahul"),
+               "the chat name being shorter than the entry also matches")
+        assert(WAContactLists.matches(list, contact: "Priya   Sharma"),
+               "runs of whitespace collapse")
+        assert(!WAContactLists.matches(list, contact: "Asheesh"),
+               "prefix matching must not swallow a different name that starts the same")
+        assert(!WAContactLists.matches(list, contact: "Vikram"))
+        assert(!WAContactLists.matches(list, contact: ""))
+        // Short entries are exact-match only, so a stray "Jo" can't silence
+        // Joanna, Jonathan and John at once.
+        assert(WAContactLists.matches(list, contact: "Jo"))
+        assert(!WAContactLists.matches(list, contact: "Joanna"))
+        assert(WAContactLists.matches([], contact: "Asha") == false)
+
+        // --- [[TASK:]] extraction -------------------------------------------
+        let plain = LLMResponder.extractTask("He's in a meeting, back in an hour.")
+        assert(plain.task == nil)
+        assert(plain.body == "He's in a meeting, back in an hour.")
+
+        let withTask = LLMResponder.extractTask(
+            "Sure, he'll get that over.\n[[TASK: Send the deck to Priya by Friday]]")
+        assert(withTask.task == "Send the deck to Priya by Friday")
+        assert(withTask.body == "Sure, he'll get that over.",
+               "the marker is stripped, and so is the newline it sat on — got '\(withTask.body)'")
+
+        // A model that emits several keeps the first and the reply loses them all.
+        let many = LLMResponder.extractTask(
+            "On it. [[TASK: Book the room]] Also noted. [[TASK: Email Dev]]")
+        assert(many.task == "Book the room")
+        assert(!many.body.contains("TASK"), "every marker leaves the sent message — got '\(many.body)'")
+        assert(many.body.contains("On it.") && many.body.contains("Also noted."))
+
+        // "none" is how a model says "nothing to file" when it ignores the
+        // instruction to omit the line entirely.
+        assert(LLMResponder.extractTask("All good. [[TASK: none]]").task == nil)
+        assert(LLMResponder.extractTask("All good. [[TASK:   ]]").task == nil)
+        // An unterminated marker must not hang or eat the reply.
+        let broken = LLMResponder.extractTask("Fine. [[TASK: never closed")
+        assert(broken.task == nil)
+        assert(broken.body == "Fine. [[TASK: never closed")
+
+        // --- Browser detection ----------------------------------------------
+        // Arc is Chromium but ignores --user-data-dir, so there is no way to get
+        // an isolated profile out of it; driving the user's own logged-in
+        // browser is not an acceptable fallback.
+        let names = ChromeBot.supportedBrowsers.map(\.name)
+        assert(names.first == "Google Chrome", "Chrome is the tested one, so it is tried first")
+        assert(!names.contains("Arc") && !names.contains("Safari") && !names.contains("Firefox"))
+        assert(Set(names).count == names.count, "no duplicate browsers")
+        for b in ChromeBot.supportedBrowsers {
+            assert(b.app.hasSuffix(".app"), "\(b.name) needs a bundle name")
+            assert(!b.binary.isEmpty)
+        }
 
         print("check_wa_bot: OK")
     }

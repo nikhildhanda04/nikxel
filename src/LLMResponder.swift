@@ -31,28 +31,64 @@ class LLMResponder {
         return def
     }
 
+    /// What came back from one reply pass: the message to send, and -- when the
+    /// contact actually asked for something -- a task to file.
+    struct Reply {
+        let text: String
+        /// Short imperative pulled out of the contact's message, e.g. "Send the
+        /// deck to Priya by Friday". nil when they weren't asking for anything.
+        let task: String?
+    }
+
     /// Generate a reply for a contact based on their message preview and
-    /// previous conversation history in this meeting.
+    /// previous conversation history.
     func reply(for contact: String,
                messagePreview: String?,
-               history: [(role: String, text: String)]) -> String? {
+               history: [(role: String, text: String)]) -> Reply? {
         let msgs = messagePreview != nil ? [messagePreview!] : []
         let prompt = buildPrompt(contact: contact, history: history, newMessages: msgs)
         do {
             let raw = try momGenerator.runPrompt(prompt)
-            return cleanReply(raw)
+            // Task marker first: cleanReply truncates to three sentences, which
+            // would eat a trailing marker before it was ever read.
+            let (body, task) = Self.extractTask(raw)
+            guard let text = cleanReply(body) else { return nil }
+            return Reply(text: text, task: task)
         } catch {
             cblog("LLMResponder: failed — \(error)")
             return nil
         }
     }
 
+    /// Pulls `[[TASK: ...]]` markers out of a raw reply and hands back the
+    /// message with them removed.
+    ///
+    /// A marker rather than a second LLM call: the agent is already reading the
+    /// message to answer it, so asking for one extra line costs nothing. Only
+    /// the first marker is kept -- one message is one ask, and a model that
+    /// emits five has misunderstood the instruction.
+    static func extractTask(_ raw: String) -> (body: String, task: String?) {
+        var task: String?
+        var body = raw
+        while let open = body.range(of: "[[TASK:"),
+              let close = body.range(of: "]]", range: open.upperBound..<body.endIndex) {
+            let inner = body[open.upperBound..<close.lowerBound]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if task == nil, !inner.isEmpty, inner.lowercased() != "none" {
+                task = inner
+            }
+            body.removeSubrange(open.lowerBound..<close.upperBound)
+        }
+        return (body.trimmingCharacters(in: .whitespacesAndNewlines), task)
+    }
+
     private func buildPrompt(contact: String,
                              history: [(role: String, text: String)],
                              newMessages: [String]) -> String {
+        let trusted = WAContactLists.contains(.trusted, contact: contact)
         var p = personality + "\n\n"
-        p += recentContextBlock()
-        p += "Contact: \(contact)\n"
+        p += recentContextBlock(trusted: trusted)
+        p += "Contact: \(contact)\(trusted ? " (one of \(NikxelSettings.userName)'s own people)" : "")\n"
         if !history.isEmpty {
             p += "\nConversation so far:\n"
             for (role, text) in history.suffix(6) {
@@ -62,6 +98,22 @@ class LLMResponder {
         p += "\nTheir latest message(s):\n"
         for msg in newMessages { p += "- \(msg)\n" }
         p += "\nRespond in character. Keep it under 3 sentences. No markdown. No code blocks.\n"
+        if NikxelSettings.waChatTasks {
+            p += """
+
+            If -- and only if -- their message contains a concrete thing \
+            \(NikxelSettings.userName) has to DO (a request, a deadline, \
+            something to send or check), add one final line in exactly this \
+            form, after your reply:
+            [[TASK: <short imperative, under 12 words>]]
+            Keep any date or name they gave inside the title ("Send the deck to \
+            Priya by Friday"). The line is stripped before the message is sent \
+            and the contact never sees it. If they were only chatting, asking \
+            how you are, or sharing news, add nothing -- an empty inbox is worth \
+            more than an invented task.
+
+            """
+        }
         p += NikxelSettings.languageInstruction
         if NikxelSettings.language.lowercased() == "auto" {
             p += " Match the contact's own language/tone — if they write in Hindi or Hinglish, reply the same way; if they write in English, reply in English."
@@ -82,7 +134,7 @@ class LLMResponder {
     ///
     /// Not private: check_bot_memory.swift prints this block and feeds it to a
     /// real agent to confirm the non-disclosure rules actually hold.
-    func recentContextBlock() -> String {
+    func recentContextBlock(trusted: Bool = false) -> String {
         let days = NikxelSettings.botMemoryDays
         let summaries = DayLogger.recentSummaries(days: days)
         let live = NikxelSettings.waWorkContext
@@ -90,7 +142,27 @@ class LLMResponder {
             : ""
         guard !summaries.isEmpty || !live.isEmpty else { return "" }
 
-        var block = """
+        // Two rule sets over the same material. The strict one is the default
+        // because the bot answers whoever happens to write; the relaxed one
+        // applies only to names the user put on the trusted list by hand.
+        var block = trusted
+        ? """
+        BACKGROUND -- \(NikxelSettings.userName)'s own notes on what they are \
+        doing. This contact is on their trusted list, so you may answer from \
+        this directly: name the project, say what was built or committed, say \
+        what the meeting was about.
+
+        Still holds, even here:
+        - Don't mention these notes exist, and don't say you have access to a log. \
+        Speak as someone who simply knows what they're up to.
+        - Don't pass on what OTHER people said in confidence, or details about \
+        third parties and their clients. Their own work, yes; everyone else's, no.
+        - Don't invent. If it isn't in here, say you're not sure and they'll \
+        confirm themselves.
+
+
+        """
+        : """
         BACKGROUND -- \(NikxelSettings.userName)'s own notes on what they are \
         doing. This is private. Use it only to understand what the contact is \
         asking about and to answer naturally when they raise something you \

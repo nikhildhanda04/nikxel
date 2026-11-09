@@ -47,6 +47,11 @@ final class OnboardingWindowController: NSWindowController {
     private var waConnecting = false
     private var waConnected = NikxelSettings.whatsappConnected
     private var waPollTimer: Timer?
+    /// Set when Connect can't get anywhere. Without these the wizard sat on
+    /// "Waiting for QR scan…" forever, which is indistinguishable from a hang:
+    /// the browser never launched, so there was never going to be a QR.
+    private var waNoBrowser = false
+    private var waLaunchFailed = false
 
     // Agent step
     private var chosenAgent = NikxelSettings.connectedAgent
@@ -307,12 +312,21 @@ final class OnboardingWindowController: NSWindowController {
         body.spacing = 16
 
         body.addArrangedSubview(label("Connect WhatsApp", size: 20, bold: true))
+        let browser = ChromeBot.availableBrowser()
         body.addArrangedSubview(label(
-            "Nikxel can reply on your behalf while you're in a meeting. Click Connect, then scan the QR code in the Chrome window that opens.",
+            "Nikxel can reply on your behalf — during meetings, or all day. Click Connect, then scan the QR code in the \(browser?.name ?? "browser") window that opens.",
             secondary: true
         ))
 
-        if waConnected {
+        if waNoBrowser {
+            body.addArrangedSubview(label(ChromeBot.missingBrowserMessage, secondary: true))
+            body.addArrangedSubview(button("Get Google Chrome", #selector(openChromeDownload)))
+        } else if waLaunchFailed {
+            body.addArrangedSubview(label(
+                "Couldn't start \(browser?.name ?? "the browser") with remote debugging on port \(ChromeBot.debugPort). If something else is already using that port, quit it and try again.",
+                secondary: true))
+            body.addArrangedSubview(button("Try again", #selector(startWhatsAppConnect)))
+        } else if waConnected {
             let row = NSStackView()
             row.orientation = .horizontal
             row.spacing = 6
@@ -576,11 +590,33 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     @objc private func startWhatsAppConnect() {
+        waNoBrowser = false
+        waLaunchFailed = false
+        guard ChromeBot.availableBrowser() != nil else {
+            waNoBrowser = true
+            render()
+            return
+        }
         waConnecting = true
         render()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = ChromeBot.launchIfNeeded()
-            DispatchQueue.main.async { self?.beginPolling() }
+            let ok = ChromeBot.launchIfNeeded()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if ok {
+                    self.beginPolling()
+                } else {
+                    self.waConnecting = false
+                    self.waLaunchFailed = true
+                    self.render()
+                }
+            }
+        }
+    }
+
+    @objc private func openChromeDownload() {
+        if let url = URL(string: "https://www.google.com/chrome/") {
+            NSWorkspace.shared.open(url)
         }
     }
 

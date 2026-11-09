@@ -42,6 +42,55 @@ enum ChromeBot {
         NSHomeDirectory() + "/.nikxel/chrome-profile"
     }
 
+    /// Chromium-family browsers that honour `--remote-debugging-port` and
+    /// `--user-data-dir`, in the order we'd rather use them. Chrome first
+    /// because it's the one this was built and tested against; the rest are the
+    /// same engine behind different branding and behave identically for our
+    /// purposes (one tab, one CDP socket, no extensions).
+    ///
+    /// Arc is deliberately absent despite being Chromium: it ignores
+    /// `--user-data-dir`, so there is no way to get an isolated profile out of
+    /// it, and an un-isolated profile would mean driving the user's own logged
+    /// -in browser. Safari and Firefox are absent because neither speaks CDP.
+    static let supportedBrowsers: [(name: String, app: String, binary: String)] = [
+        ("Google Chrome",   "Google Chrome.app",         "Google Chrome"),
+        ("Brave",           "Brave Browser.app",         "Brave Browser"),
+        ("Microsoft Edge",  "Microsoft Edge.app",        "Microsoft Edge"),
+        ("Chromium",        "Chromium.app",              "Chromium"),
+        ("Vivaldi",         "Vivaldi.app",               "Vivaldi"),
+        ("Opera",           "Opera.app",                 "Opera"),
+        ("Chrome Beta",     "Google Chrome Beta.app",    "Google Chrome Beta"),
+        ("Chrome Canary",   "Google Chrome Canary.app",  "Google Chrome Canary"),
+    ]
+
+    /// First installed browser from `supportedBrowsers`, or nil if none is.
+    /// Checks /Applications and ~/Applications, which is where a user-local
+    /// install lands.
+    static func availableBrowser() -> (name: String, path: String)? {
+        let roots = ["/Applications",
+                     NSHomeDirectory() + "/Applications"]
+        for b in supportedBrowsers {
+            for root in roots {
+                let path = "\(root)/\(b.app)/Contents/MacOS/\(b.binary)"
+                if FileManager.default.isExecutableFile(atPath: path) {
+                    return (b.name, path)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// What to tell the user when none is installed. The old behaviour was to
+    /// log to a file nobody reads and leave the setup wizard spinning on
+    /// "Waiting for QR scan…" forever, which looks like a hang.
+    static let missingBrowserMessage = """
+    WhatsApp auto-replies need a Chromium-based browser installed — Nikxel runs     WhatsApp Web in its own isolated profile so it never touches your normal     browsing.
+
+    Any one of these works: Google Chrome, Brave, Microsoft Edge, Chromium,     Vivaldi or Opera. Safari and Firefox can't be driven this way, and Arc     can't be given a separate profile.
+
+    Everything else in Nikxel — recording, transcription, summaries, Google     Tasks — works without this.
+    """
+
     /// True if Chrome's DevTools port responds. Connection-level only —
     /// doesn't validate that a WhatsApp tab is open.
     static func isPortOpen() -> Bool {
@@ -57,26 +106,25 @@ enum ChromeBot {
         return ok
     }
 
-    /// Launches the bot's isolated Chrome if the debug port isn't already
+    /// Launches the bot's isolated browser if the debug port isn't already
     /// open. The first launch opens an empty window — the user must navigate
     /// to web.whatsapp.com and scan the QR. Subsequent launches restore the
     /// session (the profile dir keeps cookies).
     ///
-    /// We invoke the Chrome binary directly (not `open -na`) because `open`
-    /// can attach to / get cleaned up alongside the user's main Chrome
-    /// instance, dropping the debug listener.
+    /// We invoke the binary directly (not `open -na`) because `open` can attach
+    /// to / get cleaned up alongside the user's main browser instance, dropping
+    /// the debug listener.
     @discardableResult
     static func launchIfNeeded() -> Bool {
         if isPortOpen() { return true }
         try? FileManager.default.createDirectory(
             atPath: profileDir, withIntermediateDirectories: true)
-        let chromeBin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        guard FileManager.default.isExecutableFile(atPath: chromeBin) else {
-            cblog("ChromeBot: Chrome binary not at \(chromeBin)")
+        guard let browser = availableBrowser() else {
+            cblog("ChromeBot: no Chromium-based browser installed (looked for \(supportedBrowsers.map(\.name).joined(separator: ", ")))")
             return false
         }
         let task = Process()
-        task.launchPath = chromeBin
+        task.launchPath = browser.path
         task.arguments = [
             "--remote-debugging-port=\(debugPort)",
             "--user-data-dir=\(profileDir)",
@@ -84,15 +132,16 @@ enum ChromeBot {
             "--no-default-browser-check",
             "https://web.whatsapp.com"
         ]
-        // Detach stdio so the parent process death doesn't kill Chrome.
+        // Detach stdio so the parent process death doesn't kill the browser.
         task.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         task.standardError = FileHandle(forWritingAtPath: "/dev/null")
         do {
             try task.run()
         } catch {
-            cblog("ChromeBot: failed to launch — \(error)")
+            cblog("ChromeBot: failed to launch \(browser.name) — \(error)")
             return false
         }
+        cblog("ChromeBot: launched \(browser.name)")
         // Wait up to ~6 s for the port to come up.
         for _ in 0..<12 {
             Thread.sleep(forTimeInterval: 0.5)
@@ -472,10 +521,19 @@ enum ChromeWhatsApp {
         return (try? JSONDecoder().decode([WACall].self, from: data)) ?? []
     }
 
+    /// Type a reply into the open conversation and leave it there unsent.
+    /// WhatsApp keeps a per-chat draft, so the bot can draft into several chats
+    /// in a row and each one holds its own text until the user looks.
+    static func draftMessage(_ text: String) -> Bool {
+        sendMessage(text, send: false)
+    }
+
     /// Send a reply to the open conversation. Returns false if the chat has
     /// no reply input (read-only business/broadcast/channel chats expose no
     /// contenteditable footer — bot must skip them, not retry).
-    static func sendMessage(_ text: String) -> Bool {
+    ///
+    /// `send: false` stops after typing, which is what draft-only mode wants.
+    static func sendMessage(_ text: String, send: Bool = true) -> Bool {
         guard let c = ensureCDP() else { return false }
         let focusJS = """
         (function(){
@@ -499,11 +557,24 @@ enum ChromeWhatsApp {
         Thread.sleep(forTimeInterval: 0.1)
         c.insertText(text)
         Thread.sleep(forTimeInterval: 0.15)
+        guard send else {
+            cblog("CDP: drafted (not sent)")
+            return true
+        }
         c.pressEnter()
         return true
     }
 
-    /// No-op; kept for API compatibility. We never need to bring Chrome to
-    /// front anymore — the bot Chrome can stay minimized.
-    static func activate() {}
+    /// Bring the bot's browser to the front, so the user can look at a draft
+    /// the bot left in a chat. Not used by the reply path itself — that runs
+    /// entirely over CDP and never needs focus.
+    static func activate() {
+        guard let b = ChromeBot.availableBrowser() else { return }
+        // .../X.app/Contents/MacOS/X -> .../X.app
+        let bundle = URL(fileURLWithPath: b.path)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        NSWorkspace.shared.open(bundle)
+    }
 }

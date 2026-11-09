@@ -463,8 +463,14 @@ your own team. Not a client, not a group.
 ### Tasks from chats
 
 When a message contains something you actually have to **do** — "send the
-pricing deck by Friday" — it's filed to **Google Tasks** with the contact's name
-in the notes. Pure chatter files nothing.
+pricing deck by Friday" — it's filed to **Google Tasks** (the list that shows up
+in Gmail and Calendar's side panel, and in the Google Tasks app) with the
+contact's name in the notes. Pure chatter files nothing.
+
+It needs the **Tasks** permission, which an account connected before Nikxel
+could write to Google won't have — that grant was calendar-read-only. The first
+task that gets dropped for this raises a bubble offering to reconnect; it's one
+click and nothing else changes.
 
 This costs no extra time: the agent is already reading the message to answer it,
 so it just appends one marker line, which is stripped before the reply is sent
@@ -506,6 +512,34 @@ is recomputed at most once every two minutes, since it shells out to git.
 Nothing to set up: summaries are the ones already written to
 `~/Documents/nikxel/daily/` at 10pm. With none yet, the bot falls back to the
 *right now* block alone.
+
+## Where Nikxel looks for your projects
+
+Day summaries and the WhatsApp bot's *right now* block include what you
+committed and what's still uncommitted. That comes from scanning a folder for
+git repos — **`projectsRoot`** in `~/.nikxel/settings.json`, which defaults to
+`~/Desktop`.
+
+If your projects live somewhere else, set it:
+
+```json
+{ "projectsRoot": "~/Desktop/everything/projects" }
+```
+
+Worth doing even when `~/Desktop` would technically work. The scan walks every
+subdirectory looking for `.git`, and a narrower root is both faster and less
+likely to surface a vendored repo as if it were yours. `node_modules`, `Pods`,
+`DerivedData`, `vendor`, `target`, `build`, `dist`, `.next`, `venv` and friends
+are skipped outright.
+
+Repos are found at any depth, so `projects/custom-sarvam/backend` and
+`projects/nikxel/website/nikxel-site` both count.
+
+**If the Git section is always empty**, check `~/.nikxel/chatbot.log` — the scan
+says either `no git repos under <path>` or `scanned <path> — N repo(s)`. An
+empty scan is usually one of two things: the root is wrong, or macOS is refusing
+to let Nikxel list that folder. The second is fixed in System Settings →
+Privacy & Security → Files and Folders → Nikxel.
 
 ## Note format — Markdown, PDF or Word
 

@@ -332,6 +332,13 @@ enum GoogleSync {
 
     // MARK: - Tasks out of WhatsApp chats
 
+    /// Fired at most once per launch, when a chat task is dropped because the
+    /// Google account was connected before Nikxel could write to Tasks. Wired
+    /// to the avatar card in NikxelApp -- without it the user's tasks vanish
+    /// into a log file they have no reason to open.
+    static var onTasksScopeMissing: (() -> Void)?
+    private static var warnedTaskScope = false
+
     /// File one task that came out of a chat message.
     ///
     /// Silent, unlike `offer`: a modal per WhatsApp message would be worse than
@@ -355,6 +362,10 @@ enum GoogleSync {
         }
         guard GoogleAuth.shared.hasScope("https://www.googleapis.com/auth/tasks") else {
             cblog("GoogleSync: chat task '\(clean)' not filed — reconnect Google to grant Tasks access")
+            if !warnedTaskScope {
+                warnedTaskScope = true
+                DispatchQueue.main.async { onTasksScopeMissing?() }
+            }
             completion?("missing scope"); return
         }
         GoogleAuth.shared.withAccessToken { token in

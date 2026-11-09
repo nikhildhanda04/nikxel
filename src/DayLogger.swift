@@ -28,7 +28,7 @@ class DayLogger {
         self.logDir = home.appendingPathComponent("Library/Application Support/Nikxel/days", isDirectory: true)
         self.summaryDir = Self.summaryDirectory
         self.meetingsDir = home.appendingPathComponent("Documents/nikxel/meetings", isDirectory: true)
-        self.scanRoot = home.appendingPathComponent("Desktop", isDirectory: true)
+        self.scanRoot = URL(fileURLWithPath: NikxelSettings.projectsRoot, isDirectory: true)
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: summaryDir, withIntermediateDirectories: true)
         DayLogger.current = self
@@ -469,17 +469,39 @@ class DayLogger {
         return joined.isEmpty ? nil : joined
     }
 
+    /// Directory names never worth walking into when hunting for repos. Without
+    /// this the scan descends every `node_modules` in full -- hundreds of
+    /// thousands of files across a handful of JS projects -- and surfaces
+    /// vendored `.git` directories as if they were the user's own work.
+    static let skipWhileScanning: Set<String> = [
+        "node_modules", "Pods", "DerivedData", "vendor", "target",
+        "build", "dist", ".build", ".next", ".nuxt", ".cache",
+        "venv", ".venv", "__pycache__", "Library", "Applications",
+    ]
+
     private func aggregateGit(for date: Date) -> String {
         var repoDirs: [URL] = []
         if let enumerator = FileManager.default.enumerator(at: scanRoot, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
             for case let url as URL in enumerator {
-                if url.lastPathComponent == ".git" {
+                let name = url.lastPathComponent
+                if name == ".git" {
                     repoDirs.append(url.deletingLastPathComponent())
+                    enumerator.skipDescendants()
+                } else if Self.skipWhileScanning.contains(name) {
                     enumerator.skipDescendants()
                 }
             }
         }
-        if repoDirs.isEmpty { return "" }
+        if repoDirs.isEmpty {
+            // Distinguishable in the log from "found repos, nothing happened
+            // today". An empty scan usually means one of two things: the root
+            // is wrong (see `projectsRoot`), or macOS is refusing to let
+            // Nikxel list that folder -- System Settings -> Privacy & Security
+            // -> Files and Folders.
+            cblog("DayLogger: no git repos under \(scanRoot.path) — check projectsRoot, or Nikxel's access to that folder in System Settings")
+            return ""
+        }
+        cblog("DayLogger: scanned \(scanRoot.path) — \(repoDirs.count) repo(s)")
         let day = Self.dayKey(date)
         var lines: [String] = []
         for repo in repoDirs {

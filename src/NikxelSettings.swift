@@ -90,6 +90,7 @@ enum NikxelSettings {
         var waQuietFrom: Int?
         var waQuietTo: Int?
         var waChatTasks: Bool?
+        var projectsRoot: String?
     }
 
     private static let fileURL: URL = {
@@ -309,6 +310,25 @@ enum NikxelSettings {
     static var waChatTasks: Bool {
         get { load().waChatTasks ?? true }
         set { save { $0.waChatTasks = newValue } }
+    }
+
+    /// Folder scanned for git repos when building the day report and the
+    /// WhatsApp bot's "what are you working on" context.
+    ///
+    /// Defaults to ~/Desktop, which is where this started, but pointing it at
+    /// the actual projects folder is both faster and more accurate: the scan
+    /// walks every subdirectory looking for `.git`, and most of a Desktop is
+    /// not projects.
+    static var projectsRoot: String {
+        get {
+            let raw = load().projectsRoot?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !raw.isEmpty else {
+                return FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Desktop", isDirectory: true).path
+            }
+            return (raw as NSString).expandingTildeInPath
+        }
+        set { save { $0.projectsRoot = newValue } }
     }
 
     /// Which summary template is active -- the slug of a file in

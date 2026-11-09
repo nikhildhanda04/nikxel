@@ -79,6 +79,14 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         chatbotEngine.onRepliesSent = { [weak self] batch, drafted in
             self?.showReplyCard(batch, drafted: drafted)
         }
+        GoogleSync.onTasksScopeMissing = { [weak self] in
+            self?.window.nikxelView?.showCard(
+                icon: "🔑", title: "Reconnect Google to file tasks",
+                lines: ["Your account was connected before Nikxel could write to Tasks.",
+                        "Tap to reconnect — one click, nothing else changes."],
+                kind: .warning, lifetime: .infinity,
+                action: { self?.calendarWatcher.reauthenticate() })
+        }
         whatsAppActivityLogger = WhatsAppActivityLogger.shared
 
         NotificationCenter.default.addObserver(
@@ -756,6 +764,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         summaryTemplate — which template in ~/.nikxel/templates/ shapes your summaries (developer, hr, project-manager, co-founder, default, or one you made). Pick it from the Summary Template menu instead of editing this by hand.
         waUnattendedMinutes — in "Any time, if unanswered" mode, how many minutes a message must sit unread before the bot answers it. 5 is the default.
         waQuietFrom / waQuietTo — the hours (0-23) quiet hours run between; 22 and 8 by default. Turn them on or off from the WhatsApp Bot menu.
+        projectsRoot — the folder scanned for git repos, so day summaries and the WhatsApp bot know what you have been building. Defaults to ~/Desktop; point it at your actual projects folder and the scan is both faster and more accurate.
         googleSyncEnabled — whether a finished meeting summary offers to add its Action Items to Google Tasks and its follow-ups to your calendar. Nothing is ever added without you confirming the list first.
         """
         alert.alertStyle = .informational

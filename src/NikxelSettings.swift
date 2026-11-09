@@ -50,6 +50,7 @@ enum NikxelSettings {
         var whatsappConnected: Bool?
         var onboardingCompleted: Bool?
         var botMemoryDays: Int?
+        var googleSyncEnabled: Bool?
     }
 
     private static let fileURL: URL = {
@@ -176,6 +177,81 @@ enum NikxelSettings {
     static var botMemoryDays: Int {
         get { max(0, min(14, load().botMemoryDays ?? 3)) }
         set { save { $0.botMemoryDays = max(0, min(14, newValue)) } }
+    }
+
+    /// Whether a finished meeting summary offers to push its Action Items to
+    /// Google Tasks and its follow-ups to Google Calendar.
+    ///
+    /// On by default, because it still does nothing until the user has
+    /// explicitly connected a Google account and granted write scopes --
+    /// connecting IS the opt-in, and every push is confirmed in a dialog that
+    /// lists each item first.
+    static var googleSyncEnabled: Bool {
+        get { load().googleSyncEnabled ?? true }
+        set { save { $0.googleSyncEnabled = newValue } }
+    }
+
+    /// Free-text file where the user says how they want their summaries
+    /// written -- extra sections, sections to drop, length, tone.
+    ///
+    /// Deliberately a plain text file and not a set of toggles: "skip the agent
+    /// prompts", "keep the summary to three sentences" and "add a Costs
+    /// section" are all the same kind of instruction to a model, and a checkbox
+    /// per section would cover none of the ones nobody thought of. Same
+    /// approach as bot_personality.txt.
+    static let summaryStyleURL: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".nikxel", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("summary_style.txt")
+    }()
+
+    /// The seeded file is self-documenting, so `#` lines are stripped rather
+    /// than handed to the model as instructions.
+    static var summaryStyle: String {
+        guard let raw = try? String(contentsOf: summaryStyleURL, encoding: .utf8) else { return "" }
+        return raw.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Ready-to-drop-into-a-prompt form of `summaryStyle`. Empty when the user
+    /// has not customized anything, so the default prompt is unchanged.
+    static var summaryStyleInstruction: String {
+        let style = summaryStyle
+        guard !style.isEmpty else { return "" }
+        return """
+        HOUSE STYLE -- the person this summary is for has asked for the following. \
+        These override the section-by-section instructions below wherever the two \
+        disagree, including dropping a section entirely or adding one that isn't \
+        listed. They do NOT override the rules about never inventing content: \
+        attendees, decisions, owners, dates, file paths and identifiers still come \
+        only from the transcript.
+
+        \(style)
+
+        END OF HOUSE STYLE.
+        """
+    }
+
+    /// Seeds the commented template so the editor opens with something useful.
+    static func seedSummaryStyleIfMissing() {
+        guard !FileManager.default.fileExists(atPath: summaryStyleURL.path) else { return }
+        let template = """
+        # How you want your meeting summaries written.
+        # Write plain instructions, one per line. Lines starting with # are ignored.
+        # Delete these examples and write your own -- an empty file means "use the defaults".
+        #
+        # Examples:
+        #   Keep the summary to three sentences.
+        #   Drop the Agent Prompts section, I don't use a coding agent.
+        #   Add a "## Costs" section for anything with a number or a budget attached.
+        #   Put Action Items first, before the summary.
+        #   Write owners as first names only.
+        #   Always include a one-line "what changed since last time" note.
+        """
+        try? template.write(to: summaryStyleURL, atomically: true, encoding: .utf8)
     }
 
     /// File format for generated notes/MOMs. The Markdown the agent wrote is

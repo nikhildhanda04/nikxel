@@ -197,6 +197,7 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{transcript}}", with: transcript)
             .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
+            .replacingOccurrences(of: "{{custom_instructions}}", with: NikxelSettings.summaryStyleInstruction)
 
         return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir)
     }
@@ -415,7 +416,7 @@ class MOMGenerator {
     /// Bumped whenever the shipped prompts change in a way existing installs
     /// need. Every default prompt carries it as `promptVersionTag`, so an
     /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-    static let promptVersion = 4
+    static let promptVersion = 5
 
     private static let versionTagPrefix = "<!-- nikxel-prompt v"
     static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
@@ -488,6 +489,7 @@ follows the language rule above.
 Recorded: {{date}}
 Duration: {{duration}}
 
+{{custom_instructions}}
 Output this exact Markdown structure (keep section headings in English):
 
 # Notes — {{date}}
@@ -592,6 +594,7 @@ above.
 Recorded: {{date}}
 Duration: {{duration}}
 
+{{custom_instructions}}
 Output this exact Markdown structure (keep section headings in English):
 
 # Meeting — {{date}}
@@ -629,7 +632,11 @@ the exact same label you listed above.
 
 ## Action Items
 This is the section people open the note for. Be thorough and be specific.
-- Format every task as: `- [ ] **Task** — Owner: <name or Unassigned> — Due: <date or Not specified>`
+- Format every task as: `- [ ] **Task** — Owner: <name or Unassigned> — Due: <YYYY-MM-DD or Not specified>`
+- Due dates must be written as YYYY-MM-DD. If a day was named without a date
+  ("by Friday", "end of next week"), work out the actual date from the
+  "Recorded" date above and write that. If no deadline was mentioned at all,
+  write "Not specified" — never guess one.
 - Write each task as a complete, self-contained instruction. "Send Priya the
   updated pricing sheet" — not "pricing sheet". Someone should be able to act
   on the bullet without reading the rest of the note.
@@ -643,6 +650,19 @@ This is the section people open the note for. Be thorough and be specific.
   tasks cluster at the end of calls.
 - If there are genuinely none, write "- [ ] None — no tasks came out of this
   meeting."
+
+## Follow-Up Meetings
+Only meetings the call actually agreed to schedule — "let's do a design review
+Thursday at 3", "same time next week", "I'll set up a call with legal".
+- Format each as: `- **Title** — When: <YYYY-MM-DD HH:MM or Not specified> — Duration: <N> min — With: <names or Not specified>`
+- When must be a real date and a real 24-hour time, worked out from the
+  "Recorded" date above. A meeting agreed for "Thursday afternoon" with no
+  time given is `Not specified` — do NOT pick a plausible hour. A calendar
+  entry at an invented time is worse than no entry.
+- Duration: use what was said; if nothing was said, write 30 min.
+- Do not list meetings that already happened, recurring meetings that already
+  exist, or vague intentions ("we should sync more often").
+- If none, write "- None."
 
 ## Agent Prompts
 Ready-to-paste prompts for the Action Items that are software work, so a task

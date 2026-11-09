@@ -23,6 +23,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var modeMeetingItem: NSMenuItem?
     private var forceMeetingItem: NSMenuItem?
     private var botMenuItem: NSMenuItem?
+    private var googleSyncMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         stateMachine = StateMachine()
@@ -195,14 +196,23 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let summarizeNow = NSMenuItem(title: "Summarize Today Now", action: #selector(summarizeNow), keyEquivalent: "")
         summarizeNow.target = self; menu.addItem(summarizeNow)
 
-        let connectGCal = NSMenuItem(title: "Connect Google Calendar…", action: #selector(connectGoogleCalendar), keyEquivalent: "")
+        let connectGCal = NSMenuItem(title: "Connect Google Account…", action: #selector(connectGoogleCalendar), keyEquivalent: "")
         connectGCal.target = self; menu.addItem(connectGCal)
+
+        let gsync = NSMenuItem(title: "Send Meeting Tasks to Google: On",
+                               action: #selector(toggleGoogleSync), keyEquivalent: "")
+        gsync.target = self; menu.addItem(gsync)
+        googleSyncMenuItem = gsync
+        refreshGoogleSyncMenuTitle()
 
         let connectReminders = NSMenuItem(title: "Connect Apple Reminders…", action: #selector(connectAppleReminders), keyEquivalent: "")
         connectReminders.target = self; menu.addItem(connectReminders)
 
         let editPersonality = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
         editPersonality.target = self; menu.addItem(editPersonality)
+
+        let editStyle = NSMenuItem(title: "Edit Summary Style…", action: #selector(editSummaryStyle), keyEquivalent: "")
+        editStyle.target = self; menu.addItem(editStyle)
 
         let editSettings = NSMenuItem(title: "Edit Nikxel Settings (name, language)…", action: #selector(editSettings), keyEquivalent: "")
         editSettings.target = self; menu.addItem(editSettings)
@@ -379,6 +389,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 case .success(let url):
                     self.stateMachine.triggerMomReady()
                     NSWorkspace.shared.open(url)
+                    if job.mode == .meeting { GoogleSync.offer(noteURL: url) }
                 case .failure(let error):
                     let fail = NSAlert()
                     fail.messageText = "Regeneration Failed"
@@ -397,6 +408,35 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func connectGoogleCalendar() {
         calendarWatcher.reauthenticate()
+    }
+
+    @objc func toggleGoogleSync() {
+        NikxelSettings.googleSyncEnabled.toggle()
+        refreshGoogleSyncMenuTitle()
+    }
+
+    private func refreshGoogleSyncMenuTitle() {
+        googleSyncMenuItem?.title = "Send Meeting Tasks to Google: \(NikxelSettings.googleSyncEnabled ? "On" : "Off")"
+    }
+
+    /// Opens the free-text file that customizes how summaries are written.
+    @objc func editSummaryStyle() {
+        NikxelSettings.seedSummaryStyleIfMissing()
+        let alert = NSAlert()
+        alert.messageText = "How should your summaries be written?"
+        alert.informativeText = """
+        Write plain instructions, one per line — the same way you'd tell a person. They are added to the prompt your coding agent runs, and override the built-in structure wherever the two disagree.
+
+        You can drop sections you don't use, add ones you do, change the order, set the length, or change how owners and dates are written.
+
+        Lines starting with # are ignored, so the examples in the file are safe to leave in place.
+
+        Takes effect on your next recording. Nikxel never invents content to satisfy a style instruction — attendees, decisions, owners and dates still come only from the transcript.
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open summary_style.txt")
+        alert.runModal()
+        NSWorkspace.shared.open(NikxelSettings.summaryStyleURL)
     }
 
     @objc func connectAppleReminders() {
@@ -430,7 +470,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               "userName": "\(NikxelSettings.userName)",
               "waOwnName": "\(NikxelSettings.waOwnName)",
               "language": "auto",
-              "botMemoryDays": \(NikxelSettings.botMemoryDays)
+              "botMemoryDays": \(NikxelSettings.botMemoryDays),
+              "googleSyncEnabled": \(NikxelSettings.googleSyncEnabled)
             }
             """
             try? def.write(to: url, atomically: true, encoding: .utf8)
@@ -442,6 +483,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         waOwnName — your name exactly as it shows in your own WhatsApp account (often your full name) — used to filter your own messages out of chat scraping. Leave as-is if unsure.
         language — "auto" to match whichever language the content is in (English, Hindi, Hinglish, etc.), or a specific language name (e.g. "Hindi") to always force it.
         botMemoryDays — how many days of your end-of-day summaries the WhatsApp bot reads before replying, so it recognises what someone is asking about. It is told never to disclose from them. 0 turns it off; 3 is the default.
+        googleSyncEnabled — whether a finished meeting summary offers to add its Action Items to Google Tasks and its follow-ups to your calendar. Nothing is ever added without you confirming the list first.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open settings.json")

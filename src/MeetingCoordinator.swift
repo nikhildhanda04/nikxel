@@ -169,6 +169,10 @@ class MeetingCoordinator: AudioRecorderDelegate {
                     let title = mode == .notes ? "Notes ready" : "MOM ready"
                     self.notify(title: title, body: outURL.lastPathComponent, openOnTap: outURL)
                     cleanup()
+                    // Meetings only -- a lecture or podcast has no owners and
+                    // nothing to put in anyone's calendar. No-ops unless the
+                    // user has connected Google, and always asks first.
+                    if mode == .meeting { GoogleSync.offer(noteURL: outURL) }
                 }
             }
         }

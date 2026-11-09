@@ -36,7 +36,8 @@ launches. The active mode is shown on the "Start/Stop Recording" menu item.
 
 | Feature | Source | Behavior |
 |---|---|---|
-| 📅 **Google Calendar pings** | Google Calendar | One-line bubble above the avatar ~2 minutes before each event. Connect via status bar → Connect Google Calendar… |
+| 📅 **Google Calendar pings** | Google Calendar | One-line bubble above the avatar ~2 minutes before each event. Connect via status bar → Connect Google Account… |
+| ✅ **Action items → Google Tasks** | Your meeting summaries | After a meeting summary, offers to push its action items to Google Tasks and agreed follow-ups to your calendar as events with a Meet link. Always shows the list first. |
 | 📋 **Apple Reminders bubbles** | Apple Reminders (iCloud, Siri, iPhone, Watch) | When you wake your Mac, new reminders you jotted while away bubble up. Tap a bubble to mark it complete. |
 
 The Apple Reminders watcher uses a persistent "seen" set, so on first launch
@@ -212,9 +213,12 @@ runs destroyed each other's logs.
 Every MOM has the same sections, in this order:
 
 **Summary** · **Speakers** · **Per-Speaker Highlights** · **Decisions** ·
-**Blockers & Risks** · **Open Questions** · **Action Items** · **Agent Prompts**
+**Blockers & Risks** · **Open Questions** · **Action Items** ·
+**Follow-Up Meetings** · **Agent Prompts**
 
-Two of those are worth knowing about.
+…unless you've told it otherwise — see
+[your own summary style](#your-own-summary-style). Three of these are worth
+knowing about.
 
 ### Speakers
 
@@ -258,6 +262,44 @@ discussion said "that cron job", the prompt says "that cron job" and asks.
 Non-code tasks (chasing approvals, booking rooms, making calls) are skipped
 here — they stay in **Action Items** where they belong. A meeting with no
 engineering work just gets *"None"*.
+
+### Follow-Up Meetings
+
+Meetings the call actually agreed to schedule — *"let's do a design review
+Thursday at 3"* — with a real date, a real time and a length:
+
+> - **Design review** — When: 2026-11-12 15:30 — Duration: 45 min — With: Priya, Rohan
+
+A follow-up agreed for "Thursday afternoon" with no time named is written as
+`Not specified` on purpose. Nikxel will not pick a plausible hour: a calendar
+entry at an invented time is worse than no entry. Vague intentions ("we should
+sync more often") and meetings that already exist are left out entirely.
+
+These are what [Google Calendar sync](#connect-your-google-account-optional)
+turns into real events.
+
+### Your own summary style
+
+Menu bar → **Edit Summary Style…** opens `~/.nikxel/summary_style.txt`. Write
+plain instructions, one per line, the way you'd tell a person:
+
+```
+Keep the summary to three sentences.
+Drop the Agent Prompts section, I don't use a coding agent.
+Add a "## Costs" section for anything with a budget attached.
+Put Action Items first, before the summary.
+Write owners as first names only.
+```
+
+They're added to the prompt your coding agent runs and override the built-in
+structure wherever the two disagree — including dropping a section or adding
+one that isn't listed. Lines starting with `#` are ignored, so the examples
+seeded into the file are safe to leave there. An empty file means "use the
+defaults". Changes take effect on your next recording.
+
+One thing style instructions can't override: the rules against inventing
+content. Attendees, decisions, owners, dates, file paths and identifiers still
+come only from what was actually said.
 
 ## What the WhatsApp bot knows
 
@@ -324,21 +366,62 @@ script even when told `-l hi`. The wizard downloads `small` for that reason.
 Dropping a `ggml-medium.bin` or `ggml-large-v3-turbo.bin` into
 `~/.nikxel/models/` upgrades it — Nikxel picks the largest model present.
 
-## Connect Google Calendar (optional)
+## Connect your Google account (optional)
+
+One connection covers three things: a nudge from the avatar before a meeting
+starts, action items pushed to **Google Tasks**, and agreed follow-ups created
+as **Calendar events with a Meet link**.
 
 1. Google Cloud Console → APIs & Services → Credentials.
-2. Enable the Google Calendar API.
+2. Enable the **Google Calendar API** and the **Google Tasks API**.
 3. Create OAuth client ID → "Desktop app". Download the JSON.
 4. Save it to `~/.nikxel/google_creds.json`.
-5. Status bar → **Connect Google Calendar…** to run the OAuth flow.
+5. Status bar → **Connect Google Account…** to run the OAuth flow.
 
-See in-app prompt for the full step-by-step. Calendar access is read-only.
+See the in-app prompt for the full step-by-step.
+
+### Sending a meeting's tasks to Google
+
+When a meeting summary finishes, Nikxel reads its own **Action Items** and
+**Follow-Up Meetings** sections and shows you the list:
+
+> **Send this meeting's tasks to Google?**
+> • Rewrite the retry logic before the demo (due 12 Nov)
+> • [Rohan] Send Priya the updated pricing sheet (due 12 Nov)
+> • Chase legal on the DPA (due 20 Nov)
+> 📅 Design review — 12 Nov, 15:30, 45 min
+
+Nothing is sent until you press **Add to Google**. A few details worth knowing:
+
+- Tasks owned by somebody else are prefixed with their name (`[Rohan] …`) —
+  Google Tasks has no assignee field, so this is the only way a glance at the
+  list tells you whose it is. Your own and unassigned tasks get no prefix.
+- Only due dates the meeting actually gave become due dates. *"by next Friday"*
+  with no date attached arrives as a task with no deadline rather than a
+  guessed one.
+- Follow-ups become events only when a real date **and** time were agreed.
+- Attendees aren't invited — a transcript has names, not email addresses, and
+  guessing one would invite a stranger to your meeting. The names go in the
+  event description for you to invite from.
+- Each summary is pushed at most once, tracked in `~/.nikxel/synced/`, so
+  regenerating a note can't duplicate your todo list.
+
+Turn the whole thing off with **Send Meeting Tasks to Google: Off** in the menu
+bar, or `"googleSyncEnabled": false` in `~/.nikxel/settings.json`.
+
+If you connected Google before this existed, your grant is still read-only —
+Nikxel will say so and offer to reconnect the first time a summary has
+something to send.
 
 ## Customizing
 
 ### Change your avatar
 Menu bar → **Setup Wizard…** → **Your avatar**. See
 [Make your own avatar](#make-your-own-avatar).
+
+### Change what your summaries contain
+Menu bar → **Edit Summary Style…**. See
+[your own summary style](#your-own-summary-style).
 
 ### Switch which coding agent writes your notes
 Menu bar → **Setup Wizard…** → **Choose your coding agent**.
@@ -360,6 +443,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 - **Transcription**: shells out to `whisper` / `whisper.cpp`, plain text for Notes, SRT for Meeting (so timestamps can interleave speakers)
 - **MOM generation**: shells out to your chosen agent (Claude Code / OpenCode / Codex) in headless one-shot mode; output is Markdown. The raw transcript is written to disk *before* generation runs, so a failed or timed-out summary never costs you the transcript.
 - **Sprite import**: chroma-keys the magenta out, detects the row/column grid from background gaps instead of assuming an even division, and scales all 40 frames by one shared factor
+- **Google sync**: one OAuth grant (`GoogleAuth`) shared by the calendar poll and the task/event writer; the writer parses the Markdown the agent already wrote rather than making a second LLM call, which is why **Action Items** and **Follow-Up Meetings** have a fixed line format
 - **Calendar / reminders**: Google Calendar v3 REST API on a 30 s poll; EventKit for Apple Reminders with `EKEventStoreChanged` notifications + `NSWorkspace.didWake` for wake-from-sleep refresh
 - **Daily summary**: 15 s `NSWorkspace.frontmostApplication` + AX `kAXFocusedWindowAttribute`/`kAXTitleAttribute` polling → JSONL day-log; aggregated at 10 pm with `git log`/`git diff`, today's MOMs, Claude Code JSONL session transcripts, and `sqlite3` queries against the opencode database; narrative written by your chosen coding agent
 
@@ -372,11 +456,13 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 | Daily summaries | `~/Documents/nikxel/daily/` |
 | Raw day-activity log (JSONL) | `~/Library/Application Support/Nikxel/days/` |
 | Prompt templates | `~/.nikxel/prompts/notes.md` & `meeting.md` |
+| Your summary style instructions | `~/.nikxel/summary_style.txt` |
 | Speech models (whisper.cpp) | `~/.nikxel/models/` |
 | Raw recordings (kept until processed) | `~/.nikxel/recordings/` |
 | MOM workspace / last-run logs | `~/.nikxel/momworkspace/` |
 | Google OAuth creds & token | `~/.nikxel/google_creds.json`, `~/.nikxel/google_token.json` |
 | Your custom avatar (if you made one) | `~/.nikxel/sprites.png` |
+| Already-pushed-to-Google markers | `~/.nikxel/synced/` |
 | Settings (agent choice, name, language) | `~/.nikxel/settings.json` |
 
 ## Requirements

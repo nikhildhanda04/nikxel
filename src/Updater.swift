@@ -147,19 +147,25 @@ enum Updater {
         echo "=== update started $(date)"
         cd "\(repo.path)" || { echo "repo gone: \(repo.path)"; exit 1; }
 
-        BIN="Nikxel.app/Contents/MacOS/Nikxel"
-        BACKUP="$(mktemp -t nikxel-prev)"
-        [ -f "$BIN" ] && cp "$BIN" "$BACKUP"
+        # Back up the whole signed bundle, not just the binary. Restoring only
+        # the executable left it unsigned, and re-signing it ad-hoc downgraded
+        # a bundle that had been signed with the stable "Nikxel" certificate --
+        # measured: Authority=Nikxel before a failed update, Signature=adhoc
+        # after. macOS reads that as a different app, so a failed update cost
+        # the user every permission they had granted. `ditto` is the macOS tool
+        # for copying bundles and keeps the signature intact, so nothing has to
+        # be re-signed at all.
+        BACKUP="$(mktemp -d -t nikxel-prev)"
+        ditto Nikxel.app "$BACKUP/Nikxel.app"
 
         restore() {
             echo "--- update failed; restoring the previous build"
-            if [ -s "$BACKUP" ]; then
-                cp "$BACKUP" "$BIN" && chmod +x "$BIN"
-                # The restored binary is unsigned until it's re-signed, and an
-                # unsigned Nikxel loses every granted permission.
-                codesign --force --deep --sign - Nikxel.app 2>/dev/null
+            if [ -d "$BACKUP/Nikxel.app" ]; then
+                rm -rf Nikxel.app
+                ditto "$BACKUP/Nikxel.app" Nikxel.app
+                echo "--- restored: $(codesign -dvv Nikxel.app 2>&1 | grep -E 'Authority=|Signature=' | head -1)"
             fi
-            rm -f "$BACKUP"
+            rm -rf "$BACKUP"
             open Nikxel.app
             exit 1
         }
@@ -176,7 +182,7 @@ enum Updater {
         echo "--- after:  $(git log --oneline -1)"
         ./build.sh || restore
 
-        rm -f "$BACKUP"
+        rm -rf "$BACKUP"
         echo "=== update complete"
         open Nikxel.app
         """

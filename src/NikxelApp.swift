@@ -810,9 +810,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.updateMenuItem?.isEnabled = true
             switch result {
             case .failure(let err):
-                self.showUpdateAlert(title: "Couldn't check for updates",
-                                     body: err.localizedDescription,
-                                     style: .warning)
+                self.presentCard(icon: "⚠️", title: "Couldn't check for updates",
+                                 lines: err.localizedDescription
+                                     .components(separatedBy: "\n\n")
+                                     .map { $0.replacingOccurrences(of: "\n", with: " ") }
+                                     .filter { !$0.isEmpty },
+                                 kind: .warning, lifetime: 30)
             case .success(let status):
                 self.presentUpdate(status)
             }
@@ -821,78 +824,73 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func presentUpdate(_ status: Updater.Status) {
         guard !status.isUpToDate else {
-            showUpdateAlert(title: "Nikxel is up to date",
-                            body: "You're on the latest version (\(status.currentCommit)).",
-                            style: .informational)
+            presentCard(icon: "✅", title: "Nikxel is up to date",
+                        lines: ["You're on the latest version (\(status.currentCommit))."],
+                        kind: .success, lifetime: 8)
             return
         }
 
         let n = status.behind
-        var body = status.subjects.prefix(10).map { "• \($0)" }.joined(separator: "\n")
-        if status.subjects.count > 10 { body += "\n• …and \(status.subjects.count - 10) more" }
+        let title = n == 1 ? "1 update available" : "\(n) updates available"
 
         // A fast-forward pull needs main and a clean tree. Say which one is in
-        // the way rather than letting the script discover it and roll back.
-        if !status.canAutoUpdate {
+        // the way rather than letting the update script discover it and roll
+        // back -- and don't offer a tap that cannot work.
+        guard status.canAutoUpdate else {
+            var why: [String] = []
             if status.branch != "main" {
-                body += "\n\nYou're on the \"\(status.branch)\" branch, not main, so Nikxel won't pull for you. Switch to main first."
+                why.append("You're on the \"\(status.branch)\" branch, not main.")
             }
             if status.dirty {
-                body += "\n\nYou have uncommitted changes, which would block the pull. Commit or stash them first."
+                why.append("You have uncommitted changes, which would block the pull.")
             }
+            why.append("Fix that, then check again.")
+            presentCard(icon: "⚠️", title: title, lines: why, kind: .warning, lifetime: 30)
+            return
         }
 
-        let alert = NSAlert()
-        alert.messageText = n == 1 ? "1 update available" : "\(n) updates available"
-        alert.informativeText = body
-        alert.alertStyle = .informational
-        if status.canAutoUpdate {
-            alert.addButton(withTitle: "Update and Restart")
+        // The card carries one action, so tapping IS the confirmation -- hence
+        // spelling out that it restarts. Ignoring it is the other answer: it
+        // fades on its own rather than sitting there demanding one.
+        var lines = status.subjects.prefix(3).map { Updater.shortSubject($0) }
+        if status.subjects.count > 3 {
+            lines.append("…and \(status.subjects.count - 3) more")
         }
-        alert.addButton(withTitle: "Not Now")
-        alert.addButton(withTitle: "View on GitHub")
+        lines.append("Tap to update and restart.")
 
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn where status.canAutoUpdate:
-            startUpdate(status)
-        case .alertThirdButtonReturn where status.canAutoUpdate,
-             .alertSecondButtonReturn where !status.canAutoUpdate:
-            if let url = URL(string: "https://github.com/nikhildhanda04/nikxel/commits/main") {
-                NSWorkspace.shared.open(url)
-            }
-        default:
-            break
-        }
+        presentCard(icon: "⬇️", title: title, lines: lines, bulleted: true,
+                    kind: .info, lifetime: 45,
+                    action: { [weak self] in self?.startUpdate(status) })
     }
 
     private func startUpdate(_ status: Updater.Status) {
         guard Updater.updateAndRestart(repo: status.repo) else {
-            showUpdateAlert(title: "Couldn't start the update",
-                            body: "Nikxel couldn't write its update script to the temporary folder. Nothing has changed — update by hand with:\n\ncd \(status.repo.path)\ngit pull\n./setup.command",
-                            style: .warning)
+            presentCard(icon: "⚠️", title: "Couldn't start the update",
+                        lines: ["Nikxel couldn't write its update script.",
+                                "Tap to open the update log."],
+                        kind: .error, lifetime: .infinity,
+                        action: { NSWorkspace.shared.open(Updater.logURL) })
             return
         }
         // The script is waiting for this process to go away before it touches
         // the binary, so quitting IS the next step, not an abandonment.
-        window.nikxelView?.showCard(
-            icon: "⬇️", title: "Updating…",
-            lines: ["Nikxel will quit, rebuild and come back in a moment."],
-            kind: .info, lifetime: 10)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { NSApp.terminate(nil) }
+        presentCard(icon: "⬇️", title: "Updating…",
+                    lines: ["Nikxel will quit, rebuild and come back in a moment."],
+                    kind: .info, lifetime: 10)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { NSApp.terminate(nil) }
     }
 
-    private func showUpdateAlert(title: String, body: String, style: NSAlert.Style) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = body
-        alert.alertStyle = style
-        alert.addButton(withTitle: "OK")
-        if style == .warning { alert.addButton(withTitle: "Open Update Log") }
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertSecondButtonReturn, style == .warning {
-            NSWorkspace.shared.open(Updater.logURL)
-        }
+    /// A card, with the window brought back if the user had hidden Nikxel.
+    /// Update feedback is asked for from the menu bar, so it has to appear even
+    /// when there is no avatar on screen to hang it off.
+    private func presentCard(icon: String, title: String, lines: [String],
+                             bulleted: Bool = false,
+                             kind: NikxelView.CardKind, lifetime: TimeInterval,
+                             action: (() -> Void)? = nil) {
+        if !window.isVisible { window.orderFront(nil) }
+        window.nikxelView?.showCard(icon: icon, title: title, lines: lines,
+                                    bulleted: bulleted, kind: kind,
+                                    lifetime: lifetime, action: action)
     }
 
     @objc func quitApp() { NSApp.terminate(nil) }

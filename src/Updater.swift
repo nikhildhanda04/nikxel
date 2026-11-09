@@ -51,6 +51,22 @@ enum Updater {
         }
     }
 
+    /// Shorten a commit subject for a card line, breaking at a word boundary.
+    /// A hard `prefix(n)` cut one mid-word ("lacks the signing cer"), which
+    /// reads as a rendering fault rather than a deliberate truncation.
+    static func shortSubject(_ subject: String, limit: Int = 64) -> String {
+        let s = subject.trimmingCharacters(in: .whitespaces)
+        guard s.count > limit else { return s }
+        let cut = s.prefix(limit)
+        // Back up to the last space so a word is never sliced. If there isn't
+        // one (a single long token), cut where we are.
+        if let space = cut.lastIndex(of: " ") {
+            let trimmed = cut[..<space].trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed + "…" }
+        }
+        return cut + "…"
+    }
+
     static let logURL: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".nikxel", isDirectory: true)

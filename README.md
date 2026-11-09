@@ -189,21 +189,65 @@ one it used.
 
 ### Updating
 
+Menu bar → **Check for Updates…**. Nikxel fetches `origin/main` and raises a
+bubble above the avatar: either *"Nikxel is up to date"*, or the commit
+subjects you'd be getting. **Tap the bubble** and it quits, pulls, rebuilds and
+comes back on the new version. Ignore it and it fades — there's nothing to
+dismiss.
+
+It won't offer the tap if a fast-forward pull can't work: a branch other than
+`main`, or uncommitted changes. The bubble says which, so you fix it rather
+than watching an update fail. Everything the update does is logged to
+`~/.nikxel/update.log`.
+
+A failed pull or build rolls back to the previous build — bundle and code
+signature intact — and relaunches it, so an update that goes wrong never leaves
+you without a working app.
+
+The check is manual; nothing polls in the background.
+
+### Updating a copy made before Check for Updates existed
+
+Older builds don't have the menu item, so run it by hand once:
+
 ```sh
 cd nikxel
 git pull
 ./setup.command
 ```
 
-That's the whole thing — same command as the install. There's no in-app
-updater, so nothing tells you a new version exists; to see what you'd be
-getting, `git fetch && git log --oneline HEAD..origin/main`.
+After that the menu item is there and you never need this again.
 
-Lost your clone, or installed by downloading the repo as a ZIP? Clone it
-properly once (`git clone https://github.com/nikhildhanda04/nikxel.git`) and
-run `./setup.command` from there. Your settings in `~/.nikxel/` are picked up
-by whichever copy you launch, so nothing is lost — delete the old folder
-afterwards so you don't run a stale build by accident.
+**If Nikxel says it "isn't running from a git clone"** — you downloaded a ZIP,
+or built in a folder that was never cloned — convert it in place. None of this
+overwrites a single file:
+
+```sh
+cd /path/to/your/nikxel
+git init -b main
+git remote add origin https://github.com/nikhildhanda04/nikxel.git
+git fetch origin main
+git reset --mixed FETCH_HEAD          # sets HEAD and the index, leaves every file alone
+git branch --set-upstream-to=origin/main main
+git status --short -uno               # ← read this before going further
+```
+
+`--mixed` deliberately leaves your working files untouched, so that last line
+shows exactly where your copy differs from the repo:
+
+- **`D somefile`** — the repo has it and you don't. `git checkout -- somefile`
+  to get it.
+- **`M somefile`** — your copy differs. `git diff -- somefile` and decide;
+  **your version may be the newer one**, in which case commit it rather than
+  throwing it away.
+
+Once `git status --short -uno` is empty, `git pull && ./setup.command` works,
+and so does the menu item.
+
+Prefer a clean start? `git clone` fresh and run `./setup.command` there — your
+settings in `~/.nikxel/` are picked up by whichever copy you launch, so nothing
+is lost. Delete the old folder afterwards so you don't run a stale build by
+accident.
 
 The build output (`Nikxel.app/Contents/MacOS/Nikxel` and its signature) is not
 tracked by git, so rebuilding never leaves changes that block the next pull.

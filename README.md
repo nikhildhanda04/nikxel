@@ -169,6 +169,24 @@ want; the rest keeps working.
 - **Reminders** — only for the Apple Reminders bubbles
 - **Notifications** — for "Notes ready" / "MOM ready" toasts
 
+### Keeping permissions across rebuilds
+
+Nikxel is signed on your own machine. By default that's an **ad-hoc** signature,
+which changes every time the binary does — so macOS treats each rebuild as a new
+app and asks for Accessibility and Screen Recording permission again.
+
+Creating one self-signed certificate stops that for good:
+
+1. Open **Keychain Access**
+2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
+3. **Name:** `Nikxel` · **Identity Type:** Self Signed Root · **Certificate Type:** Code Signing
+4. **Create**, then **Done**
+5. Re-run `./setup.command`
+
+`build.sh` picks the certificate up automatically if it's there and falls back
+to ad-hoc if it isn't — the build never fails either way, it just prints which
+one it used.
+
 ### Updating
 
 ```sh

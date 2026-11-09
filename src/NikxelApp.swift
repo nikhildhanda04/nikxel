@@ -59,6 +59,14 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
 
         dayLogger = DayLogger(momGenerator: meetingCoordinator.momGen)
+        dayLogger.onSummaryReady = { [weak self] line, fileURL in
+            // Ten minutes: this fires at 10pm, so it has to survive the user
+            // being away from the Mac when it lands.
+            self?.window.nikxelView?.showCard(
+                icon: "🌙", title: "Today, in short", lines: [line],
+                kind: .info, lifetime: 600,
+                action: { NSWorkspace.shared.open(fileURL) })
+        }
 
         meetingDetector = MeetingDetector.shared
         chatbotEngine = ChatbotEngine.shared

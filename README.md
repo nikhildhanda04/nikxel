@@ -50,6 +50,7 @@ wakes from sleep.
 | Feature | Trigger |
 |---|---|
 | 📓 **Auto day-in-review** | Fires at 10pm daily (or on next launch if the Mac was asleep at 10pm). Manual: status bar → **Summarize Today Now**. |
+| 🌙 **Digest bubble** | When the summary lands, a bubble pops above the avatar with the day in one line — see [bubbles above the avatar](#bubbles-above-the-avatar). |
 
 Nikxel quietly samples your foreground app + window title every 15s through
 the day (no keystrokes, no screen content — just app + window names), then
@@ -69,6 +70,45 @@ instead of generic ("edited Swift files").
 Sleep gaps are capped at 5 min per sample so a night of sleep doesn't get
 charged to whatever app was frontmost when you closed the laptop. Window
 titles need Accessibility (the same grant the typing animation uses).
+
+## Bubbles above the avatar
+
+Nikxel talks to you through a speech bubble above its head rather than a modal
+dialog, so nothing steals focus mid-sentence:
+
+| When | Bubble |
+|---|---|
+| A meeting summary finishes | 📄 **Minutes ready** + the first three action items from the note itself |
+| Notes finish | 📄 **Notes ready** + the first key points |
+| The 10pm day summary is written | 🌙 **Today, in short** — `3h 20m coding · 2 meetings · 41 messages` |
+| Generation, transcription or recording fails | ⚠️ the reason, plus what to do about it |
+
+Click a bubble to act on it: a ready one opens the note, the digest opens the
+day summary, a failure opens that run's logs (or the Screen Recording settings,
+for a recording error).
+
+Timing differs by kind, deliberately. A "ready" bubble goes after ~25 seconds.
+The 10pm digest stays ten minutes, because it fires when nobody is watching and
+has to still be there when you come back. **Failures stay until you click
+them** — a failure costs nothing (the transcript is written to disk *before*
+generation runs, and **Regenerate Unfinished Summary** picks it back up), but
+it shouldn't scroll past unseen either.
+
+Errors used to be modal alerts. They aren't any more — the alert is reserved
+for the two places Nikxel actually needs an answer from you: confirming a
+regenerate, and confirming what gets sent to Google.
+
+The digest line is computed from the day log, not written by the model: coding
+time is foreground time in editors, terminals and IDEs; meetings are the MOMs
+you recorded today; messages are WhatsApp previews seen through the day. Parts
+that are zero are left out, so a day with no coding reads `4 meetings ·
+63 messages`. A day with nothing in it gets no bubble at all.
+
+> **Note on the Liquid Glass bubbles.** The older calendar / reminder /
+> "someone is texting" bubbles are `NSGlassEffectView`s, which only exist in
+> the macOS 26 SDK — on any other SDK they silently render nothing, even on
+> macOS 26 itself. The bubbles above are plain CoreGraphics and show up on
+> every build.
 
 ## Install (macOS)
 
@@ -476,6 +516,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 - **Transcription**: shells out to `whisper` / `whisper.cpp`, plain text for Notes, SRT for Meeting (so timestamps can interleave speakers)
 - **MOM generation**: shells out to your chosen agent (Claude Code / OpenCode / Codex) in headless one-shot mode; output is Markdown. The raw transcript is written to disk *before* generation runs, so a failed or timed-out summary never costs you the transcript.
 - **Sprite import**: chroma-keys the magenta out, detects the row/column grid from background gaps instead of assuming an even division, and scales all 40 frames by one shared factor
+- **Notification bubbles**: a CoreGraphics speech card drawn straight into the avatar's window (`NikxelCard.swift`), one at a time, newest replacing the last; the window is 340x520 so there is headroom above the sprite, and it grew upward only so updating doesn't move Nikxel on screen
 - **Summary templates**: plain-text instruction files in `~/.nikxel/templates/`, injected into the prompt as `{{custom_instructions}}` — an overlay on the shipped prompt rather than a copy of it, so templates don't go stale when the prompt improves
 - **Google sync**: one OAuth grant (`GoogleAuth`) shared by the calendar poll and the task/event writer; the writer parses the Markdown the agent already wrote rather than making a second LLM call, which is why **Action Items** and **Follow-Up Meetings** have a fixed line format
 - **Calendar / reminders**: Google Calendar v3 REST API on a 30 s poll; EventKit for Apple Reminders with `EKEventStoreChanged` notifications + `NSWorkspace.didWake` for wake-from-sleep refresh

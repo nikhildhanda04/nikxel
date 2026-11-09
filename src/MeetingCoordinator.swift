@@ -49,17 +49,18 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
         if let error = error {
             DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Recording Error"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .critical
-                alert.addButton(withTitle: "OK")
-                alert.addButton(withTitle: "Open Settings")
-                if alert.runModal() == .alertSecondButtonReturn {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
+                self.nikxelView?.showCard(
+                    icon: "⚠️",
+                    title: "Couldn't record",
+                    lines: [String(error.localizedDescription.prefix(160)),
+                            "Tap to open Screen Recording permissions."],
+                    kind: .error,
+                    lifetime: .infinity,
+                    action: {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    })
             }
             return
         }
@@ -154,12 +155,15 @@ class MeetingCoordinator: AudioRecorderDelegate {
                 case .failure(let err):
                     self.isProcessing = false
                     self.stateMachine.endWritingMOM()
-                    let alert = NSAlert()
-                    alert.messageText = mode == .notes ? "Notes Generation Failed" : "MOM Generation Failed"
-                    alert.informativeText = "\(err)"
-                    alert.alertStyle = .critical
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
+                    // A card rather than a modal: a failure here costs nothing
+                    // -- the transcript was written before generation ran and
+                    // "Regenerate Unfinished Summary" picks it back up -- so
+                    // stealing focus mid-work is the wrong trade. It stays put
+                    // until clicked, and clicking opens the run's logs.
+                    self.showFailureCard(
+                        title: mode == .notes ? "Couldn't write your notes" : "Couldn't write the minutes",
+                        error: err,
+                        hint: "Your transcript is saved — menu bar → Regenerate Unfinished Summary.")
                 case .success(let outURL):
                     self.isProcessing = false
                     // endWritingMOM first: .writingMOM is sticky in setState,
@@ -168,6 +172,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
                     self.stateMachine.triggerMomReady()
                     let title = mode == .notes ? "Notes ready" : "MOM ready"
                     self.notify(title: title, body: outURL.lastPathComponent, openOnTap: outURL)
+                    self.showReadyCard(mode: mode, outURL: outURL)
                     cleanup()
                     // Meetings only -- a lecture or podcast has no owners and
                     // nothing to put in anyone's calendar. No-ops unless the
@@ -182,13 +187,83 @@ class MeetingCoordinator: AudioRecorderDelegate {
         DispatchQueue.main.async {
             self.isProcessing = false
             self.stateMachine.endWritingMOM()
-            let alert = NSAlert()
-            alert.messageText = "Transcription Failed"
-            alert.informativeText = "\(err)"
-            alert.alertStyle = .critical
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
+            self.showFailureCard(title: "Couldn't transcribe the recording",
+                                 error: err,
+                                 hint: "Check that whisper is installed and working in a terminal.")
         }
+    }
+
+    // MARK: - Cards
+
+    /// "MOM ready" with the note's own action items as bullets -- the first
+    /// thing anyone opens the note for, so it goes straight on the card.
+    /// Reuses GoogleSync's parser rather than a second one.
+    private func showReadyCard(mode: CaptureMode, outURL: URL) {
+        let mdURL = outURL.pathExtension.lowercased() == "md"
+            ? outURL
+            : outURL.deletingPathExtension().appendingPathExtension("md")
+        let md = (try? String(contentsOf: mdURL, encoding: .utf8)) ?? ""
+
+        var lines: [String] = []
+        if mode == .meeting {
+            lines = GoogleSync.parseActionItems(md).prefix(3).map(\.title)
+            if lines.isEmpty { lines = ["No tasks came out of this one."] }
+        } else {
+            lines = Self.firstBullets(in: GoogleSync.section(md, heading: "Key Points"), limit: 3)
+            if lines.isEmpty { lines = [mdURL.lastPathComponent] }
+        }
+
+        nikxelView?.showCard(
+            icon: "📄",
+            title: mode == .notes ? "Notes ready" : "Minutes ready",
+            lines: lines,
+            bulleted: true,
+            kind: .success,
+            lifetime: 25,
+            action: { NSWorkspace.shared.open(outURL) })
+    }
+
+    private func showFailureCard(title: String, error: Error, hint: String) {
+        // Agent errors carry a "Logs: /path" tail; pull it out so tapping the
+        // card lands somewhere useful, and keep it out of the visible text.
+        let full = "\(error)"
+        var logPath: String?
+        if let r = full.range(of: "Logs: ") {
+            logPath = String(full[r.upperBound...])
+                .components(separatedBy: .newlines).first?
+                .trimmingCharacters(in: .whitespaces)
+        }
+        let reason = full.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("Logs: ") } ?? "Unknown error."
+
+        nikxelView?.showCard(
+            icon: "⚠️",
+            title: title,
+            lines: [String(reason.prefix(160)), hint],
+            kind: .error,
+            lifetime: .infinity,   // stays until clicked
+            action: {
+                if let p = logPath { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
+            })
+    }
+
+    /// Leading "- " / "* " bullets from a Markdown section, trimmed of inline
+    /// markers, for the notes card.
+    static func firstBullets(in section: String, limit: Int) -> [String] {
+        var out: [String] = []
+        for raw in section.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("- ") || line.hasPrefix("* ") else { continue }
+            let text = String(line.dropFirst(2))
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, text.lowercased() != "none." , text.lowercased() != "none" else { continue }
+            out.append(text)
+            if out.count == limit { break }
+        }
+        return out
     }
 
     // MARK: - Notifications

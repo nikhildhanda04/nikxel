@@ -14,7 +14,22 @@ class NikxelView: NSView, StateMachineDelegate {
     private var frameElapsed: TimeInterval = 0
     private var lastTick: TimeInterval = 0
     private let charSize: CGFloat = 156
-    private let halfChar: CGFloat = 78
+    /// The window is taller than it is wide so notification cards have room
+    /// above the avatar's head. The avatar sits `avatarBottomInset` up from the
+    /// bottom edge -- exactly where it sat when the window was a 340x340
+    /// square -- so growing the window added space upward and did not move
+    /// Nikxel on screen.
+    static let viewWidth: CGFloat = 340
+    static let viewHeight: CGFloat = 520
+    static let avatarBottomInset: CGFloat = 170
+
+    /// Avatar centre. Sprite, shadow, bubbles and hit testing are all
+    /// positioned from here, so this is the only place the anchor is defined.
+    var avatarCenter: NSPoint {
+        NSPoint(x: bounds.midX, y: bounds.minY + NikxelView.avatarBottomInset)
+    }
+
+    let halfChar: CGFloat = 78
     private let frameCount = 4
     private var spriteSheet: NSImage?
 
@@ -70,6 +85,43 @@ class NikxelView: NSView, StateMachineDelegate {
     private let reminderFadeOut: TimeInterval = 0.4
     private let reminderFadeIn: TimeInterval = 0.3
 
+    // Notification card. Drawn with CoreGraphics rather than
+    // NSGlassEffectView: the glass bubbles only exist when built against the
+    // macOS 26 SDK, and these have to show up on every build.
+    //
+    // One card at a time, newest replacing the last. The things that raise one
+    // -- a summary finishing, a failure, the 10pm digest -- can't overlap in
+    // practice, and a stack would cost layout and hit-testing for a case that
+    // doesn't happen. Rendering lives in NikxelCard.swift.
+    enum CardKind {
+        case info, success, warning, error
+
+        var accent: NSColor {
+            switch self {
+            case .info:    return NSColor(calibratedRed: 0.30, green: 0.45, blue: 0.90, alpha: 1)
+            case .success: return NSColor(calibratedRed: 0.17, green: 0.62, blue: 0.36, alpha: 1)
+            case .warning: return NSColor(calibratedRed: 0.85, green: 0.58, blue: 0.10, alpha: 1)
+            case .error:   return NSColor(calibratedRed: 0.80, green: 0.22, blue: 0.20, alpha: 1)
+            }
+        }
+    }
+
+    struct Card {
+        let icon: String?
+        let title: String
+        let lines: [String]
+        let bulleted: Bool
+        let kind: CardKind
+        let addedAt: TimeInterval
+        let lifetime: TimeInterval
+        let action: (() -> Void)?
+        var opacity: CGFloat = 0
+        var hitRect: NSRect = .zero
+    }
+    var card: Card?
+    let cardFadeIn: TimeInterval = 0.45
+    let cardFadeOut: TimeInterval = 0.6
+
     // Liquid Glass bubble views (macOS 26+). Gated behind HAS_LIQUID_GLASS so the
     // app still builds against pre-macOS-26 SDKs (where these types don't exist);
     // without the flag the bubbles simply don't render.
@@ -90,7 +142,7 @@ class NikxelView: NSView, StateMachineDelegate {
 
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
-        super.init(frame: NSRect(x: 0, y: 0, width: 340, height: 340))
+        super.init(frame: NSRect(x: 0, y: 0, width: NikxelView.viewWidth, height: NikxelView.viewHeight))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.magnificationFilter = .nearest
@@ -125,7 +177,8 @@ class NikxelView: NSView, StateMachineDelegate {
     }
     #endif
 
-    private func dmFont(size: CGFloat, bold: Bool = false) -> NSFont {
+    // Not private: NikxelCard.swift's extension draws with it too.
+    func dmFont(size: CGFloat, bold: Bool = false) -> NSFont {
         let name = bold ? "DMSans-Bold" : "DMSans-Medium"
         if let f = NSFont(name: name, size: size) { return f }
         // Fallback to system if bundled font failed to register
@@ -186,6 +239,36 @@ class NikxelView: NSView, StateMachineDelegate {
         needsDisplay = true
     }
 
+    /// Shows a notification card above the avatar. Replaces any card already
+    /// on screen.
+    ///
+    /// `lifetime` is per-card on purpose: a MOM-ready nudge can go after a few
+    /// seconds, but the 10pm digest fires when nobody is watching and has to
+    /// still be there when they come back, and an error should wait to be read.
+    func showCard(icon: String? = nil,
+                  title: String,
+                  lines: [String],
+                  bulleted: Bool = false,
+                  kind: CardKind = .info,
+                  lifetime: TimeInterval = 20,
+                  action: (() -> Void)? = nil) {
+        card = Card(icon: icon, title: title, lines: lines, bulleted: bulleted,
+                    kind: kind, addedAt: CACurrentMediaTime(), lifetime: lifetime,
+                    action: action)
+        needsDisplay = true
+    }
+
+    func dismissCard() {
+        guard card != nil else { return }
+        card = nil
+        needsDisplay = true
+    }
+
+    func hitTestCard(at p: NSPoint) -> Bool {
+        guard let c = card, c.opacity > 0.05 else { return false }
+        return c.hitRect.contains(p)
+    }
+
     func dismissReminder(id: String) {
         if let i = reminderBubbles.firstIndex(where: { $0.id == id }) {
             reminderBubbles.remove(at: i)
@@ -240,6 +323,7 @@ class NikxelView: NSView, StateMachineDelegate {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let p = convert(point, from: superview)
         if hitTestReminderBubble(at: p) != nil { return self }
+        if hitTestCard(at: p) { return self }
         if hitTestAvatar(at: p) { return self }
         return nil
     }
@@ -248,7 +332,8 @@ class NikxelView: NSView, StateMachineDelegate {
     /// current sprite frame, matching the live transform (facing/scale/offset).
     func hitTestAvatar(at p: NSPoint) -> Bool {
         if avatarHiddenByPuff { return false }
-        let cx = bounds.midX, cy = bounds.midY
+        let c = avatarCenter
+        let cx = c.x, cy = c.y
         let signX: CGFloat = facingRight ? 1 : -1
         let s = max(scale, 0.01)
         // Invert the draw transform back into sprite-rect space [0, charSize].
@@ -299,6 +384,7 @@ class NikxelView: NSView, StateMachineDelegate {
                                  y: screenPt.y - win.frame.minY)
             let interactive = currentState == .dragging
                 || hitTestReminderBubble(at: viewPt) != nil
+                || hitTestCard(at: viewPt)
                 || hitTestAvatar(at: viewPt)
             win.ignoresMouseEvents = !interactive
         }
@@ -432,6 +518,27 @@ class NikxelView: NSView, StateMachineDelegate {
             if reminderBubbles.count != before || changed { needsDisplay = true }
         }
 
+        if var c = card {
+            let age = now - c.addedAt
+            // A non-finite lifetime means "stay until clicked" -- used by errors.
+            let target: CGFloat
+            if age < cardFadeIn {
+                target = CGFloat(age / cardFadeIn)
+            } else if c.lifetime.isFinite && age > c.lifetime - cardFadeOut {
+                target = max(0, CGFloat((c.lifetime - age) / cardFadeOut))
+            } else {
+                target = 1
+            }
+            if c.lifetime.isFinite && age > c.lifetime {
+                card = nil
+                needsDisplay = true
+            } else if abs(c.opacity - target) > 0.001 {
+                c.opacity = target
+                card = c
+                needsDisplay = true
+            }
+        }
+
         // Bubble animation (thinking dots only)
         let shouldShow = (currentState == .thinking)
         bubbleTargetOpacity = shouldShow ? 1 : 0
@@ -450,7 +557,7 @@ class NikxelView: NSView, StateMachineDelegate {
 
         // Reconcile Liquid Glass bubble views with model state.
         #if HAS_LIQUID_GLASS
-        layoutBubbles(cx: bounds.midX, cy: bounds.midY)
+        layoutBubbles(cx: avatarCenter.x, cy: avatarCenter.y)
         #endif
 
         needsDisplay = true
@@ -473,7 +580,8 @@ class NikxelView: NSView, StateMachineDelegate {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.interpolationQuality = .none
 
-        let cx = bounds.midX, cy = bounds.midY
+        let c = avatarCenter
+        let cx = c.x, cy = c.y
         let charBottom = cy - halfChar
 
         // Drop shadow
@@ -578,6 +686,8 @@ class NikxelView: NSView, StateMachineDelegate {
 
         // (Calendar bubble + Apple Reminders bubbles are now real NSGlassEffectView
         // subviews managed in layoutBubbles(), called from tick().)
+
+        drawCard(ctx: ctx, cx: cx, cy: cy)
 
         // MOM ready sparkle
         if currentState == .momReady {
@@ -978,4 +1088,5 @@ class NikxelView: NSView, StateMachineDelegate {
             ctx.restoreGState()
         }
     }
+
 }

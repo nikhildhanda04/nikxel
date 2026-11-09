@@ -47,6 +47,107 @@ class DayLogger {
         generateSummary(for: Date())
     }
 
+    /// Fired on the main thread right after an end-of-day summary is written,
+    /// with the one-line digest for the avatar bubble and the file it came from.
+    var onSummaryReady: ((String, URL) -> Void)?
+
+    // MARK: - Digest
+
+    /// The handful of numbers worth putting in a bubble. Separate from the
+    /// narrative summary, which is prose and takes an agent run to produce.
+    struct DayStats: Equatable {
+        var codingSeconds: TimeInterval = 0
+        /// All sampled foreground time, coding or not.
+        var activeSeconds: TimeInterval = 0
+        var meetings: Int = 0
+        var messages: Int = 0
+    }
+
+    /// Frontmost-app names that count as coding. Matched as lowercase
+    /// substrings, so "Visual Studio Code", "Code - Insiders" and "VSCodium"
+    /// all land on "code".
+    static let codingAppHints = [
+        "code", "xcode", "vscodium", "cursor", "zed", "windsurf", "fleet",
+        "terminal", "iterm", "ghostty", "warp", "alacritty", "kitty", "hyper", "wezterm",
+        "sublime", "nova", "textmate", "neovim", "emacs",
+        "android studio", "intellij", "pycharm", "webstorm", "goland", "phpstorm",
+        "rubymine", "clion", "rider", "datagrip",
+        "antigravity", "kiro",
+    ]
+
+    static func isCodingApp(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return codingAppHints.contains { n.contains($0) }
+    }
+
+    /// Formats stats into the bubble's single line. nil when the day is empty
+    /// enough that a bubble would say nothing -- better no bubble than
+    /// "0 meetings".
+    ///
+    /// Pure, so it can be checked without a day of logs -- see
+    /// check_day_digest.swift.
+    static func digestLine(_ s: DayStats) -> String? {
+        var parts: [String] = []
+        let codingMins = Int((s.codingSeconds / 60).rounded())
+        if codingMins >= 1 { parts.append("\(humanDuration(minutes: codingMins)) coding") }
+        if s.meetings > 0 { parts.append("\(s.meetings) meeting\(s.meetings == 1 ? "" : "s")") }
+        if s.messages > 0 { parts.append("\(s.messages) message\(s.messages == 1 ? "" : "s")") }
+        if !parts.isEmpty { return parts.joined(separator: " · ") }
+
+        // Nothing headline-worthy, but the Mac was clearly in use -- say that
+        // rather than showing an empty bubble. Under half an hour, say nothing.
+        let activeMins = Int(s.activeSeconds / 60)
+        if activeMins >= 30 { return "\(humanDuration(minutes: activeMins)) at the Mac" }
+        return nil
+    }
+
+    /// 200 -> "3h 20m", 45 -> "45m", 120 -> "2h".
+    static func humanDuration(minutes: Int) -> String {
+        let h = minutes / 60, m = minutes % 60
+        if h == 0 { return "\(m)m" }
+        if m == 0 { return "\(h)h" }
+        return "\(h)h \(m)m"
+    }
+
+    /// Counts today's coding time, meetings and WhatsApp messages off the same
+    /// logs the narrative summary is built from.
+    func dayStats(for date: Date) -> DayStats {
+        var stats = DayStats()
+
+        // Foreground time, attributed the same way aggregateAppUsage does it:
+        // each sample owns the gap until the next one, capped so a lid-closed
+        // overnight gap isn't charged to whatever was open.
+        if let content = try? String(contentsOf: logFileURL(for: date), encoding: .utf8) {
+            var samples: [(t: TimeInterval, app: String)] = []
+            for line in content.split(separator: "\n") {
+                guard let data = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let t = obj["t"] as? TimeInterval,
+                      let app = obj["app"] as? String else { continue }
+                samples.append((t, app))
+            }
+            samples.sort { $0.t < $1.t }
+            for i in samples.indices {
+                let dur = i + 1 < samples.count
+                    ? min(samples[i + 1].t - samples[i].t, durationCap)
+                    : sampleInterval
+                stats.activeSeconds += dur
+                if Self.isCodingApp(samples[i].app) { stats.codingSeconds += dur }
+            }
+        }
+
+        // Meetings: today's generated MOMs. ".transcript.txt" is excluded by
+        // the .md check, so a meeting is never counted twice.
+        if let files = try? FileManager.default.contentsOfDirectory(atPath: meetingsDir.path) {
+            let prefix = Self.dayKey(date)
+            stats.meetings = files.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".md") }.count
+        }
+
+        stats.messages = WhatsAppActivityLogger.readLog(file: "chats", for: date).count
+
+        return stats
+    }
+
     // MARK: - Sampling
 
     private func sample() {
@@ -188,7 +289,11 @@ class DayLogger {
             do {
                 let prompt = self.summaryPrompt(report: report, date: date)
                 let output = try self.momGenerator.runPrompt(prompt)
-                try output.write(to: self.summaryFileURL(for: date), atomically: true, encoding: .utf8)
+                let fileURL = self.summaryFileURL(for: date)
+                try output.write(to: fileURL, atomically: true, encoding: .utf8)
+                if let line = Self.digestLine(self.dayStats(for: date)) {
+                    DispatchQueue.main.async { self.onSummaryReady?(line, fileURL) }
+                }
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
             }

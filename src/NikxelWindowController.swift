@@ -13,8 +13,14 @@ class NikxelWindow: NSWindow {
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         let screen = NSScreen.main ?? NSScreen.screens.first!
-        let sz: CGFloat = 340
-        let frame = NSRect(x: screen.frame.midX - sz/2, y: screen.frame.midY - sz/2, width: sz, height: sz)
+        // Taller than wide: the extra height is headroom for notification
+        // cards above the avatar. The origin keeps the avatar exactly where a
+        // 340x340 window used to put it -- the window grew upward only, so
+        // Nikxel doesn't move on screen for anyone updating.
+        let w = NikxelView.viewWidth, h = NikxelView.viewHeight
+        let frame = NSRect(x: screen.frame.midX - w/2,
+                           y: screen.frame.midY - NikxelView.avatarBottomInset,
+                           width: w, height: h)
 
         super.init(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)) + 2)
@@ -41,6 +47,13 @@ class NikxelWindow: NSWindow {
             if let id = view.hitTestReminderBubble(at: pInView) {
                 view.onReminderTapped?(id)
                 view.dismissReminder(id: id)
+                return
+            }
+            // Same priority for the end-of-day card: tapping it opens the
+            // summary instead of picking Nikxel up.
+            if view.hitTestCard(at: pInView) {
+                view.card?.action?()
+                view.dismissCard()
                 return
             }
             // Only engage drag / double-click when the click actually lands on the

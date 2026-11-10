@@ -118,6 +118,16 @@ enum WABotGate {
         return (Array(turns), botLoop)
     }
 
+    /// Whether the open chat has rendered the message the sidebar previews: its
+    /// newest incoming bubble matches. An empty preview can't be checked.
+    static func showsLatest(_ thread: [WAMessage], preview: String) -> Bool {
+        let want = ChatbotEngine.fingerprint(preview)
+        guard !want.isEmpty else { return true }
+        guard let last = thread.last(where: { !$0.outgoing }) else { return false }
+        let got = ChatbotEngine.fingerprint(last.text)
+        return !got.isEmpty && (got.hasPrefix(want) || want.hasPrefix(got))
+    }
+
     /// Whether `date` falls inside the quiet window, wrapping past midnight
     /// when `from` is later than `to` (22→8, the normal case). `from == to` is
     /// treated as no quiet hours rather than all of them: a zero-length window
@@ -170,6 +180,8 @@ class ChatbotEngine {
         var chat: WAUnreadChat
         var newCount: Int
         let since: Date
+        /// Polls this chat was opened but its newest message hadn't rendered.
+        var staleReads = 0
     }
     private var pending: [String: Pending] = [:]
 
@@ -422,7 +434,10 @@ class ChatbotEngine {
 
             // Cooldown.
             if let last = lastReplyTime[key], Date().timeIntervalSince(last) < replyCooldown {
-                cblog("ChatbotEngine: skip '\(chat.name)' — cooldown")
+                // Back on the pile, not dropped: a second message a moment after
+                // the first is a real message, and the baseline is already past it.
+                cblog("ChatbotEngine: '\(chat.name)' in cooldown — answering next poll")
+                pending[key] = p
                 continue
             }
 
@@ -456,10 +471,29 @@ class ChatbotEngine {
                 }
             }
 
-            let newCount = max(1, p.newCount)
-            let thread = ChromeWhatsApp.readThread()
-            let messages = Array(thread.filter { !$0.outgoing }.map(\.text).suffix(newCount))
-            cblog("ChatbotEngine: '\(chat.name)' new=\(newCount) msgs=\(messages.count)")
+            // 5a. The sidebar shows a message before the open pane renders it.
+            // Reading too early answered an older message ("Np") instead of the
+            // two questions that had just arrived. Wait for the newest incoming
+            // bubble to match the preview; if it never does, try next poll --
+            // twice, then answer what's there (a photo's preview never matches).
+            var thread = ChromeWhatsApp.readThread()
+            let deadline = Date().addingTimeInterval(4)
+            while !WABotGate.showsLatest(thread, preview: chat.preview), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.4)
+                thread = ChromeWhatsApp.readThread()
+            }
+            if !WABotGate.showsLatest(thread, preview: chat.preview) && p.staleReads < 2 {
+                cblog("ChatbotEngine: '\(chat.name)' newest message not rendered yet — retrying next poll")
+                var again = p; again.staleReads += 1
+                pending[key] = again
+                setActiveContact(nil); continue
+            }
+
+            // Everything since the last message from this side is unanswered --
+            // the unread badge undercounts when two arrive between polls.
+            let unanswered = thread.reversed().prefix { !$0.outgoing }.reversed().map(\.text)
+            let messages = Array(unanswered.suffix(max(6, p.newCount)))
+            cblog("ChatbotEngine: '\(chat.name)' new=\(p.newCount) msgs=\(messages.count)")
 
             // Nothing readable -- a sticker, an image, or a sender WhatsApp
             // won't name. Replying anyway handed the model an empty "their

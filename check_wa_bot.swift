@@ -324,6 +324,15 @@ struct CheckWABot {
         assert(!WABotGate.threadContext(loop + [m(true, "3:06 pm, 10/11/2026", "ok stop"),
                                                 m(false, "3:07 pm, 10/11/2026", "assistant hoon")], now: now, isBot: isBot).botLoop)
 
+        // The 5:27 chat: sidebar already showed the datacap question, pane still ended at "Np".
+        let pane = [m(false, "5:20 pm, 10/11/2026", "Np"), m(true, "5:21 pm, 10/11/2026", "try asking both again")]
+        assert(!WABotGate.showsLatest(pane, preview: "And the datacap task for pos?"))
+        assert(WABotGate.showsLatest(pane + [m(false, "5:27 pm, 10/11/2026", "And the datacap task for pos?")],
+                                     preview: "And the datacap task for pos?"))
+        assert(WABotGate.showsLatest(pane + [m(false, nil, "And the datacap task for pos? 5:27 pm")],
+                                     preview: "And the datacap task for pos…"), "truncated preview / trailing time still match")
+        assert(WABotGate.showsLatest(pane, preview: ""), "nothing to check against")
+
         assert(ChatbotEngine.fingerprint("Hi 👋 there!") == ChatbotEngine.fingerprint("Hi there"))
 
         print("check_wa_bot: OK")

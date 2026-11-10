@@ -5,9 +5,10 @@
 //   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/cwb \
 //     check_wa_bot.swift src/ChatbotEngine.swift src/ChromeWhatsApp.swift \
 //     src/CDPClient.swift src/NikxelSettings.swift src/MeetingDetector.swift \
-//     src/LLMResponder.swift src/MOMGenerator.swift src/DayLogger.swift \
+//     src/LLMResponder.swift src/MOMGenerator.swift src/UsageLog.swift src/DayLogger.swift \
 //     src/NoteExporter.swift src/CaptureMode.swift src/Diag.swift \
-//     src/SummaryTemplates.swift src/WhatsAppActivityLogger.swift
+//     src/SummaryTemplates.swift src/WhatsAppActivityLogger.swift \
+//     src/WAContactLists.swift src/GoogleSync.swift src/GoogleAuth.swift -framework Cocoa
 import Foundation
 
 @main
@@ -266,6 +267,63 @@ struct CheckWABot {
             assert(b.app.hasSuffix(".app"), "\(b.name) needs a bundle name")
             assert(!b.binary.isEmpty)
         }
+
+        // --- Chat thread context ---------------------------------------------
+        // The 3pm Shreyaa chat: "Okay" got an ERP answer because the bot never
+        // saw the turns around it.
+        let st = { ChromeWhatsApp.parseStamp($0)! }
+        assert(ChromeWhatsApp.parseStamp("2:46 pm, 10/11/2026") != nil, "WhatsApp's lowercase pm parses")
+        assert(ChromeWhatsApp.parseStamp("14:46, 10/11/2026") == st("2:46 pm, 10/11/2026"), "24h clock too")
+        assert(ChromeWhatsApp.parseStamp("") == nil)
+        let now = st("3:20 pm, 10/11/2026")
+        let isBot = { (t: String) in t.contains("AI Assistant") }
+        func m(_ out: Bool, _ at: String?, _ text: String) -> WAMessage {
+            WAMessage(outgoing: out, at: at.map(st), text: text)
+        }
+        let thread = [
+            m(false, "1:00 pm, 10/11/2026", "stale topic"),            // older than 30 min: dropped
+            m(false, "2:59 pm, 10/11/2026", "tumne erp se connect kr diya hai?"),
+            m(true,  "3:00 pm, 10/11/2026", "Nikhil's AI Assistant: ERP update soon"),
+            m(false, "3:03 pm, 10/11/2026", "Windows se compatible bana do"),
+            m(false, nil, "Okay"),                                      // continuation row = new message
+        ]
+        let ctx = WABotGate.threadContext(thread, now: now, isBot: isBot)
+        assert(ctx.turns.map(\.text) == ["tumne erp se connect kr diya hai?", "Nikhil's AI Assistant: ERP update soon"],
+               "trailing incoming run excluded, stale turn dropped: \(ctx.turns.map(\.text))")
+        assert(ctx.turns[1].bot && ctx.turns[1].outgoing && !ctx.turns[0].outgoing)
+        assert(!ctx.userActive, "the bot's own bubble isn't the user being present")
+
+        // The 2:50 Prince chat: the user typed "prince?" a minute before "hello".
+        let mine = [m(true, "3:15 pm, 10/11/2026", "prince?"), m(false, "3:16 pm, 10/11/2026", "hello")]
+        assert(WABotGate.threadContext(mine, now: now, isBot: isBot).userActive)
+        // ...but not if they last typed there an hour ago.
+        let old = [m(true, "2:15 pm, 10/11/2026", "prince?"), m(false, "3:16 pm, 10/11/2026", "hello")]
+        let oc = WABotGate.threadContext(old, now: now, isBot: isBot)
+        assert(!oc.userActive && oc.turns.isEmpty, "idle chat starts fresh")
+        // Limit keeps the last five.
+        let long = (0..<9).map { m($0 % 2 == 0, "3:1\($0) pm, 10/11/2026", "t\($0)") } + [m(false, "3:19 pm, 10/11/2026", "new")]
+        assert(WABotGate.threadContext(long, now: now, isBot: { _ in true }).turns.map(\.text) == ["t4", "t5", "t6", "t7", "t8"])
+        // Bot-to-bot: Prince's assistant and ours, three rounds since Nikhil typed.
+        var loop = [m(true, "3:00 pm, 10/11/2026", "tu kr msg")]
+        for i in 1...3 {
+            loop.append(m(false, "3:0\(i) pm, 10/11/2026", "Haan, main Prince ka assistant hoon"))
+            loop.append(m(true, "3:0\(i) pm, 10/11/2026", "Nikhil's AI Assistant here"))
+        }
+        loop.append(m(false, "3:05 pm, 10/11/2026", "Prince ka assistant again"))
+        assert(WABotGate.threadContext(loop, now: now, isBot: isBot).botLoop, "three bot rounds stop")
+        assert(!WABotGate.threadContext(Array(loop.prefix(5)) + [loop.last!], now: now, isBot: isBot).botLoop,
+               "two rounds still allowed")
+        // A human asking three questions in a row is not a loop.
+        let human = [m(false, "3:01 pm, 10/11/2026", "update on datacap?"), m(true, "3:01 pm, 10/11/2026", "AI Assistant: ..."),
+                     m(false, "3:02 pm, 10/11/2026", "produce pos?"), m(true, "3:02 pm, 10/11/2026", "AI Assistant: ..."),
+                     m(false, "3:03 pm, 10/11/2026", "erp?"), m(true, "3:03 pm, 10/11/2026", "AI Assistant: ..."),
+                     m(false, "3:04 pm, 10/11/2026", "bye")]
+        assert(!WABotGate.threadContext(human, now: now, isBot: isBot).botLoop)
+        // The user typing resets the count.
+        assert(!WABotGate.threadContext(loop + [m(true, "3:06 pm, 10/11/2026", "ok stop"),
+                                                m(false, "3:07 pm, 10/11/2026", "assistant hoon")], now: now, isBot: isBot).botLoop)
+
+        assert(ChatbotEngine.fingerprint("Hi 👋 there!") == ChatbotEngine.fingerprint("Hi there"))
 
         print("check_wa_bot: OK")
     }

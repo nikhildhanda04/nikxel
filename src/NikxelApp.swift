@@ -294,6 +294,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let summarizeNow = NSMenuItem(title: "Summarize Today Now", action: #selector(summarizeNow), keyEquivalent: "")
         summarizeNow.target = self; menu.addItem(summarizeNow)
 
+        let usageItem = NSMenuItem(title: "AI Usage", action: nil, keyEquivalent: "")
+        let usageSubmenu = NSMenu()
+        usageSubmenu.delegate = self   // filled in menuNeedsUpdate, fresh on every open
+        usageItem.submenu = usageSubmenu
+        menu.addItem(usageItem)
+
         let connectGCal = NSMenuItem(title: "Connect Google Account…", action: #selector(connectGoogleCalendar), keyEquivalent: "")
         connectGCal.target = self; menu.addItem(connectGCal)
 
@@ -955,5 +961,37 @@ struct NikxelMain {
         app.delegate = delegate
         _ = delegate
         app.run()
+    }
+}
+
+// MARK: - AI usage submenu
+
+extension NikxelAppDelegate: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        func info(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        let today = UsageLog.totals(for: Date())
+        var all = UsageLog.Totals()
+        for t in today.values { all.calls += t.calls; all.tokens += t.tokens; all.cost += t.cost }
+        info("Today: " + UsageLog.line(all))
+        for (kind, t) in today.sorted(by: { $0.value.cost > $1.value.cost }) {
+            info("    \(kind): " + UsageLog.line(t))
+        }
+        let (avg, days) = UsageLog.dailyAverage()
+        info(days == 0 ? "Daily average: no history yet"
+                       : "Daily average (last \(days) day\(days == 1 ? "" : "s")): " + UsageLog.line(avg))
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open Usage Log Folder", action: #selector(openUsageFolder), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+    }
+
+    @objc func openUsageFolder() {
+        try? FileManager.default.createDirectory(at: UsageLog.directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(UsageLog.directory)
     }
 }

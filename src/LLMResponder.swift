@@ -48,7 +48,10 @@ class LLMResponder {
         let msgs = messagePreview != nil ? [messagePreview!] : []
         let prompt = buildPrompt(contact: contact, history: history, newMessages: msgs)
         do {
-            let raw = try momGenerator.runPrompt(prompt)
+            // ponytail: Haiku hardcoded -- a 1-3 sentence reply doesn't need a
+            // bigger model, and it's ~2x faster. Make it a setting if replies
+            // ever need more reasoning.
+            let raw = try momGenerator.runPrompt(prompt, kind: "whatsapp", claudeModel: "haiku")
             // Task marker first: cleanReply truncates to three sentences, which
             // would eat a trailing marker before it was ever read.
             let (body, task) = Self.extractTask(raw)
@@ -90,7 +93,7 @@ class LLMResponder {
         p += recentContextBlock(trusted: trusted)
         p += "Contact: \(contact)\(trusted ? " (one of \(NikxelSettings.userName)'s own people)" : "")\n"
         if !history.isEmpty {
-            p += "\nConversation so far:\n"
+            p += "\nRecent chat, oldest first (for context -- don't repeat what was already said):\n"
             for (role, text) in history.suffix(6) {
                 p += "- \(role): \(text)\n"
             }
@@ -157,8 +160,17 @@ class LLMResponder {
         Speak as someone who simply knows what they're up to.
         - Don't pass on what OTHER people said in confidence, or details about \
         third parties and their clients. Their own work, yes; everyone else's, no.
-        - Don't invent. If it isn't in here, say you're not sure and they'll \
-        confirm themselves.
+        - People name work loosely: a task means whichever repo, branch, file \
+        or function shares its words ("the produce POS task" -> a repo named \
+        pos-new; "the Datacap bug" -> a datacap branch or file). Match on \
+        overlapping words and answer from \
+        the closest match: what was edited or committed there and when, \
+        newest first. Don't ask them which one they mean if one fits.
+        - Don't invent. But a partial answer beats none: if the notes show \
+        when it was last worked on, or what's in progress around it, say that \
+        ("worked on the Datacap cert logs on the 3rd, POS backend fixes since") \
+        and add that they'll confirm the latest. Only if nothing in here \
+        touches it, say you're not sure.
 
 
         """

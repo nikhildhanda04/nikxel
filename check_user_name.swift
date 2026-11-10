@@ -4,7 +4,7 @@
 // cached prompt in ~/.nikxel/prompts/ is replaced by a newer shipped one).
 //
 //   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/cun \
-//     src/NikxelSettings.swift src/NoteExporter.swift src/MOMGenerator.swift \
+//     src/NikxelSettings.swift src/NoteExporter.swift src/MOMGenerator.swift src/UsageLog.swift \
 //     src/CaptureMode.swift src/Diag.swift check_user_name.swift && /tmp/cun
 import Foundation
 

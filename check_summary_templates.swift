@@ -8,7 +8,7 @@
 //
 //   swiftc -parse-as-library -o /tmp/cst check_summary_templates.swift \
 //     src/SummaryTemplates.swift src/NikxelSettings.swift src/NoteExporter.swift \
-//     src/MOMGenerator.swift src/CaptureMode.swift src/Diag.swift
+//     src/MOMGenerator.swift src/UsageLog.swift src/CaptureMode.swift src/Diag.swift
 import Foundation
 
 @main

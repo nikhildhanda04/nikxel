@@ -2,7 +2,7 @@
 // and truncation logic behind the WhatsApp bot's memory.
 //   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/cbm \
 //     src/DayLogger.swift src/NikxelSettings.swift src/NoteExporter.swift \
-//     src/MOMGenerator.swift src/CaptureMode.swift src/Diag.swift \
+//     src/MOMGenerator.swift src/UsageLog.swift src/CaptureMode.swift src/Diag.swift \
 //     src/ChromeWhatsApp.swift src/CDPClient.swift src/WhatsAppActivityLogger.swift \
 //     check_bot_memory.swift && /tmp/cbm
 import Foundation

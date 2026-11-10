@@ -71,6 +71,18 @@ Sleep gaps are capped at 5 min per sample so a night of sleep doesn't get
 charged to whatever app was frontmost when you closed the laptop. Window
 titles need Accessibility (the same grant the typing animation uses).
 
+### AI usage
+
+Menu bar → **AI Usage** shows what Claude Code runs have cost: today's total
+(dollars · tokens · calls), split by what ran them — `whatsapp`,
+`daily-summary`, `meeting`, `notes` — and the average per day over the last
+week. Each run is one line in `~/.nikxel/usage/YYYY-MM-DD.jsonl`. Only Claude
+Code reports cost, so opencode/codex runs aren't counted.
+
+WhatsApp replies run on Haiku, and every Nikxel run skips your own Claude Code
+hooks, plugins, MCP servers and skills, which they never use. That took a reply
+from about $0.12 to about $0.001.
+
 ## Bubbles above the avatar
 
 Nikxel talks to you through a speech bubble above its head rather than a modal

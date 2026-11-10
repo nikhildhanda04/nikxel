@@ -215,7 +215,7 @@ enum NikxelSettings {
     /// so each extra day costs latency on every message, and older days are
     /// rarely what a contact is asking about.
     static var botMemoryDays: Int {
-        get { max(0, min(14, load().botMemoryDays ?? 3)) }
+        get { max(0, min(14, load().botMemoryDays ?? 7)) }
         set { save { $0.botMemoryDays = max(0, min(14, newValue)) } }
     }
 

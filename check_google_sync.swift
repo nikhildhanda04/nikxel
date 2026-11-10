@@ -3,7 +3,7 @@
 //
 //   swiftc -parse-as-library -o /tmp/cgs check_google_sync.swift \
 //     src/GoogleSync.swift src/GoogleAuth.swift src/NikxelSettings.swift \
-//     src/NoteExporter.swift src/MOMGenerator.swift src/CaptureMode.swift src/Diag.swift
+//     src/NoteExporter.swift src/MOMGenerator.swift src/UsageLog.swift src/CaptureMode.swift src/Diag.swift
 //   /tmp/cgs
 import Foundation
 

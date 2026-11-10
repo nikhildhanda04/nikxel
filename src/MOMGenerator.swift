@@ -36,9 +36,23 @@ private struct AgentBackend {
                 // text generation: these prompts need no file or shell access,
                 // and a tool call that stops for a permission prompt would
                 // hang a GUI-spawned process with nobody to answer it.
-                buildArgs: { _ in ["-p", "--allowed-tools", ""] },
+                //
+                // The rest strips the user's own hooks, plugins, MCP servers and
+                // skills from these runs: they added ~28k tokens to every call
+                // (a one-line WhatsApp reply cost $0.12) and nothing here uses
+                // them. No session persistence, or these runs show up in
+                // ~/.claude/projects as if the user had typed them. JSON output
+                // carries the token count and cost (UsageLog).
+                buildArgs: { _ in ["-p", "--allowed-tools", "",
+                                   "--setting-sources", "", "--strict-mcp-config",
+                                   "--disable-slash-commands", "--no-session-persistence",
+                                   "--output-format", "json"] },
                 usesStdin: true,
-                parseOutput: { String(data: $0, encoding: .utf8) }
+                parseOutput: { data in
+                    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { return String(data: data, encoding: .utf8) }
+                    return obj["result"] as? String
+                }
             )
         case .opencode:
             return AgentBackend(
@@ -199,18 +213,21 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
             .replacingOccurrences(of: "{{custom_instructions}}", with: NikxelSettings.summaryStyleInstruction)
 
-        return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir)
+        return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir, kind: mode.rawValue)
     }
 
     // Run an arbitrary prompt through the agent. Used by DayLogger for EOD
     // summaries and by LLMResponder for chat replies.
-    func runPrompt(_ prompt: String) throws -> String {
+    /// `kind` labels the run in UsageLog. `claudeModel` overrides the model
+    /// when the agent is Claude Code; other agents ignore it.
+    func runPrompt(_ prompt: String, kind: String, claudeModel: String? = nil) throws -> String {
         let agent = NikxelSettings.connectedAgent
         guard let bin = findBinary(for: agent) else { throw MOMError.agentNotFound }
-        return try executeAgent(binary: bin, agent: agent, prompt: prompt)
+        return try executeAgent(binary: bin, agent: agent, prompt: prompt, kind: kind, claudeModel: claudeModel)
     }
 
-    private func executeAgent(binary: String, agent: CodingAgent, prompt: String, runDir: URL? = nil) throws -> String {
+    private func executeAgent(binary: String, agent: CodingAgent, prompt: String, runDir: URL? = nil,
+                              kind: String, claudeModel: String? = nil) throws -> String {
         // Each run gets its own directory. These used to be fixed names in one
         // shared folder, so two overlapping runs -- easy to trigger by starting
         // a second recording while the first was still summarizing -- wiped
@@ -231,6 +248,7 @@ class MOMGenerator {
         task.executableURL = URL(fileURLWithPath: binary)
         task.currentDirectoryURL = workspace
         task.arguments = backend.buildArgs(prompt)
+            + (agent == .claude && claudeModel != nil ? ["--model", claudeModel!] : [])
         var env = ProcessInfo.processInfo.environment
         let extraPaths = ["/opt/homebrew/bin", "\(NSHomeDirectory())/.claude/local", "\(NSHomeDirectory())/.opencode/bin", "\(NSHomeDirectory())/.local/bin", "/usr/local/bin", "/opt/local/bin"]
         env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).filter { !$0.isEmpty }.joined(separator: ":")
@@ -293,6 +311,7 @@ class MOMGenerator {
             let snippet = errStr.isEmpty ? "(no stderr; exit \(task.terminationStatus))" : String(errStr.prefix(500))
             throw MOMError.generationFailed("\(snippet)\n\nLogs: \(workspace.path)")
         }
+        if agent == .claude { UsageLog.record(outData, kind: kind) }
         guard let out = backend.parseOutput(outData) else {
             throw MOMError.generationFailed("non-utf8 or unparseable output\n\nLogs: \(workspace.path)")
         }

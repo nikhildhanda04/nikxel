@@ -77,6 +77,58 @@ enum WABotGate {
         }
     }
 
+    /// What the open chat says around the new messages: the earlier turns to put
+    /// in the prompt, and whether the user is in the chat themselves.
+    ///
+    /// `thread` is the rendered chat, oldest first. Its trailing run of incoming
+    /// bubbles is the new messages being answered, so context is what came
+    /// before them -- at most `limit` turns, none older than `idle`, so a chat
+    /// that went quiet starts fresh instead of dragging in this morning's topic.
+    ///
+    /// `userActive` is the user's own (non-bot) message within `userWindow`:
+    /// they're in the conversation themselves, and the bot answering over them
+    /// is worse than not answering.
+    ///
+    /// `botLoop` is two assistants talking to each other: the other side has
+    /// called itself an assistant, and this bot has already replied
+    /// `loopCap` times since the user last typed. Left alone, two always-on
+    /// bots answer each other forever, a paid agent run per message.
+    static func threadContext(_ thread: [WAMessage], now: Date,
+                              isBot: (String) -> Bool,
+                              limit: Int = 5,
+                              idle: TimeInterval = 30 * 60,
+                              userWindow: TimeInterval = 10 * 60,
+                              loopCap: Int = 3)
+        -> (turns: [(outgoing: Bool, bot: Bool, text: String)], userActive: Bool, botLoop: Bool) {
+        // Continuation rows carry no stamp; they belong to the bubble above.
+        var at: Date?
+        let stamped = thread.map { m -> (WAMessage, Date?) in
+            if let a = m.at { at = a }
+            return (m, at)
+        }
+        var earlier = stamped
+        while let last = earlier.last, !last.0.outgoing { earlier.removeLast() }
+
+        var userActive = false
+        if let lastOut = earlier.last(where: { $0.0.outgoing }),
+           !isBot(lastOut.0.text),
+           let t = lastOut.1, now.timeIntervalSince(t) <= userWindow {
+            userActive = true
+        }
+        let recent = stamped.filter { $0.1.map { now.timeIntervalSince($0) <= idle } ?? false }
+        let sinceUser = recent.lastIndex(where: { $0.0.outgoing && !isBot($0.0.text) })
+            .map { Array(recent[($0 + 1)...]) } ?? recent
+        let botReplies = sinceUser.filter { $0.0.outgoing }.count
+        let otherIsBot = sinceUser.contains { !$0.0.outgoing && $0.0.text.localizedCaseInsensitiveContains("assistant") }
+        let botLoop = botReplies >= loopCap && otherIsBot
+
+        let turns = earlier
+            .filter { $0.1.map { now.timeIntervalSince($0) <= idle } ?? false }
+            .suffix(limit)
+            .map { (outgoing: $0.0.outgoing, bot: $0.0.outgoing && isBot($0.0.text), text: $0.0.text) }
+        return (Array(turns), userActive, botLoop)
+    }
+
     /// Whether `date` falls inside the quiet window, wrapping past midnight
     /// when `from` is later than `to` (22→8, the normal case). `from == to` is
     /// treated as no quiet hours rather than all of them: a zero-length window
@@ -103,6 +155,9 @@ class ChatbotEngine {
     /// an unattended timer measured in minutes or just idling.
     private let meetingPollInterval: TimeInterval = 5
     private let idlePollInterval: TimeInterval = 20
+    /// "Reply immediately" promises an answer inside a minute; a 20s poll plus
+    /// the agent run ate half of that before the reply was even written.
+    private let alwaysPollInterval: TimeInterval = 10
     private var currentInterval: TimeInterval = 0
     // Short cooldown only — the baseline-delta logic in performCheck already
     // prevents replying to the same message twice, so the cooldown only has
@@ -114,11 +169,10 @@ class ChatbotEngine {
     private var baselineCounts: [String: Int] = [:]
     // Cooldown: contact → last reply time.
     private var lastReplyTime: [String: Date] = [:]
-    // Conversation history, per contact. Capped -- in the always-on modes there
-    // is no meeting boundary to clear it at, and only the last few turns are
-    // ever put in the prompt anyway.
-    private var conversationHistory: [String: [(role: String, text: String)]] = [:]
-    private let historyCap = 12
+    // What the bot has sent, per contact, so the chat thread can tell the
+    // bot's bubbles from the user's own. Capped; only recent ones matter.
+    private var sentByBot: [String: [String]] = [:]
+    private let sentCap = 12
 
     /// Messages seen but not yet answered, keyed the same way as `baselineCounts`.
     /// An entry lives from the moment new unread arrives until either the bot
@@ -206,7 +260,7 @@ class ChatbotEngine {
     private func reset() {
         cancelled = true; pollingInProgress = false; baselineReady = false
         baselineCounts.removeAll(); lastReplyTime.removeAll()
-        conversationHistory.removeAll(); pending.removeAll(); setActiveContact(nil)
+        sentByBot.removeAll(); pending.removeAll(); setActiveContact(nil)
     }
 
     @objc private func meetingStateChanged(_ notification: Notification) {
@@ -220,7 +274,7 @@ class ChatbotEngine {
             if !allDay {
                 baselineReady = false
                 baselineCounts.removeAll(); lastReplyTime.removeAll()
-                conversationHistory.removeAll(); pending.removeAll()
+                sentByBot.removeAll(); pending.removeAll()
             }
             cancelled = false
             startPolling()
@@ -235,7 +289,8 @@ class ChatbotEngine {
 
     private func startPolling() {
         guard isEnabled else { return }
-        let want = MeetingDetector.shared.isInMeeting ? meetingPollInterval : idlePollInterval
+        let want = MeetingDetector.shared.isInMeeting ? meetingPollInterval
+            : NikxelSettings.waBotMode == .always ? alwaysPollInterval : idlePollInterval
         if timer != nil && currentInterval == want { return }
         timer?.invalidate()
         currentInterval = want
@@ -413,7 +468,8 @@ class ChatbotEngine {
             }
 
             let newCount = max(1, p.newCount)
-            let messages = ChromeWhatsApp.readMessages(count: newCount)
+            let thread = ChromeWhatsApp.readThread()
+            let messages = Array(thread.filter { !$0.outgoing }.map(\.text).suffix(newCount))
             cblog("ChatbotEngine: '\(chat.name)' new=\(newCount) msgs=\(messages.count)")
 
             // Nothing readable -- a sticker, an image, or a sender WhatsApp
@@ -424,8 +480,28 @@ class ChatbotEngine {
                 setActiveContact(nil); continue
             }
 
+            // 5c. The chat around those messages: earlier turns for the prompt,
+            // and whether the user is already answering this chat themselves.
+            let sent = sentByBot[key] ?? []
+            let ctx = WABotGate.threadContext(thread, now: Date(), isBot: { text in
+                let t = Self.fingerprint(text)
+                return text.localizedCaseInsensitiveContains("AI Assistant")
+                    || sent.contains { Self.fingerprint($0) == t }
+            })
+            if ctx.userActive && !inMeeting {
+                cblog("ChatbotEngine: skip '\(chat.name)' — you're in this chat yourself")
+                setActiveContact(nil); continue
+            }
+            if ctx.botLoop {
+                cblog("ChatbotEngine: skip '\(chat.name)' — bot-to-bot loop, waiting for a human")
+                setActiveContact(nil); continue
+            }
+            let me = NikxelSettings.userName
+            let history = ctx.turns.map { t in
+                (role: t.bot ? "you (the assistant)" : t.outgoing ? "\(me) personally" : chat.name, text: t.text)
+            }
+
             // 6. Generate reply.
-            let history = conversationHistory[key] ?? []
             guard let reply = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "), history: history) else {
                 cblog("ChatbotEngine: LLM nil for '\(chat.name)'")
                 setActiveContact(nil); continue
@@ -467,13 +543,9 @@ class ChatbotEngine {
 
             delivered.append(Delivered(contact: chat.name, text: replyText, task: reply.task))
             lastReplyTime[key] = Date()
-            var h = conversationHistory[key] ?? []
-            for msg in messages { h.append(("them", msg)) }
-            // A draft is not a turn in the conversation -- it hasn't happened
-            // yet, and the user may well delete it. Recording it would have the
-            // next reply refer back to something never said.
-            if !draftOnly { h.append(("bot", replyText)) }
-            conversationHistory[key] = Array(h.suffix(historyCap))
+            // A draft isn't the bot's message until the user sends it; if they
+            // do, it's theirs.
+            if !draftOnly { sentByBot[key] = Array(((sentByBot[key] ?? []) + [replyText]).suffix(sentCap)) }
             Thread.sleep(forTimeInterval: 0.6)
         }
 
@@ -485,6 +557,13 @@ class ChatbotEngine {
     }
 
     // MARK: - Helpers
+
+    /// Letters and digits only, first 40: what WhatsApp renders back (emoji
+    /// as images, trailing time stripped) rarely matches what was sent exactly.
+    static func fingerprint(_ s: String) -> String {
+        String(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+            .prefix(40).map(Character.init))
+    }
 
     private func setActiveContact(_ name: String?) {
         guard activeContactName != name else { return }

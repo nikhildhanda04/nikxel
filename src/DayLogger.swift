@@ -187,15 +187,62 @@ class DayLogger {
             lines.append("- Today so far: \(digest)")
         }
 
-        let git = aggregateGit(for: Date())
-        if !git.isEmpty {
-            lines.append("- Code today:\n" + git.split(separator: "\n")
-                .prefix(14).map { "  " + $0 }.joined(separator: "\n"))
+        let windows = recentWindows(limit: 8)
+        if !windows.isEmpty {
+            lines.append("- Recently open (newest first):\n" + windows.map { "  " + $0 }.joined(separator: "\n"))
+        }
+
+        let repos = findRepos()
+        let edits = todaysEdits(repos: repos)
+        if !edits.isEmpty {
+            lines.append("- Code today, most recently touched project first:\n" + edits.split(separator: "\n")
+                .prefix(50).map { "  " + $0 }.joined(separator: "\n"))
+        }
+
+        let week = recentWork(repos: repos, days: 7)
+        if !week.isEmpty {
+            lines.append("- Projects active this week (latest commits first):\n" + week.split(separator: "\n")
+                .prefix(60).map { "  " + $0 }.joined(separator: "\n"))
+        }
+
+        // The literal asks made to coding agents today -- the clearest record
+        // of which feature or bug is in hand, and the one thing git can't show
+        // until it's committed.
+        let asks = (aggregateClaudeSessions(for: Date()) + "\n" + aggregateOpencodeSessions(for: Date()))
+            .split(separator: "\n").filter { !$0.isEmpty }.suffix(15)
+            .map { "  " + Self.redactSecrets($0.count > 180 ? String($0.prefix(180)) + "…" : String($0)) }
+        if !asks.isEmpty {
+            lines.append("- Asked AI agents today (latest last):\n" + asks.joined(separator: "\n"))
         }
 
         let text = lines.joined(separator: "\n")
         liveCache = (text, Date(), inMeeting)
         return text
+    }
+
+    /// Prompts get pasted tokens and keys; none of that belongs in a prompt that
+    /// writes messages to other people. Long unbroken alphanumeric runs (API
+    /// tokens, keys, hashes) and the paste wrapper tag are dropped.
+    static func redactSecrets(_ s: String) -> String {
+        s.replacingOccurrences(of: #"<pasted_content[^>]*>"#, with: "", options: .regularExpression)
+         .replacingOccurrences(of: #"[A-Za-z0-9_\-]{16,}"#, with: "[redacted]", options: .regularExpression)
+    }
+
+    /// The last few distinct windows from today's samples, newest first --
+    /// documents, PRs, tickets, whatever the titles name.
+    private func recentWindows(limit: Int) -> [String] {
+        guard let content = try? String(contentsOf: logFileURL(for: Date()), encoding: .utf8) else { return [] }
+        var seen = Set<String>(), out: [String] = []
+        for line in content.split(separator: "\n").reversed() {
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let app = obj["app"] as? String else { continue }
+            let title = (obj["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let entry = title.isEmpty ? app : "\(app) — \(title.prefix(90))"
+            if seen.insert(entry).inserted { out.append(entry) }
+            if out.count == limit { break }
+        }
+        return out
     }
 
     // MARK: - Sampling
@@ -338,7 +385,7 @@ class DayLogger {
             if report.isEmpty { return }
             do {
                 let prompt = self.summaryPrompt(report: report, date: date)
-                let output = try self.momGenerator.runPrompt(prompt)
+                let output = try self.momGenerator.runPrompt(prompt, kind: "daily-summary")
                 let fileURL = self.summaryFileURL(for: date)
                 try output.write(to: fileURL, atomically: true, encoding: .utf8)
                 if let line = Self.digestLine(self.dayStats(for: date)) {
@@ -479,15 +526,17 @@ class DayLogger {
         "venv", ".venv", "__pycache__", "Library", "Applications",
     ]
 
-    private func aggregateGit(for date: Date) -> String {
+    private func findRepos() -> [URL] {
         var repoDirs: [URL] = []
-        if let enumerator = FileManager.default.enumerator(at: scanRoot, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+        // Not .skipsHiddenFiles: `.git` is itself hidden, so that option made
+        // this scan find no repos at all. Other dot-dirs are skipped by hand.
+        if let enumerator = FileManager.default.enumerator(at: scanRoot, includingPropertiesForKeys: [.isDirectoryKey]) {
             for case let url as URL in enumerator {
                 let name = url.lastPathComponent
                 if name == ".git" {
                     repoDirs.append(url.deletingLastPathComponent())
                     enumerator.skipDescendants()
-                } else if Self.skipWhileScanning.contains(name) {
+                } else if name.hasPrefix(".") || Self.skipWhileScanning.contains(name) {
                     enumerator.skipDescendants()
                 }
             }
@@ -499,12 +548,116 @@ class DayLogger {
             // Nikxel list that folder -- System Settings -> Privacy & Security
             // -> Files and Folders.
             cblog("DayLogger: no git repos under \(scanRoot.path) — check projectsRoot, or Nikxel's access to that folder in System Settings")
-            return ""
+        } else {
+            cblog("DayLogger: scanned \(scanRoot.path) — \(repoDirs.count) repo(s)")
         }
-        cblog("DayLogger: scanned \(scanRoot.path) — \(repoDirs.count) repo(s)")
+        return repoDirs
+    }
+
+    /// Repos committed to in the last `days` days, quiet today or not: the
+    /// current branch, the branches most recently worked on, and the last few
+    /// commits. Today's git activity alone can't answer "any update on the
+    /// Datacap task?" when that work sat on a branch two days ago.
+    private func recentWork(repos: [URL], days: Int) -> String {
+        var blocks = [String](repeating: "", count: repos.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: repos.count) { i in
+            let repo = repos[i]
+            let commits = runGit(repo: repo, args: ["log", "-6", "--since=\(days).days", "--pretty=format:%cr: %s"])
+            guard !commits.isEmpty else { return }
+            let branch = runGit(repo: repo, args: ["branch", "--show-current"])
+            let branches = runGit(repo: repo, args: ["for-each-ref", "--sort=-committerdate", "--count=4",
+                                                     "--format=%(refname:short)", "refs/heads"])
+                .split(separator: "\n").joined(separator: ", ")
+            let block = "### \(repo.lastPathComponent) (on \(branch.isEmpty ? "?" : branch); recent branches: \(branches))\n"
+                + commits.split(separator: "\n").map { "  " + $0 }.joined(separator: "\n")
+            lock.lock(); blocks[i] = block; lock.unlock()
+        }
+        return blocks.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// Files that churn without being anyone's work.
+    static func isNoiseFile(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        return name == ".DS_Store" || name.hasSuffix(".lock") || name.hasSuffix("-lock.json")
+            || name == "pnpm-lock.yaml" || name == "yarn.lock"
+    }
+
+    /// The function or block a `git diff` hunk sits in, from its `@@` header:
+    /// `@@ -1,2 +1,3 @@ export function buildSaleBody(` -> `export function buildSaleBody(`.
+    static func hunkContexts(_ diff: String, limit: Int = 4) -> [String] {
+        var out: [String] = []
+        for line in diff.split(separator: "\n") where line.hasPrefix("@@") {
+            let parts = line.components(separatedBy: "@@")
+            guard parts.count >= 3 else { continue }
+            let ctx = parts[2...].joined(separator: "@@").trimmingCharacters(in: .whitespaces)
+            if !ctx.isEmpty && !out.contains(ctx) { out.append(String(ctx.prefix(80))) }
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    /// For the bot: what was actually worked on today, per repo -- commits
+    /// since midnight, and uncommitted files whose modification time is today
+    /// (a raw `git status` also lists week-old leftovers and lockfiles), each
+    /// with the functions its diff touches. Repos sort by latest edit, so the
+    /// thing in hand right now is what survives the prompt cap.
+    private func todaysEdits(repos: [URL]) -> String {
+        let dayStart = Calendar.current.startOfDay(for: Date())
+        var blocks = [(latest: Date, text: String)?](repeating: nil, count: repos.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: repos.count) { i in
+            let repo = repos[i]
+            let commits = runGit(repo: repo, args: ["log", "--since=midnight", "--pretty=format:%ct %h %s"])
+            var files: [(at: Date, path: String)] = []
+            for line in runGit(repo: repo, args: ["status", "--porcelain", "--untracked-files=all"])
+                .split(separator: "\n") where line.count > 3 {
+                let raw = String(line.dropFirst(3))
+                let path = raw.components(separatedBy: " -> ").last ?? raw
+                guard !Self.isNoiseFile(path),
+                      let m = (try? repo.appendingPathComponent(path)
+                        .resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                      m >= dayStart else { continue }
+                files.append((m, path))
+            }
+            guard !commits.isEmpty || !files.isEmpty else { return }
+            files.sort { $0.at > $1.at }
+            let commitLines = commits.split(separator: "\n").map { String($0) }
+            let lastCommit = commitLines.first.flatMap { Double($0.split(separator: " ").first ?? "") }
+                .map { Date(timeIntervalSince1970: $0) } ?? dayStart
+            let branch = runGit(repo: repo, args: ["branch", "--show-current"])
+            var out = ["### \(repo.lastPathComponent) (on \(branch.isEmpty ? "?" : branch))"]
+            if !commitLines.isEmpty {
+                out.append("Committed today:")
+                out += commitLines.map { "  " + $0.split(separator: " ", maxSplits: 1).dropFirst().joined() }
+            }
+            if !files.isEmpty {
+                let t = DateFormatter(); t.dateFormat = "HH:mm"
+                out.append("Edited today, not committed yet (newest first):")
+                for f in files.prefix(8) {
+                    let ctx = Self.hunkContexts(runGit(repo: repo, args: ["diff", "-U0", "HEAD", "--", f.path]))
+                    out.append("  [\(t.string(from: f.at))] \(f.path)" + (ctx.isEmpty ? "" : " — in: " + ctx.joined(separator: "; ")))
+                }
+                if files.count > 8 { out.append("  …and \(files.count - 8) more") }
+            }
+            let latest = max(files.first?.at ?? dayStart, lastCommit)
+            lock.lock(); blocks[i] = (latest, out.joined(separator: "\n")); lock.unlock()
+        }
+        return blocks.compactMap { $0 }.sorted { $0.latest > $1.latest }.map(\.text).joined(separator: "\n")
+    }
+
+    private func aggregateGit(for date: Date) -> String {
+        let repoDirs = findRepos()
+        guard !repoDirs.isEmpty else { return "" }
         let day = Self.dayKey(date)
-        var lines: [String] = []
-        for repo in repoDirs {
+        // One block per repo, filled concurrently: serially, ~30 repos of git
+        // calls took ~12s, which a WhatsApp reply was waiting on.
+        var blocks = [[String]](repeating: [], count: repoDirs.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: repoDirs.count) { i in
+            let repo = repoDirs[i]
+            var lines: [String] = []
+            defer { lock.lock(); blocks[i] = lines; lock.unlock() }
             let commits = runGit(repo: repo, args: ["log",
                                                     "--since=\(day) 00:00:00",
                                                     "--until=\(day) 23:59:59",
@@ -512,12 +665,13 @@ class DayLogger {
                                                     "--pretty=format:%h %s"])
             // Uncommitted work: tracked changes (working tree vs HEAD) + untracked files.
             // Captures in-flight features the user hasn't pushed/committed yet.
-            let uncommitted = runGit(repo: repo, args: ["diff", "--shortstat", "HEAD"])
             let status = runGit(repo: repo, args: ["status", "--short"])
+            // Idle repo: stop at two git calls rather than five.
+            if commits.isEmpty && status.isEmpty { return }
+            let uncommitted = runGit(repo: repo, args: ["diff", "--shortstat", "HEAD"])
             let branch = runGit(repo: repo, args: ["branch", "--show-current"])
             // Recent commit messages give the LLM context on what feature line is currently active.
             let recent = runGit(repo: repo, args: ["log", "-5", "--pretty=format:%h %s"])
-            if commits.isEmpty && uncommitted.isEmpty && status.isEmpty { continue }
             lines.append("### \(repo.lastPathComponent)")
             if !branch.isEmpty { lines.append("On branch: \(branch)") }
             if !commits.isEmpty {
@@ -534,7 +688,7 @@ class DayLogger {
                 lines.append(recent)
             }
         }
-        return lines.joined(separator: "\n")
+        return blocks.joined().joined(separator: "\n")
     }
 
     // MARK: - Claude Code session prompts
@@ -558,10 +712,18 @@ class DayLogger {
 
         for projDir in projects where projDir.hasDirectoryPath {
             let projectName = humanizeClaudeProjectDir(projDir.lastPathComponent)
+            // Nikxel's own agent runs (chat replies, summaries) from before they
+            // stopped being saved -- prompts Nikxel wrote, not the user.
+            if projDir.lastPathComponent.contains("nikxel-momworkspace") { continue }
             guard let sessions = try? FileManager.default.contentsOfDirectory(at: projDir, includingPropertiesForKeys: nil) else { continue }
             for session in sessions where session.pathExtension == "jsonl" {
+                let modified = (try? session.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                if let m = modified, m < dayStart { continue }
                 guard let content = try? String(contentsOf: session, encoding: .utf8) else { continue }
                 for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+                    // Cheap prefilter: most bytes are assistant and tool lines,
+                    // and JSON-parsing them all took ~10s on a busy day.
+                    guard line.contains("\"type\":\"user\"") else { continue }
                     guard let data = line.data(using: .utf8),
                           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                     guard (obj["type"] as? String) == "user" else { continue }
@@ -609,6 +771,13 @@ class DayLogger {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let db = home.appendingPathComponent(".local/share/opencode/opencode.db")
         guard FileManager.default.fileExists(atPath: db.path) else { return "" }
+        // Untouched since before that day (db and its WAL): nothing to find,
+        // and a cold query over a ~1 GB db costs seconds.
+        let dayStart = Calendar.current.startOfDay(for: date)
+        let touched = [db, URL(fileURLWithPath: db.path + "-wal")].compactMap {
+            (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }.max()
+        if let t = touched, t < dayStart { return "" }
         let day = Self.dayKey(date)
         // Cap each prompt to 300 chars, return time + text + session id (so the LLM can group by session).
         let query = """
@@ -689,8 +858,10 @@ class DayLogger {
         task.standardOutput = pipe
         task.standardError = Pipe()
         do { try task.run() } catch { return "" }
-        task.waitUntilExit()
+        // Drain before waiting: a status listing past the 64 KB pipe buffer
+        // would otherwise block git and this wait forever.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 

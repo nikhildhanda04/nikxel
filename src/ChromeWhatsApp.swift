@@ -23,6 +23,14 @@ struct WAUnreadChat: Codable {
 }
 
 /// A lightweight snapshot of a chat row's preview text (any chat, not just unread).
+/// One bubble in the open chat. `at` is nil when WhatsApp gave no timestamp
+/// (a row continuing the one above) or it didn't parse.
+struct WAMessage: Equatable {
+    let outgoing: Bool
+    let at: Date?
+    let text: String
+}
+
 struct WAChatPreview: Codable {
     let name: String
     let preview: String
@@ -467,6 +475,11 @@ enum ChromeWhatsApp {
     /// 9:27 pm". Stickers, images and voice notes therefore yield nothing,
     /// which is right -- there is no text in them to reply to.
     static func readMessages(count: Int = 6, userOwnName: String = NikxelSettings.waOwnName) -> [String] {
+        Array(readThread(userOwnName: userOwnName).filter { !$0.outgoing }.map(\.text).suffix(count))
+    }
+
+    /// Every rendered bubble in the open chat, both directions, oldest first.
+    static func readThread(userOwnName: String = NikxelSettings.waOwnName) -> [WAMessage] {
         guard let c = ensureCDP() else { return [] }
         let escapedSelf = jsString(userOwnName)
         let js = """
@@ -475,7 +488,7 @@ enum ChromeWhatsApp {
             var main = document.querySelector('#main');
             if (!main) return '[]';
             var rows = main.querySelectorAll('[role="row"]');
-            var inbound = [];
+            var out = [];
             var carried = null;   // direction of the last row we could place
             for (var i = 0; i < rows.length; i++) {
                 var row = rows[i];
@@ -483,11 +496,13 @@ enum ChromeWhatsApp {
                 var dir = null;
 
                 var pre = row.querySelector('[data-pre-plain-text]');
+                var ts = '';
                 if (pre) {
                     var m = (pre.getAttribute('data-pre-plain-text') || '')
-                        .match(/^\\[[^\\]]+\\]\\s*(.+?):\\s*$/);
+                        .match(/^\\[([^\\]]+)\\]\\s*(.+?):\\s*$/);
                     if (m) {
-                        var sender = m[1].trim();
+                        ts = m[1];
+                        var sender = m[2].trim();
                         dir = (sender === SELF || sender.indexOf(SELF) === 0) ? 'out' : 'in';
                     }
                 }
@@ -497,21 +512,38 @@ enum ChromeWhatsApp {
                 }
                 if (dir === null) dir = carried;   // same run as the row above
                 if (dir !== null) carried = dir;
-                if (dir !== 'in') continue;
+                if (dir === null) continue;
 
                 var sel = row.querySelector('.selectable-text');
                 if (!sel) continue;
                 var txt = (sel.textContent || '')
                     .replace(/\\s*\\d{1,2}:\\d{2}\\s*[ap]m\\s*$/i, '')
                     .trim();
-                if (txt) inbound.push(txt);
+                if (txt) out.push([dir, ts, txt]);
             }
-            return JSON.stringify(inbound.slice(-\(count)));
+            return JSON.stringify(out);
         })()
         """
         guard let json = c.eval(js),
-              let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+              let data = json.data(using: .utf8),
+              let rows = try? JSONDecoder().decode([[String]].self, from: data) else { return [] }
+        return rows.compactMap { r in
+            r.count == 3 ? WAMessage(outgoing: r[0] == "out", at: parseStamp(r[1]), text: r[2]) : nil
+        }
+    }
+
+    /// WhatsApp's `data-pre-plain-text` stamp, e.g. "2:46 pm, 10/11/2026".
+    /// ponytail: day-first dates and 12h/24h clocks only (what an Indian-locale
+    /// WhatsApp Web writes); a US-locale M/d stamp will misparse or return nil,
+    /// which only costs the idle cutoff for that message.
+    static func parseStamp(_ s: String) -> Date? {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        for f in ["h:mm a, d/M/yyyy", "HH:mm, d/M/yyyy"] {
+            fmt.dateFormat = f
+            if let d = fmt.date(from: s.trimmingCharacters(in: .whitespaces)) { return d }
+        }
+        return nil
     }
 
     /// Block until the open conversation has actually rendered its messages.

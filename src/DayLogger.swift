@@ -563,7 +563,7 @@ class DayLogger {
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: repos.count) { i in
             let repo = repos[i]
-            let commits = runGit(repo: repo, args: ["log", "-6", "--since=\(days).days", "--pretty=format:%cr: %s"])
+            let commits = runGit(repo: repo, args: ["log", "--branches", "--remotes", "-6", "--since=\(days).days", "--pretty=format:%cr: %s"])
             guard !commits.isEmpty else { return }
             let branch = runGit(repo: repo, args: ["branch", "--show-current"])
             let branches = runGit(repo: repo, args: ["for-each-ref", "--sort=-committerdate", "--count=4",
@@ -608,7 +608,10 @@ class DayLogger {
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: repos.count) { i in
             let repo = repos[i]
-            let commits = runGit(repo: repo, args: ["log", "--since=midnight", "--pretty=format:%ct %h %s"])
+            // Every branch, local and remote: work committed and pushed from a
+            // branch other than the checked-out one is still today's work.
+            let commits = runGit(repo: repo, args: ["log", "--branches", "--remotes", "--since=midnight",
+                                                    "--pretty=format:%ct %h %s"])
             var files: [(at: Date, path: String)] = []
             for line in runGit(repo: repo, args: ["status", "--porcelain", "--untracked-files=all"])
                 .split(separator: "\n") where line.count > 3 {
@@ -628,8 +631,16 @@ class DayLogger {
             let branch = runGit(repo: repo, args: ["branch", "--show-current"])
             var out = ["### \(repo.lastPathComponent) (on \(branch.isEmpty ? "?" : branch))"]
             if !commitLines.isEmpty {
-                out.append("Committed today:")
-                out += commitLines.map { "  " + $0.split(separator: " ", maxSplits: 1).dropFirst().joined() }
+                out.append("Committed today (newest first):")
+                for line in commitLines.prefix(8) {
+                    let hashAndSubject = line.split(separator: " ", maxSplits: 1).dropFirst().joined()
+                    let hash = String(hashAndSubject.prefix { $0 != " " })
+                    let remotes = runGit(repo: repo, args: ["branch", "-r", "--contains", hash,
+                                                            "--format=%(refname:short)"])
+                        .split(separator: "\n").filter { !$0.hasSuffix("/HEAD") }
+                    out.append("  " + hashAndSubject + (remotes.isEmpty ? " — local only, not pushed"
+                                                                       : " — pushed to " + remotes.prefix(3).joined(separator: ", ")))
+                }
             }
             if !files.isEmpty {
                 let t = DateFormatter(); t.dateFormat = "HH:mm"

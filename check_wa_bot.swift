@@ -291,15 +291,16 @@ struct CheckWABot {
         assert(ctx.turns.map(\.text) == ["tumne erp se connect kr diya hai?", "Nikhil's AI Assistant: ERP update soon"],
                "trailing incoming run excluded, stale turn dropped: \(ctx.turns.map(\.text))")
         assert(ctx.turns[1].bot && ctx.turns[1].outgoing && !ctx.turns[0].outgoing)
-        assert(!ctx.userActive, "the bot's own bubble isn't the user being present")
 
-        // The 2:50 Prince chat: the user typed "prince?" a minute before "hello".
+        // The user's own recent message is context, labelled as theirs -- not a
+        // reason to stay silent (that skip left chats on "seen" with no reply).
         let mine = [m(true, "3:15 pm, 10/11/2026", "prince?"), m(false, "3:16 pm, 10/11/2026", "hello")]
-        assert(WABotGate.threadContext(mine, now: now, isBot: isBot).userActive)
-        // ...but not if they last typed there an hour ago.
+        let mc = WABotGate.threadContext(mine, now: now, isBot: isBot)
+        assert(mc.turns.count == 1 && mc.turns[0].outgoing && !mc.turns[0].bot)
+        // A chat idle past 30 min starts fresh.
         let old = [m(true, "2:15 pm, 10/11/2026", "prince?"), m(false, "3:16 pm, 10/11/2026", "hello")]
         let oc = WABotGate.threadContext(old, now: now, isBot: isBot)
-        assert(!oc.userActive && oc.turns.isEmpty, "idle chat starts fresh")
+        assert(oc.turns.isEmpty, "idle chat starts fresh")
         // Limit keeps the last five.
         let long = (0..<9).map { m($0 % 2 == 0, "3:1\($0) pm, 10/11/2026", "t\($0)") } + [m(false, "3:19 pm, 10/11/2026", "new")]
         assert(WABotGate.threadContext(long, now: now, isBot: { _ in true }).turns.map(\.text) == ["t4", "t5", "t6", "t7", "t8"])

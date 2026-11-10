@@ -78,16 +78,12 @@ enum WABotGate {
     }
 
     /// What the open chat says around the new messages: the earlier turns to put
-    /// in the prompt, and whether the user is in the chat themselves.
+    /// in the prompt, and whether two bots are talking to each other.
     ///
     /// `thread` is the rendered chat, oldest first. Its trailing run of incoming
     /// bubbles is the new messages being answered, so context is what came
     /// before them -- at most `limit` turns, none older than `idle`, so a chat
     /// that went quiet starts fresh instead of dragging in this morning's topic.
-    ///
-    /// `userActive` is the user's own (non-bot) message within `userWindow`:
-    /// they're in the conversation themselves, and the bot answering over them
-    /// is worse than not answering.
     ///
     /// `botLoop` is two assistants talking to each other: the other side has
     /// called itself an assistant, and this bot has already replied
@@ -97,9 +93,8 @@ enum WABotGate {
                               isBot: (String) -> Bool,
                               limit: Int = 5,
                               idle: TimeInterval = 30 * 60,
-                              userWindow: TimeInterval = 10 * 60,
                               loopCap: Int = 3)
-        -> (turns: [(outgoing: Bool, bot: Bool, text: String)], userActive: Bool, botLoop: Bool) {
+        -> (turns: [(outgoing: Bool, bot: Bool, text: String)], botLoop: Bool) {
         // Continuation rows carry no stamp; they belong to the bubble above.
         var at: Date?
         let stamped = thread.map { m -> (WAMessage, Date?) in
@@ -109,12 +104,6 @@ enum WABotGate {
         var earlier = stamped
         while let last = earlier.last, !last.0.outgoing { earlier.removeLast() }
 
-        var userActive = false
-        if let lastOut = earlier.last(where: { $0.0.outgoing }),
-           !isBot(lastOut.0.text),
-           let t = lastOut.1, now.timeIntervalSince(t) <= userWindow {
-            userActive = true
-        }
         let recent = stamped.filter { $0.1.map { now.timeIntervalSince($0) <= idle } ?? false }
         let sinceUser = recent.lastIndex(where: { $0.0.outgoing && !isBot($0.0.text) })
             .map { Array(recent[($0 + 1)...]) } ?? recent
@@ -126,7 +115,7 @@ enum WABotGate {
             .filter { $0.1.map { now.timeIntervalSince($0) <= idle } ?? false }
             .suffix(limit)
             .map { (outgoing: $0.0.outgoing, bot: $0.0.outgoing && isBot($0.0.text), text: $0.0.text) }
-        return (Array(turns), userActive, botLoop)
+        return (Array(turns), botLoop)
     }
 
     /// Whether `date` falls inside the quiet window, wrapping past midnight
@@ -481,17 +470,13 @@ class ChatbotEngine {
             }
 
             // 5c. The chat around those messages: earlier turns for the prompt,
-            // and whether the user is already answering this chat themselves.
+            // and whether this is two bots answering each other.
             let sent = sentByBot[key] ?? []
             let ctx = WABotGate.threadContext(thread, now: Date(), isBot: { text in
                 let t = Self.fingerprint(text)
                 return text.localizedCaseInsensitiveContains("AI Assistant")
                     || sent.contains { Self.fingerprint($0) == t }
             })
-            if ctx.userActive && !inMeeting {
-                cblog("ChatbotEngine: skip '\(chat.name)' — you're in this chat yourself")
-                setActiveContact(nil); continue
-            }
             if ctx.botLoop {
                 cblog("ChatbotEngine: skip '\(chat.name)' — bot-to-bot loop, waiting for a human")
                 setActiveContact(nil); continue

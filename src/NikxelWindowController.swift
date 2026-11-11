@@ -54,6 +54,14 @@ class NikxelWindow: NSWindow {
             // Same priority for the end-of-day card: tapping it opens the
             // summary instead of picking Nikxel up.
             if view.hitTestCard(at: pInView) {
+                if let c = view.card, !c.buttons.isEmpty {
+                    // A question: only its buttons answer it.
+                    guard let i = view.cardButton(at: pInView) else { return }
+                    view.card = nil   // before the action, which may ask the next question
+                    view.needsDisplay = true
+                    c.buttons[i].action()
+                    return
+                }
                 view.card?.action?()
                 view.dismissCard()
                 return

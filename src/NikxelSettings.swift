@@ -92,6 +92,7 @@ enum NikxelSettings {
         var waChatTasks: Bool?
         var projectsRoot: String?
         var avatarSize: Double?
+        var loginItemOffered: Bool?
     }
 
     private static let fileURL: URL = {
@@ -325,6 +326,11 @@ enum NikxelSettings {
     static var avatarSize: Double {
         get { max(0.4, min(1.5, load().avatarSize ?? 1)) }
         set { save { $0.avatarSize = max(0.4, min(1.5, newValue)) } }
+    }
+
+    static var loginItemOffered: Bool {
+        get { load().loginItemOffered ?? false }
+        set { save { $0.loginItemOffered = newValue } }
     }
 
     static var projectsRoot: String {

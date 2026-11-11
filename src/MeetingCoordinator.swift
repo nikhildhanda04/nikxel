@@ -53,14 +53,10 @@ class MeetingCoordinator: AudioRecorderDelegate {
                     icon: "⚠️",
                     title: "Couldn't record",
                     lines: [String(error.localizedDescription.prefix(160)),
-                            "Tap to open Screen Recording permissions."],
+                            "Tap to allow screen recording, switch Nikxel on, then choose Quit & Reopen."],
                     kind: .error,
                     lifetime: .infinity,
-                    action: {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    })
+                    action: { Permissions.request(["ScreenCapture"]) })
             }
             return
         }

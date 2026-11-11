@@ -388,17 +388,17 @@ final class GoogleAuth {
         """
         alert.addButton(withTitle: "Open Google Cloud Console")
         alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn,
+        if alert.runOnTop() == .alertFirstButtonReturn,
            let url = URL(string: "https://console.cloud.google.com/apis/credentials") {
             NSWorkspace.shared.open(url)
         }
     }
 
+    /// A bubble over the avatar, not a modal: these arrive while you're in
+    /// another app (after a sync, a sign-in) and a modal would open behind it.
     func showAlert(_ text: String) {
-        let alert = NSAlert()
-        alert.messageText = "Google"
-        alert.informativeText = text
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        NikxelView.tell(icon: "🔗", title: "Google",
+                        lines: text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty },
+                        lifetime: 30)
     }
 }

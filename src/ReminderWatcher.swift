@@ -104,16 +104,14 @@ class ReminderWatcher {
     }
 
     private func showSystemSettingsAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Apple Reminders access not granted"
-        alert.informativeText = "Nikxel needs access to Reminders to surface tasks you added on other devices. Grant access in System Settings → Privacy & Security → Reminders."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") {
-                NSWorkspace.shared.open(url)
-            }
-        }
+        NikxelView.ask(icon: "📝", title: "Apple Reminders access not granted",
+                       lines: ["Nikxel shows tasks you added on other devices. Turn Nikxel on under Reminders."],
+                       kind: .warning,
+                       buttons: [("Open Settings", {
+                           if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") {
+                               NSWorkspace.shared.open(url)
+                           }
+                       }), ("Later", {})])
     }
 
     // MARK: - Polling / observers

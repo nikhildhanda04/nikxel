@@ -8,7 +8,8 @@
 //     src/LLMResponder.swift src/MOMGenerator.swift src/UsageLog.swift src/DayLogger.swift \
 //     src/NoteExporter.swift src/CaptureMode.swift src/Diag.swift \
 //     src/SummaryTemplates.swift src/WhatsAppActivityLogger.swift \
-//     src/WAContactLists.swift src/GoogleSync.swift src/GoogleAuth.swift -framework Cocoa
+//     src/WAContactLists.swift src/GoogleSync.swift src/GoogleAuth.swift \
+//     src/NikxelView.swift src/NikxelCard.swift src/StateMachine.swift src/SpriteSheetImporter.swift -framework Cocoa
 import Foundation
 
 @main

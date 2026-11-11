@@ -232,44 +232,30 @@ enum GoogleSync {
                        "https://www.googleapis.com/auth/calendar.events"]
             .filter { !GoogleAuth.shared.hasScope($0) }
         if !missing.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Reconnect Google to send these to Tasks"
-            alert.informativeText = """
-            This summary has \(tasks.count) task\(tasks.count == 1 ? "" : "s")\(events.isEmpty ? "" : " and \(events.count) follow-up meeting\(events.count == 1 ? "" : "s")").
-
-            Your Google account was connected before Nikxel could write to it, so it only has permission to read your calendar. Reconnecting takes one click and keeps everything else as it is.
-            """
-            alert.addButton(withTitle: "Reconnect Google…")
-            alert.addButton(withTitle: "Not now")
-            if alert.runModal() == .alertFirstButtonReturn { GoogleAuth.shared.reauthenticate() }
+            NikxelView.ask(icon: "🔑", title: "Reconnect Google to send these to Tasks", lines: [
+                "This summary has \(tasks.count) task\(tasks.count == 1 ? "" : "s")\(events.isEmpty ? "" : " and \(events.count) follow-up meeting\(events.count == 1 ? "" : "s")").",
+                "Google was connected before Nikxel could write to it. One click re-grants.",
+            ], buttons: [("Reconnect", { GoogleAuth.shared.reauthenticate() }), ("Not now", {})])
             return
         }
 
+        // The card shows 5 lines; the full list is in the note ("Open note").
         let ownName = NikxelSettings.userName
-        var lines: [String] = []
-        for t in tasks.prefix(12) {
+        var lines: [String] = events.map { "📅 \($0.title) — \(shortMoment($0.start)), \($0.durationMin) min" }
+        for t in tasks {
             let when = t.due.map { " (due \(shortDay($0)))" } ?? ""
-            lines.append("• \(t.taskTitle(ownName: ownName))\(when)")
+            lines.append("\(t.taskTitle(ownName: ownName))\(when)")
         }
-        if tasks.count > 12 { lines.append("• …and \(tasks.count - 12) more") }
-        for e in events {
-            lines.append("📅 \(e.title) — \(shortMoment(e.start)), \(e.durationMin) min")
-        }
+        let total = lines.count
+        if total > 5 { lines = Array(lines.prefix(4)) + ["…and \(total - 4) more"] }
 
-        let alert = NSAlert()
-        alert.messageText = "Send this meeting's tasks to Google?"
-        alert.informativeText = lines.joined(separator: "\n")
-        alert.addButton(withTitle: events.isEmpty ? "Add \(tasks.count) task\(tasks.count == 1 ? "" : "s")" : "Add to Google")
-        alert.addButton(withTitle: "Not now")
-        alert.addButton(withTitle: "Open the note")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            push(tasks: tasks, events: events, noteURL: mdURL)
-        case .alertThirdButtonReturn:
-            NSWorkspace.shared.open(noteURL)   // the format they chose, not the .md
-        default:
-            break
-        }
+        NikxelView.ask(icon: "✅", title: "Send this meeting's tasks to Google?", lines: lines, bulleted: true,
+                       buttons: [
+                        (events.isEmpty ? "Add \(tasks.count) task\(tasks.count == 1 ? "" : "s")" : "Add to Google",
+                         { push(tasks: tasks, events: events, noteURL: mdURL) }),
+                        ("Not now", {}),
+                        ("Open note", { NSWorkspace.shared.open(noteURL) }),   // the format they chose, not the .md
+                       ])
     }
 
     private static func shortDay(_ d: Date) -> String {

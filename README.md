@@ -169,6 +169,11 @@ cd nikxel
 That compiles `Nikxel.app` and launches it. (You can also double-click
 `setup.command` in Finder, or run `./build.sh && open Nikxel.app`.)
 
+Each build also links Nikxel into **Applications** (a link, so Check for
+Updates keeps working) and Nikxel adds itself to Login Items on first launch,
+so after a restart it's back on its own — or open it from Applications,
+Launchpad or Spotlight.
+
 A pixel character appears on your desktop and a **Nikxel** item appears in the
 menu bar.
 
@@ -201,7 +206,9 @@ Nikxel is signed on your own machine. By default that's an **ad-hoc** signature,
 which changes every time the binary does — so macOS treats each rebuild as a new
 app and asks for Accessibility and Screen Recording permission again.
 
-Creating one self-signed certificate stops that for good:
+`build.sh` now creates one self-signed `Nikxel` certificate by itself the first
+time it runs without one (in `~/.nikxel/signing.keychain-db`, no prompts), so
+this only costs one last re-grant. To make it by hand instead:
 
 1. Open **Keychain Access**
 2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**

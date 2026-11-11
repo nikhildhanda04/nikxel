@@ -25,24 +25,60 @@ xattr -cr Nikxel.app
 
 # A stable self-signed cert is what keeps TCC permissions (Accessibility,
 # Screen Recording) across rebuilds -- an ad-hoc signature changes whenever the
-# binary does, so macOS treats each build as a new app and asks again.
+# binary does, so macOS treats each build (and every Check for Updates) as a
+# new app: the old toggle stays on for a build that no longer exists, and
+# recording fails with "user declined TCCs".
 #
-# But that cert only exists on a machine where someone created it, and this
-# script runs with `set -e`: on every other Mac `--sign "Nikxel"` failed with
-# "Nikxel: no identity found" and took the whole build down with it, leaving an
-# unsigned binary and no launched app. Fall back to ad-hoc and say what it
-# costs, rather than refusing to finish.
-if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Nikxel"'; then
+# So when there's no "Nikxel" cert, make one: in its own keychain with a
+# known password, so nothing prompts. Untrusted is fine -- codesign signs
+# with it and TCC only matches the leaf. Any failure falls back to ad-hoc
+# rather than failing the build (`set -e`).
+KC="$HOME/.nikxel/signing.keychain-db"
+has_cert() { security find-identity -p codesigning 2>/dev/null | grep -q '"Nikxel"'; }
+if ! has_cert; then
+  (
+    set -e
+    if [ ! -f "$KC" ]; then
+      echo "Creating a 'Nikxel' signing certificate (once) so permissions survive updates..."
+      T="$(mktemp -d)"
+      openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/k.pem" -out "$T/c.pem" -days 7300 \
+        -subj "/CN=Nikxel" -addext "extendedKeyUsage=critical,codeSigning" \
+        -addext "keyUsage=critical,digitalSignature" -addext "basicConstraints=critical,CA:false" 2>/dev/null
+      openssl pkcs12 -export -inkey "$T/k.pem" -in "$T/c.pem" -out "$T/k.p12" -passout pass:nikxel
+      mkdir -p "$HOME/.nikxel"
+      security create-keychain -p nikxel "$KC"
+      security set-keychain-settings "$KC"
+      security import "$T/k.p12" -k "$KC" -P nikxel -T /usr/bin/codesign >/dev/null
+      security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k nikxel "$KC" >/dev/null
+      rm -rf "$T"
+    fi
+    security unlock-keychain -p nikxel "$KC"
+    # codesign only looks in the search list.
+    security list-keychains -d user | grep -q "signing.keychain" ||
+      security list-keychains -d user -s "$KC" $(security list-keychains -d user | xargs)
+  ) || echo "note: couldn't create the signing certificate; signing ad-hoc."
+else
+  [ -f "$KC" ] && security unlock-keychain -p nikxel "$KC" 2>/dev/null || true
+fi
+if has_cert; then
   SIGN_ID="Nikxel"
 else
   SIGN_ID="-"
   echo ""
-  echo "note: no 'Nikxel' code-signing certificate in your keychain, so this"
-  echo "      build is signed ad-hoc. Everything works, but macOS will ask for"
-  echo "      Accessibility and Screen Recording permission again after each"
-  echo "      rebuild. Creating the certificate once stops that -- see"
-  echo "      'Keeping permissions across rebuilds' in the README."
+  echo "note: signed ad-hoc, so macOS will ask for Accessibility and Screen"
+  echo "      Recording permission again after each rebuild. See 'Keeping"
+  echo "      permissions across rebuilds' in the README."
   echo ""
 fi
 codesign --force --deep --sign "$SIGN_ID" Nikxel.app
+
+# Show up in Applications (Finder, Launchpad, Spotlight) as a link to this
+# build, not a copy: a copy has no git folder, so Check for Updates couldn't
+# update it, and launching through a link runs this exact bundle. Refreshed
+# every build in case the clone moved. Never replaces a real app someone put
+# there. ~/Applications when /Applications isn't writable (non-admin user).
+APPS=/Applications; [ -w "$APPS" ] || { APPS="$HOME/Applications"; mkdir -p "$APPS"; }
+if [ -L "$APPS/Nikxel.app" ] || [ ! -e "$APPS/Nikxel.app" ]; then
+  ln -sfn "$PWD/Nikxel.app" "$APPS/Nikxel.app" && echo "Linked into $APPS"
+fi
 echo "Build complete: Nikxel.app"

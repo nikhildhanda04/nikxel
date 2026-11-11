@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 import UserNotifications
 
 class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -149,6 +150,17 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         if !NikxelSettings.onboardingCompleted {
             showOnboarding()
+        } else {
+            // After the avatar's puff, so the bubble has somewhere to land.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() }
+        }
+
+        // Start at login, once: a user who restarts the Mac shouldn't have to
+        // hunt for an app that lives in a git folder. Once only, so turning it
+        // off in System Settings → Login Items sticks.
+        if !NikxelSettings.loginItemOffered {
+            NikxelSettings.loginItemOffered = true
+            do { try SMAppService.mainApp.register() } catch { cblog("NikxelApp: login item failed — \(error)") }
         }
 
         // A summary interrupted by a quit or crash leaves its marker behind.
@@ -586,28 +598,21 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func regenerateUnfinished() {
         let jobs = meetingCoordinator.momGen.unfinishedJobs()
         guard let job = jobs.first else {
-            let alert = NSAlert()
-            alert.messageText = "Nothing to regenerate"
-            alert.informativeText = "Every recording you've made has a summary."
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
+            NikxelView.tell(title: "Nothing to regenerate", lines: ["Every recording you've made has a summary."])
             return
         }
 
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        let alert = NSAlert()
-        alert.messageText = "Regenerate this summary?"
-        alert.informativeText = """
-        \(job.mode == .notes ? "Notes" : "Meeting") from \(formatter.string(from: job.startedAt)).
-        The transcript is saved — this re-runs your coding agent over it.
-        \(jobs.count > 1 ? "\n\(jobs.count - 1) more unfinished after this one." : "")
-        """
-        alert.addButton(withTitle: "Regenerate")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        NikxelView.ask(icon: "🔁", title: "Regenerate this summary?", lines: [
+            "\(job.mode == .notes ? "Notes" : "Meeting") from \(formatter.string(from: job.startedAt)).",
+            "The transcript is saved — this re-runs your coding agent over it.",
+        ] + (jobs.count > 1 ? ["\(jobs.count - 1) more unfinished after this one."] : []),
+                       buttons: [("Regenerate", { [weak self] in self?.regenerate(job) }), ("Cancel", {})])
+    }
 
+    private func regenerate(_ job: MOMGenerator.PendingJob) {
         stateMachine.startWritingMOM()
         meetingCoordinator.momGen.regenerate(job) { [weak self] result in
             DispatchQueue.main.async {
@@ -619,12 +624,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     NSWorkspace.shared.open(url)
                     if job.mode == .meeting { GoogleSync.offer(noteURL: url) }
                 case .failure(let error):
-                    let fail = NSAlert()
-                    fail.messageText = "Regeneration Failed"
-                    fail.informativeText = "\(error)"
-                    fail.alertStyle = .critical
-                    fail.addButton(withTitle: "OK")
-                    fail.runModal()
+                    NikxelView.tell(icon: "⚠️", title: "Regeneration failed",
+                                    lines: [String("\(error)".prefix(160))], kind: .error, lifetime: .infinity)
                 }
             }
         }
@@ -705,7 +706,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open \(slug).txt")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard alert.runOnTop() == .alertFirstButtonReturn else { return }
         NSWorkspace.shared.open(SummaryTemplates.activeURL)
     }
 
@@ -722,19 +723,17 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
 
-        let response = alert.runModal()
+        let response = alert.runOnTop()
         guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let copyFrom = response == .alertSecondButtonReturn ? active : nil
 
         guard let slug = SummaryTemplates.create(named: name, copying: copyFrom) else {
-            let fail = NSAlert()
-            fail.messageText = "Couldn't create that template"
-            fail.informativeText = SummaryTemplates.slugify(name).isEmpty
-                ? "Give it a name with at least one letter or number in it."
-                : "A template with that name already exists. Pick a different name, or edit the existing one."
-            fail.addButton(withTitle: "OK")
-            fail.runModal()
+            NikxelView.tell(icon: "⚠️", title: "Couldn't create that template", lines: [
+                SummaryTemplates.slugify(name).isEmpty
+                    ? "Give it a name with at least one letter or number in it."
+                    : "A template with that name already exists. Pick a different name, or edit the existing one."
+            ], kind: .warning)
             return
         }
         NikxelSettings.summaryTemplate = slug
@@ -745,28 +744,20 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func resetActiveTemplate() {
         let slug = NikxelSettings.summaryTemplate
         let name = SummaryTemplates.displayName(for: slug)
-        let alert = NSAlert()
-        alert.messageText = "Reset \u{201C}\(name)\u{201D} to the built-in version?"
-        alert.informativeText = "Anything you've written in \(slug).txt will be replaced. Your other templates aren't touched."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reset")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SummaryTemplates.reset(slug)
+        NikxelView.ask(title: "Reset \u{201C}\(name)\u{201D} to the built-in version?",
+                       lines: ["Anything you've written in \(slug).txt will be replaced. Your other templates aren't touched."],
+                       kind: .warning, buttons: [("Reset", { SummaryTemplates.reset(slug) }), ("Cancel", {})])
     }
 
     @objc func deleteActiveTemplate() {
         let slug = NikxelSettings.summaryTemplate
         let name = SummaryTemplates.displayName(for: slug)
-        let alert = NSAlert()
-        alert.messageText = "Delete \u{201C}\(name)\u{201D}?"
-        alert.informativeText = "\(slug).txt is removed and summaries go back to the Default template."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SummaryTemplates.delete(slug)
-        rebuildTemplateMenu()
+        NikxelView.ask(title: "Delete \u{201C}\(name)\u{201D}?",
+                       lines: ["\(slug).txt is removed and summaries go back to the Default template."],
+                       kind: .warning, buttons: [("Delete", { [weak self] in
+                           SummaryTemplates.delete(slug)
+                           self?.rebuildTemplateMenu()
+                       }), ("Cancel", {})])
     }
 
     @objc func openTemplatesFolder() {
@@ -826,7 +817,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open settings.json")
-        alert.runModal()
+        alert.runOnTop()
         NSWorkspace.shared.open(url)
     }
 

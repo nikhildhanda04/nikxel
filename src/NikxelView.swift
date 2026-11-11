@@ -21,7 +21,9 @@ class NikxelView: NSView, StateMachineDelegate {
     /// The window is taller than it is wide so notification cards have room
     /// above the avatar's head -- or, with `bubblesBelow`, the same room under
     /// its feet. The avatar sits in the middle.
-    static let viewWidth: CGFloat = 340
+    /// Wider than any card so a card can slide sideways to stay on screen when
+    /// the avatar is at an edge. The empty part lets clicks through.
+    static let viewWidth: CGFloat = 640
     static let viewHeight: CGFloat = 700
     static let avatarBottomInset: CGFloat = 350
 
@@ -127,9 +129,19 @@ class NikxelView: NSView, StateMachineDelegate {
         let addedAt: TimeInterval
         let lifetime: TimeInterval
         let action: (() -> Void)?
+        /// Answers drawn on the card, in place of a modal dialog. First is primary.
+        var buttons: [CardButton] = []
+        var buttonRects: [NSRect] = []
         var opacity: CGFloat = 0
         var hitRect: NSRect = .zero
     }
+    struct CardButton {
+        let title: String
+        let action: () -> Void
+    }
+    /// The one avatar, for code with no view at hand (GoogleSync, GoogleAuth)
+    /// to ask through. Set in init.
+    static weak var main: NikxelView?
     var card: Card?
     let cardFadeIn: TimeInterval = 0.45
     let cardFadeOut: TimeInterval = 0.6
@@ -155,6 +167,7 @@ class NikxelView: NSView, StateMachineDelegate {
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         super.init(frame: NSRect(x: 0, y: 0, width: NikxelView.viewWidth, height: NikxelView.viewHeight))
+        NikxelView.main = self
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.magnificationFilter = .nearest
@@ -263,10 +276,14 @@ class NikxelView: NSView, StateMachineDelegate {
                   bulleted: Bool = false,
                   kind: CardKind = .info,
                   lifetime: TimeInterval = 20,
-                  action: (() -> Void)? = nil) {
+                  action: (() -> Void)? = nil,
+                  buttons: [CardButton] = []) {
+        // A question waiting on an answer isn't knocked off by a passing notice.
+        // ponytail: that notice is dropped, not queued; queue if it matters.
+        if card?.buttons.isEmpty == false && buttons.isEmpty { return }
         card = Card(icon: icon, title: title, lines: lines, bulleted: bulleted,
                     kind: kind, addedAt: CACurrentMediaTime(), lifetime: lifetime,
-                    action: action)
+                    action: action, buttons: buttons)
         needsDisplay = true
     }
 
@@ -274,6 +291,12 @@ class NikxelView: NSView, StateMachineDelegate {
         guard card != nil else { return }
         card = nil
         needsDisplay = true
+    }
+
+    /// Index of the card button under `p`, if any.
+    func cardButton(at p: NSPoint) -> Int? {
+        guard let c = card, c.opacity > 0.05 else { return nil }
+        return c.buttonRects.firstIndex { $0.contains(p) }
     }
 
     func hitTestCard(at p: NSPoint) -> Bool {

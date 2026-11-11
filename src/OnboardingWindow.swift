@@ -41,6 +41,9 @@ final class OnboardingWindowController: NSWindowController {
     private var modelProgress: Double = 0
     private var modelError: String?
     private var modelProgressBar: NSProgressIndicator?
+    /// Running while the Terminal install is going, so the step fills itself
+    /// in as whisper and ffmpeg land -- no Re-check click needed.
+    private var depsPoll: Timer?
     private var agentCopied: CodingAgent?
 
     // WhatsApp step
@@ -286,14 +289,21 @@ final class OnboardingWindowController: NSWindowController {
         }
 
         if depsChecked && !(whisperFound && ffmpegFound) {
-            // Always a button: without Homebrew the script installs it first,
-            // rather than leaving the user with a command they can't copy.
-            body.addArrangedSubview(button("Install with Homebrew", #selector(installDeps)))
-            body.addArrangedSubview(label(
-                brewFound ? "Opens Terminal and runs: brew install whisper-cpp ffmpeg"
-                          : "Homebrew isn't installed. This opens Terminal, installs Homebrew (it asks for your Mac password), then runs: brew install whisper-cpp ffmpeg",
-                size: 11, secondary: true, align: .left
-            ))
+            if depsPoll != nil {
+                body.addArrangedSubview(label(
+                    "Installing in Terminal…\(brewFound ? "" : " Type your Mac password there when asked (nothing shows as you type).") This page updates by itself, and the speech model downloads as soon as whisper is in.",
+                    size: 11, secondary: true, align: .left
+                ))
+            } else {
+                // Always a button: without Homebrew the script installs it
+                // first, rather than leaving the user with a command to copy.
+                body.addArrangedSubview(button(brewFound ? "Install" : "Install (with Homebrew)", #selector(installDeps)))
+                body.addArrangedSubview(label(
+                    brewFound ? "Opens Terminal and runs: brew install whisper-cpp ffmpeg"
+                              : "Homebrew isn't installed. One click installs it and then the tools — Terminal will ask for your Mac password once.",
+                    size: 11, secondary: true, align: .left
+                ))
+            }
         }
         body.addArrangedSubview(button("Re-check", #selector(recheckDeps)))
 
@@ -581,22 +591,39 @@ final class OnboardingWindowController: NSWindowController {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-install-deps.command")
         // Homebrew's official installer when brew is missing, then its
         // shellenv: a fresh install isn't on this shell's PATH yet.
+        // `sudo -v` takes the password up front so NONINTERACTIVE can skip
+        // Homebrew's "Press RETURN" prompt -- without cached sudo it aborts.
         let script = """
         #!/bin/zsh
         set -e
         if ! command -v brew >/dev/null; then
-          [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] || \\
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          if [ ! -x /opt/homebrew/bin/brew ] && [ ! -x /usr/local/bin/brew ]; then
+            echo 'Installing Homebrew. Enter your Mac password (nothing shows as you type):'
+            sudo -v
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
           eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
         fi
         brew install whisper-cpp ffmpeg
         echo
-        echo 'Done. Go back to Nikxel and click Re-check.'
+        echo 'Done. You can close this window — Nikxel has picked it up.'
 
         """
         try? script.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         NSWorkspace.shared.open(url)
+        depsPoll?.invalidate()
+        // Gives up after 20 min so a failed install brings the button back.
+        let started = Date()
+        depsPoll = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] t in
+            guard let self = self, self.step == .deps, Date().timeIntervalSince(started) < 1200 else {
+                t.invalidate(); self?.depsPoll = nil
+                if self?.step == .deps { self?.render() }
+                return
+            }
+            self.refreshDeps()
+        }
+        render()
     }
 
     @objc private func startWhatsAppConnect() {
@@ -642,13 +669,24 @@ final class OnboardingWindowController: NSWindowController {
             let brew = Self.onPath("brew")
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                let changed = !self.depsChecked || self.usingWhisperCpp != isCpp || self.modelInstalled != hasModel
+                    || self.whisperFound != whisper || self.ffmpegFound != ffmpeg || self.brewFound != brew
                 self.usingWhisperCpp = isCpp
                 self.modelInstalled = hasModel
                 self.whisperFound = whisper
                 self.ffmpegFound = ffmpeg
                 self.brewFound = brew
                 self.depsChecked = true
-                if self.step == .deps { self.render() }
+                if whisper && ffmpeg { self.depsPoll?.invalidate(); self.depsPoll = nil }
+                guard self.step == .deps else { return }
+                // whisper.cpp with no model can't transcribe: fetch it now
+                // instead of waiting for another click. Not after a failure --
+                // that leaves the button up for a retry instead of looping.
+                if isCpp && !hasModel && !self.modelDownloading && self.modelError == nil {
+                    self.downloadModel()
+                } else if changed {
+                    self.render()
+                }
             }
         }
     }

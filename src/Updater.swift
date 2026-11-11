@@ -34,6 +34,9 @@ enum Updater {
 
     enum Failure: LocalizedError {
         case notAClone
+        /// The clone is in Desktop/Documents/Downloads and macOS hasn't let
+        /// this signature in: a new signing identity starts with no grants.
+        case noFolderAccess(URL)
         case git(String)
 
         var errorDescription: String? {
@@ -44,6 +47,12 @@ enum Updater {
 
                 Clone the repo and run ./setup.command from there:
                 git clone https://github.com/nikhildhanda04/nikxel.git
+                """
+            case .noFolderAccess(let dir):
+                return """
+                macOS is keeping Nikxel out of its own folder (\(dir.lastPathComponent)), so it can't see the update.
+
+                Tap here and choose Allow, and Nikxel checks again.
                 """
             case .git(let message):
                 return message
@@ -77,13 +86,18 @@ enum Updater {
     /// The clone this app was built in: the directory holding `Nikxel.app`.
     /// Checked for both `.git` and `build.sh`, because a bundle copied to
     /// /Applications has neither and must not be offered an update.
+    /// Falls back to the path build.sh stamped into the bundle, for a copy or
+    /// link opened from somewhere else.
     static var repoRoot: URL? {
-        let root = Bundle.main.bundleURL.deletingLastPathComponent()
         let fm = FileManager.default
-        guard fm.fileExists(atPath: root.appendingPathComponent(".git").path),
-              fm.isExecutableFile(atPath: root.appendingPathComponent("build.sh").path)
-        else { return nil }
-        return root
+        let stamped = Bundle.main.url(forResource: "repo_path", withExtension: nil)
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            .map { URL(fileURLWithPath: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let candidates = [Bundle.main.bundleURL.resolvingSymlinksInPath().deletingLastPathComponent(), stamped]
+        return candidates.compactMap { $0 }.first {
+            fm.fileExists(atPath: $0.appendingPathComponent(".git").path)
+                && fm.isExecutableFile(atPath: $0.appendingPathComponent("build.sh").path)
+        }
     }
 
     // MARK: - Checking
@@ -97,7 +111,11 @@ enum Updater {
     }
 
     static func checkSync() -> Result<Status, Failure> {
-        guard let repo = repoRoot else { return .failure(.notAClone) }
+        guard let repo = repoRoot else {
+            let dir = Bundle.main.bundleURL.resolvingSymlinksInPath().deletingLastPathComponent()
+            let blocked = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) == nil
+            return .failure(blocked ? .noFolderAccess(dir) : .notAClone)
+        }
 
         let fetch = git(repo, ["fetch", "origin", "main"])
         guard fetch.ok else {

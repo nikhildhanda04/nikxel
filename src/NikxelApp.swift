@@ -855,7 +855,15 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                                      .components(separatedBy: "\n\n")
                                      .map { $0.replacingOccurrences(of: "\n", with: " ") }
                                      .filter { !$0.isEmpty },
-                                 kind: .warning, lifetime: 30)
+                                 kind: .warning, lifetime: 30,
+                                 action: { [weak self] in
+                                     guard case .noFolderAccess(let dir) = err else { return }
+                                     // A reset makes macOS ask again; touching the folder raises the prompt.
+                                     Permissions.request(["SystemPolicyDesktopFolder", "SystemPolicyDocumentsFolder",
+                                                          "SystemPolicyDownloadsFolder"])
+                                     _ = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+                                     self?.checkForUpdates()
+                                 })
             case .success(let status):
                 self.presentUpdate(status)
             }

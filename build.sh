@@ -9,6 +9,9 @@ mkdir -p Nikxel.app/Contents/MacOS Nikxel.app/Contents/Resources
 [ -f Nikxel.app/Contents/Resources/sprites.png ] || cp sprites.png Nikxel.app/Contents/Resources/sprites.png
 # The onboarding "Your avatar" step copies this to the clipboard for Gemini.
 cp sprite_prompt.txt Nikxel.app/Contents/Resources/sprite_prompt.txt
+# The clone this was built from, so Check for Updates finds it even when the
+# app is opened from a copy or link elsewhere (Applications, Dock, login item).
+echo "$PWD" > Nikxel.app/Contents/Resources/repo_path
 # Liquid Glass bubbles need the macOS 26 SDK. Build with `GLASS=1 ./build.sh` on a
 # macOS 26 SDK; the default builds against older SDKs (bubbles just don't render).
 if [ "${GLASS:-0}" = "1" ]; then
@@ -75,9 +78,13 @@ codesign --force --deep --sign "$SIGN_ID" Nikxel.app
 # Show up in Applications (Finder, Launchpad, Spotlight) as a link to this
 # build, not a copy: a copy has no git folder, so Check for Updates couldn't
 # update it, and launching through a link runs this exact bundle. Refreshed
-# every build in case the clone moved. Never replaces a real app someone put
-# there. ~/Applications when /Applications isn't writable (non-admin user).
+# every build in case the clone moved. A dragged-in copy of Nikxel is stale
+# and can't update, so it's swapped for the link; any other app is left alone.
+# ~/Applications when /Applications isn't writable (non-admin user).
 APPS=/Applications; [ -w "$APPS" ] || { APPS="$HOME/Applications"; mkdir -p "$APPS"; }
+if [ "$PWD" != "$APPS" ] && [ -d "$APPS/Nikxel.app" ] && [ ! -L "$APPS/Nikxel.app" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APPS/Nikxel.app/Contents/Info.plist" 2>/dev/null)" = com.nikxel.Nikxel ]; then
+  rm -rf "$APPS/Nikxel.app" && echo "Replaced the old copy in $APPS"
+fi
 if [ -L "$APPS/Nikxel.app" ] || [ ! -e "$APPS/Nikxel.app" ]; then
   ln -sfn "$PWD/Nikxel.app" "$APPS/Nikxel.app" && echo "Linked into $APPS"
 fi

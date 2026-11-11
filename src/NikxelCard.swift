@@ -225,6 +225,18 @@ extension NikxelView {
     }
 }
 
+extension NSWorkspace {
+    /// Notes registers for .md, and on a Mac with no other editor it's the
+    /// default: every tap imported the file as a new note. TextEdit instead.
+    func openFile(_ url: URL) {
+        guard let app = urlForApplication(toOpen: url),
+              Bundle(url: app)?.bundleIdentifier == "com.apple.Notes",
+              let edit = urlForApplication(withBundleIdentifier: "com.apple.TextEdit")
+        else { open(url); return }
+        open([url], withApplicationAt: edit, configuration: NSWorkspace.OpenConfiguration())
+    }
+}
+
 extension NSAlert {
     /// For the dialogs that stay real windows (ones with a text field, long
     /// help text): bring Nikxel forward first so it doesn't open behind.

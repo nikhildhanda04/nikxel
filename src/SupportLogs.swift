@@ -20,6 +20,7 @@ enum SupportLogs {
             .prefix(1).joined() + "\n"
         out += "Permissions: accessibility=\(AXIsProcessTrusted()) screen=\(CGPreflightScreenCaptureAccess()) "
             + "mic=\(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)\n"
+        out += "Memory: " + memory() + "\n"
 
         out += section("chatbot.log", tail(nx.appendingPathComponent("chatbot.log"), 60))
         out += section("debug.log", tail(nx.appendingPathComponent("debug.log"), 40))
@@ -35,6 +36,22 @@ enum SupportLogs {
         }
         out += section("last crash", lastCrash(home))
         return out
+    }
+
+    /// RSS of Nikxel and of what it starts, so "it uses 1 GB" says which part.
+    private static func memory() -> String {
+        var mb: [String: Int] = [:]
+        let me = Bundle.main.executablePath ?? "Nikxel"
+        for line in run("/bin/ps", ["-axo", "rss=,command="]).split(separator: "\n") {
+            let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
+            guard parts.count == 2, let kb = Int(parts[0]) else { continue }
+            let cmd = String(parts[1])
+            let key = cmd.hasPrefix(me) ? "nikxel"
+                : cmd.contains(ChromeBot.profileDir) ? "whatsapp-browser"
+                : cmd.contains("whisper") ? "whisper" : nil
+            if let key { mb[key, default: 0] += kb / 1024 }
+        }
+        return mb.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)MB" }.joined(separator: " ")
     }
 
     private static func section(_ name: String, _ body: String) -> String {

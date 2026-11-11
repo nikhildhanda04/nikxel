@@ -216,7 +216,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
             bulleted: true,
             kind: .success,
             lifetime: 25,
-            action: { NSWorkspace.shared.open(outURL) })
+            action: { NSWorkspace.shared.openFile(outURL) })
     }
 
     private func showFailureCard(title: String, error: Error, hint: String) {

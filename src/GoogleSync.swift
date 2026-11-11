@@ -254,7 +254,7 @@ enum GoogleSync {
                         (events.isEmpty ? "Add \(tasks.count) task\(tasks.count == 1 ? "" : "s")" : "Add to Google",
                          { push(tasks: tasks, events: events, noteURL: mdURL) }),
                         ("Not now", {}),
-                        ("Open note", { NSWorkspace.shared.open(noteURL) }),   // the format they chose, not the .md
+                        ("Open note", { NSWorkspace.shared.openFile(noteURL) }),   // the format they chose, not the .md
                        ])
     }
 

@@ -75,7 +75,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.window.nikxelView?.showCard(
                 icon: "🌙", title: "Today, in short", lines: [line],
                 kind: .info, lifetime: 600,
-                action: { NSWorkspace.shared.open(fileURL) })
+                action: { NSWorkspace.shared.openFile(fileURL) })
         }
 
         meetingDetector = MeetingDetector.shared
@@ -446,11 +446,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func editTrustedContacts() {
-        NSWorkspace.shared.open(WAContactLists.seedIfMissing(.trusted))
+        NSWorkspace.shared.openFile(WAContactLists.seedIfMissing(.trusted))
     }
 
     @objc func editNeverReply() {
-        NSWorkspace.shared.open(WAContactLists.seedIfMissing(.neverReply))
+        NSWorkspace.shared.openFile(WAContactLists.seedIfMissing(.neverReply))
     }
 
     /// "22" -> "10pm". Menu titles read better than 24h clock time here.
@@ -722,7 +722,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.addButton(withTitle: "Open \(slug).txt")
         alert.addButton(withTitle: "Cancel")
         guard alert.runOnTop() == .alertFirstButtonReturn else { return }
-        NSWorkspace.shared.open(SummaryTemplates.activeURL)
+        NSWorkspace.shared.openFile(SummaryTemplates.activeURL)
     }
 
     @objc func newTemplate() {
@@ -753,7 +753,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         NikxelSettings.summaryTemplate = slug
         rebuildTemplateMenu()
-        NSWorkspace.shared.open(SummaryTemplates.url(for: slug))
+        NSWorkspace.shared.openFile(SummaryTemplates.url(for: slug))
     }
 
     @objc func resetActiveTemplate() {
@@ -796,7 +796,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             """
             try? def.write(to: url, atomically: true, encoding: .utf8)
         }
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.openFile(url)
     }
 
     @objc func editSettings() {
@@ -833,7 +833,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open settings.json")
         alert.runOnTop()
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.openFile(url)
     }
 
     // MARK: - Updates
@@ -976,7 +976,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if let path = response.notification.request.content.userInfo["openPath"] as? String {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            NSWorkspace.shared.openFile(URL(fileURLWithPath: path))
         }
         completionHandler()
     }

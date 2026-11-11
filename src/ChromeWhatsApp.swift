@@ -206,8 +206,11 @@ enum ChromeWhatsApp {
     private static func ensureCDP() -> CDPClient? {
         cdpLock.lock(); defer { cdpLock.unlock() }
         if let c = cdp, c.isConnected { return c }
-        guard ChromeBot.launchIfNeeded() else {
-            cblog("CDP: bot Chrome not reachable on port \(ChromeBot.debugPort)")
+        // Never connected WhatsApp: don't pop the bot browser open on every
+        // poll. Setup launches it itself; until then only use one already up.
+        let connected = NikxelSettings.whatsappConnected
+        guard connected ? ChromeBot.launchIfNeeded() : ChromeBot.isPortOpen() else {
+            if connected { cblog("CDP: bot Chrome not reachable on port \(ChromeBot.debugPort)") }
             return nil
         }
         let c = CDPClient()

@@ -13,15 +13,28 @@ class NikxelView: NSView, StateMachineDelegate {
     private var frameIndex: Int = 0
     private var frameElapsed: TimeInterval = 0
     private var lastTick: TimeInterval = 0
-    private let charSize: CGFloat = 156
+    /// Sprite size: 156 pt times the user's Avatar Size. Cached, not read
+    /// from settings per frame -- draw runs at 60 fps and settings is a file.
+    private(set) var charSize = 156 * CGFloat(NikxelSettings.avatarSize)
+    var halfChar: CGFloat { charSize / 2 }
+    func applyAvatarSize() { charSize = 156 * CGFloat(NikxelSettings.avatarSize); needsDisplay = true }
     /// The window is taller than it is wide so notification cards have room
-    /// above the avatar's head. The avatar sits `avatarBottomInset` up from the
-    /// bottom edge -- exactly where it sat when the window was a 340x340
-    /// square -- so growing the window added space upward and did not move
-    /// Nikxel on screen.
+    /// above the avatar's head -- or, with `bubblesBelow`, the same room under
+    /// its feet. The avatar sits in the middle.
     static let viewWidth: CGFloat = 340
-    static let viewHeight: CGFloat = 520
-    static let avatarBottomInset: CGFloat = 170
+    static let viewHeight: CGFloat = 700
+    static let avatarBottomInset: CGFloat = 350
+
+    /// Set by the window when the avatar is too near the top of the screen
+    /// for anything to fit above its head.
+    var bubblesBelow = false { didSet { if bubblesBelow != oldValue { needsDisplay = true } } }
+
+    /// Y for something `off` above the head -- or, with `bubblesBelow`, the
+    /// same distance under the feet. Pass `height` when the y is the item's
+    /// origin, so a flipped item hangs down from that point.
+    func headY(_ off: CGFloat, height h: CGFloat = 0) -> CGFloat {
+        bubblesBelow ? avatarCenter.y - halfChar - off - h : avatarCenter.y + halfChar + off
+    }
 
     /// Avatar centre. Sprite, shadow, bubbles and hit testing are all
     /// positioned from here, so this is the only place the anchor is defined.
@@ -29,7 +42,6 @@ class NikxelView: NSView, StateMachineDelegate {
         NSPoint(x: bounds.midX, y: bounds.minY + NikxelView.avatarBottomInset)
     }
 
-    let halfChar: CGFloat = 78
     private let frameCount = 4
     private var spriteSheet: NSImage?
 
@@ -588,7 +600,7 @@ class NikxelView: NSView, StateMachineDelegate {
         if currentState != .dragging {
             let shadowY = charBottom
             let alpha = 0.12 - (bounce > 0 ? bounce / 400 : 0)
-            let oval = NSRect(x: cx - 42, y: shadowY - 4, width: 84, height: 12)
+            let oval = NSRect(x: cx - halfChar * 0.54, y: shadowY - 4, width: halfChar * 1.08, height: 12)
             ctx.saveGState()
             ctx.setFillColor(NSColor.black.withAlphaComponent(CGFloat(alpha)).cgColor)
             NSBezierPath(ovalIn: oval).fill()
@@ -651,7 +663,7 @@ class NikxelView: NSView, StateMachineDelegate {
             let pulse = 0.7 + 0.3 * sin(CACurrentMediaTime() * 4)
             let dotRadius: CGFloat = 5
             let dotX = cx - 28
-            let dotY = cy + halfChar + 16
+            let dotY = headY(16)
             ctx.saveGState()
             ctx.setFillColor(NSColor.red.withAlphaComponent(CGFloat(pulse)).cgColor)
             ctx.fillEllipse(in: NSRect(x: dotX - dotRadius, y: dotY - dotRadius, width: dotRadius*2, height: dotRadius*2))
@@ -673,7 +685,7 @@ class NikxelView: NSView, StateMachineDelegate {
         if meetingDotOpacity > 0.01 {
             let dotRadius: CGFloat = 6
             let dotX = cx
-            let dotY = cy + halfChar + 14
+            let dotY = headY(14)
             ctx.saveGState()
             // Outer glow
             ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(meetingDotOpacity * 0.3).cgColor)
@@ -711,7 +723,7 @@ class NikxelView: NSView, StateMachineDelegate {
         if currentState == .thinking, bubbleOpacity > 0.01 {
             ctx.saveGState()
             ctx.setAlpha(CGFloat(bubbleOpacity))
-            let dotY = cy + halfChar + 22
+            let dotY = headY(22)
             let dotSpacing: CGFloat = 16
             let dotRadius: CGFloat = 5
             let dotCount = min(3, frameIndex + 1)
@@ -869,7 +881,7 @@ class NikxelView: NSView, StateMachineDelegate {
                 glass.frame = NSRect(origin: glass.frame.origin, size: newSize)
             }
             let size = glass.frame.size
-            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: cy + halfChar + 24)
+            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: headY(24, height: size.height))
             glass.alphaValue = reminderOpacity
         } else if let g = calendarGlassView {
             g.removeFromSuperview()
@@ -896,7 +908,7 @@ class NikxelView: NSView, StateMachineDelegate {
                 glass.frame = NSRect(origin: glass.frame.origin, size: newSize)
             }
             let size = glass.frame.size
-            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: cy + halfChar + 36)
+            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: headY(36, height: size.height))
             glass.alphaValue = texterOpacity
         } else if let g = texterGlassView {
             g.removeFromSuperview()
@@ -908,8 +920,9 @@ class NikxelView: NSView, StateMachineDelegate {
         // the 340pt window above the calendar bubble lane.
         let visibleCount = min(3, reminderBubbles.count)
         let startIdx = reminderBubbles.count - visibleCount
-        let baseY = cy + halfChar + 52
-        let stepY = GlassMetrics.stepY
+        let baseY = headY(52)
+        // Below the feet the stack grows downward.
+        let stepY = GlassMetrics.stepY * (bubblesBelow ? -1 : 1)
 
         // Clear hit rects on the model first; we'll repopulate for visible ones.
         for i in reminderBubbles.indices { reminderBubbles[i].hitRect = .zero }
@@ -964,8 +977,9 @@ class NikxelView: NSView, StateMachineDelegate {
                 overflowGlassView = g
                 return (g, s)
             }()
-            let topY = baseY + CGFloat(visibleCount - 1) * stepY + 34
-            glass.frame.origin = NSPoint(x: cx - size.width / 2, y: topY)
+            let lastY = baseY + CGFloat(visibleCount - 1) * stepY
+            glass.frame.origin = NSPoint(x: cx - size.width / 2,
+                                         y: bubblesBelow ? lastY - 34 - size.height : lastY + 34)
             glass.alphaValue = 1
         } else if let g = overflowGlassView {
             g.removeFromSuperview()

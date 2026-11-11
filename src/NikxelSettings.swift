@@ -91,6 +91,7 @@ enum NikxelSettings {
         var waQuietTo: Int?
         var waChatTasks: Bool?
         var projectsRoot: String?
+        var avatarSize: Double?
     }
 
     private static let fileURL: URL = {
@@ -319,6 +320,13 @@ enum NikxelSettings {
     /// the actual projects folder is both faster and more accurate: the scan
     /// walks every subdirectory looking for `.git`, and most of a Desktop is
     /// not projects.
+    /// On-screen size of the avatar, 1 = the original 156 pt. Small screens
+    /// (a 13" MacBook) asked for less.
+    static var avatarSize: Double {
+        get { max(0.4, min(1.5, load().avatarSize ?? 1)) }
+        set { save { $0.avatarSize = max(0.4, min(1.5, newValue)) } }
+    }
+
     static var projectsRoot: String {
         get {
             let raw = load().projectsRoot?.trimmingCharacters(in: .whitespaces) ?? ""

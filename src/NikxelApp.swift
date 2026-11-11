@@ -18,6 +18,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var reminderDismissTimer: Timer?
     private var muteMenuItem: NSMenuItem?
     private var noteFormatItems: [NSMenuItem] = []
+    private var avatarSizeItems: [NSMenuItem] = []
     private var recordMenuItem: NSMenuItem?
     private var modeNotesItem: NSMenuItem?
     private var modeMeetingItem: NSMenuItem?
@@ -282,6 +283,19 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(formatItem)
         refreshNoteFormatMenuItems()
 
+        let sizeItem = NSMenuItem(title: "Avatar Size", action: nil, keyEquivalent: "")
+        let sizeSubmenu = NSMenu()
+        for (title, size) in [("Small", 0.6), ("Medium", 0.8), ("Large", 1.0), ("Extra Large", 1.25)] {
+            let item = NSMenuItem(title: title, action: #selector(setAvatarSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = size
+            sizeSubmenu.addItem(item)
+            avatarSizeItems.append(item)
+        }
+        sizeItem.submenu = sizeSubmenu
+        menu.addItem(sizeItem)
+        refreshAvatarSizeMenuItems()
+
         let openNotes = NSMenuItem(title: "Open Notes Folder", action: #selector(openNotes), keyEquivalent: "")
         openNotes.target = self; menu.addItem(openNotes)
 
@@ -543,6 +557,20 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let format = NoteExporter.Format(rawValue: raw) else { return }
         NikxelSettings.noteFormat = format
         refreshNoteFormatMenuItems()
+    }
+
+    @objc func setAvatarSize(_ sender: NSMenuItem) {
+        guard let size = sender.representedObject as? Double else { return }
+        NikxelSettings.avatarSize = size
+        window.nikxelView?.applyAvatarSize()
+        refreshAvatarSizeMenuItems()
+    }
+
+    private func refreshAvatarSizeMenuItems() {
+        let current = NikxelSettings.avatarSize
+        for item in avatarSizeItems {
+            item.state = abs((item.representedObject as? Double ?? 0) - current) < 0.01 ? .on : .off
+        }
     }
 
     private func refreshNoteFormatMenuItems() {

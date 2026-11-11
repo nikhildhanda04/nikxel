@@ -286,18 +286,14 @@ final class OnboardingWindowController: NSWindowController {
         }
 
         if depsChecked && !(whisperFound && ffmpegFound) {
-            if brewFound {
-                body.addArrangedSubview(button("Install with Homebrew", #selector(installDeps)))
-                body.addArrangedSubview(label(
-                    "Opens Terminal and runs: brew install whisper-cpp ffmpeg",
-                    size: 11, secondary: true, align: .left
-                ))
-            } else {
-                body.addArrangedSubview(label(
-                    "Homebrew not found. Install it from brew.sh, then run:\nbrew install whisper-cpp ffmpeg",
-                    size: 11, secondary: true, align: .left
-                ))
-            }
+            // Always a button: without Homebrew the script installs it first,
+            // rather than leaving the user with a command they can't copy.
+            body.addArrangedSubview(button("Install with Homebrew", #selector(installDeps)))
+            body.addArrangedSubview(label(
+                brewFound ? "Opens Terminal and runs: brew install whisper-cpp ffmpeg"
+                          : "Homebrew isn't installed. This opens Terminal, installs Homebrew (it asks for your Mac password), then runs: brew install whisper-cpp ffmpeg",
+                size: 11, secondary: true, align: .left
+            ))
         }
         body.addArrangedSubview(button("Re-check", #selector(recheckDeps)))
 
@@ -583,7 +579,21 @@ final class OnboardingWindowController: NSWindowController {
         // watch progress and answer any prompt -- a silent background `brew
         // install` would look like a hang for several minutes.
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-install-deps.command")
-        let script = "#!/bin/zsh\nset -e\nbrew install whisper-cpp ffmpeg\necho\necho 'Done. Go back to Nikxel and click Re-check.'\n"
+        // Homebrew's official installer when brew is missing, then its
+        // shellenv: a fresh install isn't on this shell's PATH yet.
+        let script = """
+        #!/bin/zsh
+        set -e
+        if ! command -v brew >/dev/null; then
+          [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] || \\
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+        fi
+        brew install whisper-cpp ffmpeg
+        echo
+        echo 'Done. Go back to Nikxel and click Re-check.'
+
+        """
         try? script.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         NSWorkspace.shared.open(url)

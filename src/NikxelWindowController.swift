@@ -13,10 +13,8 @@ class NikxelWindow: NSWindow {
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         let screen = NSScreen.main ?? NSScreen.screens.first!
-        // Taller than wide: the extra height is headroom for notification
-        // cards above the avatar. The origin keeps the avatar exactly where a
-        // 340x340 window used to put it -- the window grew upward only, so
-        // Nikxel doesn't move on screen for anyone updating.
+        // Taller than wide: room for notification cards above the avatar, or
+        // below it near the top of the screen. Starts with the avatar centred.
         let w = NikxelView.viewWidth, h = NikxelView.viewHeight
         let frame = NSRect(x: screen.frame.midX - w/2,
                            y: screen.frame.midY - NikxelView.avatarBottomInset,
@@ -38,6 +36,10 @@ class NikxelWindow: NSWindow {
 
         view.onMoveTo = { [weak self] p in self?.setFrameOrigin(p) }
     }
+
+    /// Borderless windows still get pushed down out of the menu bar; the
+    /// avatar's own clamp in mouseDragged is the only limit wanted.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     override func mouseDown(with event: NSEvent) {
         // Reminder bubble hit-test takes priority over drag/double-click so a tap
@@ -92,9 +94,20 @@ class NikxelWindow: NSWindow {
         prevDragTime = now
 
         var origin = NSPoint(x: loc.x - dragOffset.x, y: loc.y - dragOffset.y)
-        if let scr = screen {
-            origin.x = max(0, min(origin.x, scr.frame.width - frame.width))
-            origin.y = max(0, min(origin.y, scr.frame.height - frame.height))
+        // Clamp the avatar, not the window: the window has 90+ pt of empty
+        // padding round the sprite, which kept Nikxel well off the edges.
+        // Sides by half the sprite (its 64 px frame is mostly transparent at
+        // the sides), feet on the bottom edge, head under the menu bar.
+        if let scr = screen, let view = nikxelView {
+            let a = view.avatarCenter, h = view.halfChar
+            let f = scr.frame
+            origin.x = max(f.minX - a.x + h / 2, min(origin.x, f.maxX - a.x - h / 2))
+            // Top stops under the menu bar: visibleFrame leaves it out.
+            let top = scr.visibleFrame.maxY
+            origin.y = max(f.minY - a.y + h, min(origin.y, top - a.y - h))
+            // Under ~220 pt of headroom (a 5-line card plus its tail), the
+            // bubbles go under the feet instead.
+            view.bubblesBelow = top - (origin.y + a.y + h) < 220
         }
         setFrameOrigin(origin)
         stateMachine.position = origin

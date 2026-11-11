@@ -79,7 +79,7 @@ extension NikxelView {
         let cardW = textW + M.pad * 2
         let cardH = titleH + (measured.isEmpty ? 0 : M.titleGap + bodyH) + M.pad * 2
         let cardX = cx - cardW / 2
-        let cardY = cy + halfChar + M.liftAboveHead + M.tailHeight
+        let cardY = headY(M.liftAboveHead + M.tailHeight, height: cardH)
 
         // --- Card + tail as one path, so the shadow wraps both and no seam
         //     shows where the tail meets the card ------------------------------
@@ -89,10 +89,13 @@ extension NikxelView {
                                 xRadius: M.corner, yRadius: M.corner)
         // Offset left of centre, the way a speech tail sits.
         let tailMidX = cardX + min(cardW * 0.28, 46)
+        // The tail points at the avatar: down from the card's bottom edge, or
+        // up from its top when the card hangs below the feet.
+        let (edge, dir): (CGFloat, CGFloat) = bubblesBelow ? (cardY + cardH, 1) : (cardY, -1)
         let tail = NSBezierPath()
-        tail.move(to: NSPoint(x: tailMidX - M.tailWidth / 2, y: cardY + 1))
-        tail.line(to: NSPoint(x: tailMidX + M.tailWidth / 2, y: cardY + 1))
-        tail.line(to: NSPoint(x: tailMidX - M.tailWidth / 2 + 3, y: cardY - M.tailHeight))
+        tail.move(to: NSPoint(x: tailMidX - M.tailWidth / 2, y: edge - dir))
+        tail.line(to: NSPoint(x: tailMidX + M.tailWidth / 2, y: edge - dir))
+        tail.line(to: NSPoint(x: tailMidX - M.tailWidth / 2 + 3, y: edge + dir * M.tailHeight))
         tail.close()
         path.append(tail)
         ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 14,
@@ -135,7 +138,7 @@ extension NikxelView {
 
         // Hit rect covers the tail too, so a click just under the card still
         // counts rather than falling through to the desktop.
-        c.hitRect = NSRect(x: cardX, y: cardY - M.tailHeight,
+        c.hitRect = NSRect(x: cardX, y: bubblesBelow ? cardY : cardY - M.tailHeight,
                            width: cardW, height: cardH + M.tailHeight)
         card = c
     }

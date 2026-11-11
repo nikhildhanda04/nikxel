@@ -469,17 +469,90 @@ enum GoogleSync {
         }
     }
 
-    private static func post(_ urlString: String, body: [String: Any], token: String,
+    // MARK: - Calls agreed in WhatsApp
+
+    static var canScheduleMeets: Bool {
+        GoogleAuth.shared.isAuthorized
+            && GoogleAuth.shared.hasScope("https://www.googleapis.com/auth/calendar.events")
+    }
+
+    private static let eventsURL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+
+    /// No Google account: a Jitsi room needs no account or API to create --
+    /// the link is the room. Random name so it can't be guessed.
+    /// ponytail: public meet.jit.si, whose first joiner signs in (Google,
+    /// GitHub or Facebook) to open the room. Point it at a self-hosted or
+    /// login-free Jitsi instance if that ever bites.
+    static func jitsiLink() -> String {
+        "https://meet.jit.si/Nikxel-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
+    }
+
+    /// A 30-minute calendar event with a Meet link, for a call agreed with a
+    /// WhatsApp contact. Calls back with the link and the event id (to move or
+    /// delete it). Without Google -- or if Google fails -- the link is a Jitsi
+    /// room and the id is nil, so there is no event to move or delete.
+    static func createChatMeet(with contact: String, at start: Date,
+                               completion: @escaping (_ link: String?, _ eventId: String?) -> Void) {
+        guard canScheduleMeets else { completion(jitsiLink(), nil); return }
+        GoogleAuth.shared.withAccessToken { token in
+            guard let token = token else { completion(jitsiLink(), nil); return }
+            post(eventsURL + "?conferenceDataVersion=1", body: [
+                "summary": "Call with \(contact)",
+                "description": "Agreed over WhatsApp. Nikxel sends \(contact) the Meet link at the start time.",
+                "start": eventTime(start), "end": eventTime(start.addingTimeInterval(30 * 60)),
+                "conferenceData": ["createRequest": ["requestId": UUID().uuidString,
+                                                     "conferenceSolutionKey": ["type": "hangoutsMeet"]]],
+            ], token: token) { obj, err in
+                if let err = err { cblog("GoogleSync: Meet for '\(contact)' failed — \(err); using Jitsi") }
+                guard let link = obj?["hangoutLink"] as? String else { completion(jitsiLink(), nil); return }
+                completion(link, obj?["id"] as? String)
+            }
+        }
+    }
+
+    /// Same event, same link, new time.
+    static func moveChatMeet(eventId: String, to start: Date) {
+        GoogleAuth.shared.withAccessToken { token in
+            guard let token = token else { return }
+            post("\(eventsURL)/\(eventId)", method: "PATCH",
+                 body: ["start": eventTime(start), "end": eventTime(start.addingTimeInterval(30 * 60))],
+                 token: token) { _, err in
+                if let err = err { cblog("GoogleSync: moving Meet \(eventId) failed — \(err)") }
+            }
+        }
+    }
+
+    static func deleteChatMeet(eventId: String) {
+        GoogleAuth.shared.withAccessToken { token in
+            guard let token = token else { return }
+            post("\(eventsURL)/\(eventId)", method: "DELETE", body: nil, token: token) { _, err in
+                if let err = err { cblog("GoogleSync: deleting Meet \(eventId) failed — \(err)") }
+            }
+        }
+    }
+
+    private static func eventTime(_ d: Date) -> [String: String] {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        iso.timeZone = TimeZone.current
+        return ["dateTime": iso.string(from: d), "timeZone": TimeZone.current.identifier]
+    }
+
+    private static func post(_ urlString: String, method: String = "POST", body: [String: Any]?, token: String,
                              completion: @escaping ([String: Any]?, String?) -> Void) {
-        guard let url = URL(string: urlString),
-              let data = try? JSONSerialization.data(withJSONObject: body) else {
+        guard let url = URL(string: urlString) else {
             completion(nil, "could not build the request"); return
         }
         var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+        req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = data
+        if let body = body {
+            guard let data = try? JSONSerialization.data(withJSONObject: body) else {
+                completion(nil, "could not build the request"); return
+            }
+            req.httpBody = data
+        }
         URLSession.shared.dataTask(with: req) { data, resp, err in
             if let err = err { completion(nil, err.localizedDescription); return }
             let obj = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }

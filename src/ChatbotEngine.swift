@@ -185,6 +185,25 @@ class ChatbotEngine {
     }
     private var pending: [String: Pending] = [:]
 
+    /// Calls agreed in chat, keyed like `pending`: the Meet link goes to the
+    /// contact at `at`. Touched from the poll thread and Google callbacks.
+    /// ponytail: in memory only -- a call scheduled before a restart loses its
+    /// share (the calendar event survives). Persist to disk if that bites.
+    private struct ScheduledMeet {
+        let contact: String
+        var at: Date
+        var link: String?
+        var eventId: String?
+        /// Kept an hour after the link goes out, so "give me 5 more minutes"
+        /// is understood as running late, not as a new call needing a new link.
+        var sentAt: Date?
+    }
+    private var meets: [String: ScheduledMeet] = [:]
+    private let meetLock = NSLock()
+    /// Runs while any call is scheduled, independent of the reply poller, so a
+    /// link still goes out after a meeting ends in meetings-only mode.
+    private var meetTimer: Timer?
+
     /// Fired on the main thread after a batch of replies, with one entry per
     /// contact answered and whether they were drafted rather than sent. Wired
     /// to the avatar card in NikxelApp.
@@ -316,6 +335,7 @@ class ChatbotEngine {
     // MARK: - Core logic
 
     private func performCheck() {
+        sendDueMeets()
         // 1. Get all unread chats via Chrome JS (fast — no AX traversal needed).
         let unreadChats = ChromeWhatsApp.unreadChats()
         cblog("ChatbotEngine: unread=\(unreadChats.count)")
@@ -521,7 +541,14 @@ class ChatbotEngine {
             }
 
             // 6. Generate reply.
-            guard let reply = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "), history: history) else {
+            // Their own meeting link replaces the one we'd send.
+            if messages.contains(where: Self.containsMeetingLink) {
+                cancelMeet(key: key, why: "they sent their own link")
+            }
+            meetLock.lock(); let call = meets[key]; meetLock.unlock()
+            guard let reply = llm?.reply(for: chat.name, messagePreview: messages.joined(separator: " | "),
+                                         history: history, scheduledCall: call?.at,
+                                         linkSent: call?.sentAt != nil) else {
                 cblog("ChatbotEngine: LLM nil for '\(chat.name)'")
                 setActiveContact(nil); continue
             }
@@ -530,20 +557,8 @@ class ChatbotEngine {
             cblog("ChatbotEngine: reply='\(replyText.prefix(80))...'")
 
             // 7. Verify we're in the right conversation.
-            if let header = ChromeWhatsApp.conversationHeader() {
-                let a = header.lowercased().trimmingCharacters(in: .whitespaces)
-                let b = chat.name.lowercased().trimmingCharacters(in: .whitespaces)
-                // `contains` as well as the prefix tests: WhatsApp qualifies a
-                // group's label with a leading word ("group Warrior Tennis"),
-                // and that word is localised, so it cannot all be stripped by
-                // name. Containment covers whatever the qualifier turns out to
-                // be while still catching a genuinely wrong chat.
-                if a != b && !a.hasPrefix(b) && !b.hasPrefix(a) && !a.contains(b) {
-                    cblog("ChatbotEngine: VERIFY FAILED header='\(header)' target='\(chat.name)' — ABORT")
-                    setActiveContact(nil); continue
-                }
-                cblog("ChatbotEngine: verified '\(chat.name)'")
-            }
+            guard chatIsOpen(chat.name) else { setActiveContact(nil); continue }
+            cblog("ChatbotEngine: verified '\(chat.name)'")
 
             // 8. Send -- or, in draft mode, type it and stop.
             let ok = draftOnly ? ChromeWhatsApp.draftMessage(replyText)
@@ -556,6 +571,15 @@ class ChatbotEngine {
             // 9. A task the contact asked for, if the reply pass found one.
             // Fire-and-forget: it no-ops without a connected Google account and
             // must never hold up the next chat in the batch.
+            switch reply.meet {
+            case .inMinutes(let n)?:
+                scheduleMeet(key: key, contact: chat.name, inMinutes: n)
+            case .cancel?:
+                cancelMeet(key: key, why: "they called it off")
+            default:
+                break
+            }
+
             if let task = reply.task {
                 GoogleSync.createChatTask(title: task, from: chat.name)
             }
@@ -573,6 +597,107 @@ class ChatbotEngine {
             DispatchQueue.main.async { [weak self] in self?.onRepliesSent?(batch, draftOnly) }
         }
         setActiveContact(nil)
+    }
+
+    // MARK: - Scheduled Meet links
+
+    /// Someone else's meeting link: theirs replaces the one we'd send.
+    static func containsMeetingLink(_ s: String) -> Bool {
+        s.range(of: #"meet\.google\.com/|meet\.jit\.si/|zoom\.us/(j|my)/|teams\.(microsoft|live)\.com/"#,
+                options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private func scheduleMeet(key: String, contact: String, inMinutes n: Int) {
+        let at = Date().addingTimeInterval(Double(n * 60))
+        meetLock.lock()
+        // A call whose link already went out is done; a new ask is a new call.
+        let existing = meets[key].flatMap { $0.sentAt == nil ? $0 : nil }
+        meets[key] = ScheduledMeet(contact: contact, at: at, link: existing?.link, eventId: existing?.eventId)
+        meetLock.unlock()
+        if let id = existing?.eventId {
+            cblog("ChatbotEngine: call with '\(contact)' moved to \(at)")
+            GoogleSync.moveChatMeet(eventId: id, to: at)
+        } else if existing == nil {
+            cblog("ChatbotEngine: call with '\(contact)' set for \(at) — creating Meet")
+            GoogleSync.createChatMeet(with: contact, at: at) { [weak self] link, id in
+                guard let self = self else { return }
+                self.meetLock.lock()
+                if link == nil { self.meets[key] = nil } else { self.meets[key]?.link = link; self.meets[key]?.eventId = id }
+                // Moved again while the create was in flight: put the event at the latest time.
+                let latest = self.meets[key]?.at
+                self.meetLock.unlock()
+                if let id = id, let latest = latest, latest != at { GoogleSync.moveChatMeet(eventId: id, to: latest) }
+            }
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.meetTimer == nil else { return }
+            self.meetTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+                guard let self = self, !self.pollingInProgress else { return }
+                self.pollingInProgress = true
+                DispatchQueue.global(qos: .utility).async {
+                    defer { self.pollingInProgress = false }
+                    self.sendDueMeets()
+                }
+            }
+        }
+    }
+
+    private func cancelMeet(key: String, why: String) {
+        meetLock.lock(); let m = meets.removeValue(forKey: key); meetLock.unlock()
+        guard let m = m, m.sentAt == nil else { return }
+        cblog("ChatbotEngine: call with '\(m.contact)' cancelled — \(why)")
+        if let id = m.eventId { GoogleSync.deleteChatMeet(eventId: id) }
+    }
+
+    /// Sends every link whose time has come. Runs on the poll thread (start of
+    /// each poll) and from `meetTimer`, never both at once.
+    private func sendDueMeets() {
+        meetLock.lock()
+        meets = meets.filter { $0.value.sentAt.map { Date().timeIntervalSince($0) < 3600 } ?? true }
+        let due = meets.filter { $0.value.sentAt == nil && $0.value.at <= Date() }
+        meetLock.unlock()
+        for (key, m) in due {
+            guard let link = m.link else {
+                // Event creation failed or never returned: nothing to send.
+                if Date().timeIntervalSince(m.at) > 120 { cancelMeet(key: key, why: "no Meet link was created") }
+                continue
+            }
+            ChromeWhatsApp.clickChat(name: m.contact)
+            guard ChromeWhatsApp.waitForMessages(), chatIsOpen(m.contact) else {
+                if Date().timeIntervalSince(m.at) > 300 {
+                    cblog("ChatbotEngine: gave up sending Meet link to '\(m.contact)'")
+                    meetLock.lock(); meets[key] = nil; meetLock.unlock()
+                }
+                continue
+            }
+            let text = "Here's the meeting link for the call: \(link)"
+            let ok = NikxelSettings.waDraftOnly ? ChromeWhatsApp.draftMessage(text) : ChromeWhatsApp.sendMessage(text)
+            cblog("ChatbotEngine: Meet link to '\(m.contact)' \(NikxelSettings.waDraftOnly ? "drafted" : "sent")=\(ok)")
+            if ok {
+                meetLock.lock(); meets[key]?.sentAt = Date(); meetLock.unlock()
+                if !NikxelSettings.waDraftOnly { sentByBot[key] = Array(((sentByBot[key] ?? []) + [text]).suffix(sentCap)) }
+            }
+        }
+        meetLock.lock(); let empty = meets.values.allSatisfy { $0.sentAt != nil }; meetLock.unlock()
+        if empty { DispatchQueue.main.async { [weak self] in self?.meetTimer?.invalidate(); self?.meetTimer = nil } }
+    }
+
+    /// Whether the open conversation is `name`'s. No header at all passes, as
+    /// it always has: it means WhatsApp's markup moved, not a wrong chat.
+    private func chatIsOpen(_ name: String) -> Bool {
+        guard let header = ChromeWhatsApp.conversationHeader() else { return true }
+        let a = header.lowercased().trimmingCharacters(in: .whitespaces)
+        let b = name.lowercased().trimmingCharacters(in: .whitespaces)
+        // `contains` as well as the prefix tests: WhatsApp qualifies a
+        // group's label with a leading word ("group Warrior Tennis"),
+        // and that word is localised, so it cannot all be stripped by
+        // name. Containment covers whatever the qualifier turns out to
+        // be while still catching a genuinely wrong chat.
+        if a != b && !a.hasPrefix(b) && !b.hasPrefix(a) && !a.contains(b) {
+            cblog("ChatbotEngine: VERIFY FAILED header='\(header)' target='\(name)' — ABORT")
+            return false
+        }
+        return true
     }
 
     // MARK: - Helpers

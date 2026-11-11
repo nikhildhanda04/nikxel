@@ -113,17 +113,12 @@ final class GoogleAuth {
 
     // MARK: - Entry points
 
-    /// Authorize if needed, otherwise report ready. Safe to call on launch.
+    /// Resume an existing connection on launch. Google is optional, so this
+    /// never nags or opens a sign-in -- connecting is the menu's "Connect
+    /// Google Account…" (`reauthenticate`).
     func start() {
-        guard loadCreds() else {
-            DispatchQueue.main.async { [weak self] in self?.showSetupAlert() }
-            return
-        }
-        if loadTokens() {
-            DispatchQueue.main.async { [weak self] in self?.onAuthorized?() }
-        } else {
-            DispatchQueue.main.async { [weak self] in self?.startOAuthFlow() }
-        }
+        guard loadCreds(), loadTokens() else { return }
+        DispatchQueue.main.async { [weak self] in self?.onAuthorized?() }
     }
 
     /// Re-run consent from scratch -- the menu's "Connect Google Account", and

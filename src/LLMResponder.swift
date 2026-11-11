@@ -38,15 +38,36 @@ class LLMResponder {
         /// Short imperative pulled out of the contact's message, e.g. "Send the
         /// deck to Priya by Friday". nil when they weren't asking for anything.
         let task: String?
+        /// A call the contact proposed, moved or called off.
+        let meet: MeetAsk?
+    }
+
+    enum MeetAsk: Equatable {
+        case inMinutes(Int)
+        case cancel
+    }
+
+    /// `[[MEET: 20]]` -> in 20 minutes, `[[MEET: cancel]]` -> call off. Anything
+    /// else, or a time outside 1 min..12 h, is ignored rather than guessed at.
+    static func parseMeet(_ value: String?) -> MeetAsk? {
+        guard let v = value?.trimmingCharacters(in: .whitespaces).lowercased() else { return nil }
+        if v == "cancel" { return .cancel }
+        guard let n = Int(v), (1...720).contains(n) else { return nil }
+        return .inMinutes(n)
     }
 
     /// Generate a reply for a contact based on their message preview and
     /// previous conversation history.
+    /// `scheduledCall` is a call already set with this contact, so "give me 5
+    /// more minutes" can move it; `linkSent` says its Meet link already went.
     func reply(for contact: String,
                messagePreview: String?,
-               history: [(role: String, text: String)]) -> Reply? {
+               history: [(role: String, text: String)],
+               scheduledCall: Date? = nil,
+               linkSent: Bool = false) -> Reply? {
         let msgs = messagePreview != nil ? [messagePreview!] : []
-        let prompt = buildPrompt(contact: contact, history: history, newMessages: msgs)
+        let prompt = buildPrompt(contact: contact, history: history, newMessages: msgs,
+                                 scheduledCall: scheduledCall, linkSent: linkSent)
         do {
             // ponytail: Haiku hardcoded -- a 1-3 sentence reply doesn't need a
             // bigger model, and it's ~2x faster. Make it a setting if replies
@@ -54,9 +75,10 @@ class LLMResponder {
             let raw = try momGenerator.runPrompt(prompt, kind: "whatsapp", claudeModel: "haiku")
             // Task marker first: cleanReply truncates to three sentences, which
             // would eat a trailing marker before it was ever read.
-            let (body, task) = Self.extractTask(raw)
+            let (afterTask, task) = Self.extractTask(raw)
+            let (body, meet) = Self.extractMarker("MEET", from: afterTask)
             guard let text = cleanReply(body) else { return nil }
-            return Reply(text: text, task: task)
+            return Reply(text: text, task: task, meet: Self.parseMeet(meet))
         } catch {
             cblog("LLMResponder: failed — \(error)")
             return nil
@@ -71,9 +93,16 @@ class LLMResponder {
     /// the first marker is kept -- one message is one ask, and a model that
     /// emits five has misunderstood the instruction.
     static func extractTask(_ raw: String) -> (body: String, task: String?) {
+        let (body, value) = extractMarker("TASK", from: raw)
+        return (body, value)
+    }
+
+    /// `[[NAME: value]]` markers: first non-empty, non-"none" value, and the
+    /// text with every such marker removed.
+    static func extractMarker(_ name: String, from raw: String) -> (body: String, value: String?) {
         var task: String?
         var body = raw
-        while let open = body.range(of: "[[TASK:"),
+        while let open = body.range(of: "[[\(name):"),
               let close = body.range(of: "]]", range: open.upperBound..<body.endIndex) {
             let inner = body[open.upperBound..<close.lowerBound]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,7 +116,9 @@ class LLMResponder {
 
     private func buildPrompt(contact: String,
                              history: [(role: String, text: String)],
-                             newMessages: [String]) -> String {
+                             newMessages: [String],
+                             scheduledCall: Date? = nil,
+                             linkSent: Bool = false) -> String {
         let trusted = WAContactLists.contains(.trusted, contact: contact)
         var p = personality + "\n\n"
         p += recentContextBlock(trusted: trusted)
@@ -114,6 +145,24 @@ class LLMResponder {
             and the contact never sees it. If they were only chatting, asking \
             how you are, or sharing news, add nothing -- an empty inbox is worth \
             more than an invented task.
+
+            """
+        }
+        do {
+            let t = DateFormatter(); t.dateFormat = "h:mm a"
+            let name = NikxelSettings.userName
+            p += """
+
+            Current time: \(t.string(from: Date())).\(scheduledCall.map { linkSent
+                ? " A call with this contact was set for \(t.string(from: $0)) and its meeting link is already in the chat -- if they ask for more time, just acknowledge it; no MEET line."
+                : " A call with this contact is already set for \(t.string(from: $0)); a meeting link goes to them then. If they ask for more time, push it later: the set time plus that delay (or now plus it, if the set time has passed)." } ?? "")
+            If they propose a call or meeting with \(name) at a time or after a \
+            delay ("let's connect in 20 mins", "call at 6", "give me 5 more \
+            minutes", "after 30"), add one final line: [[MEET: <whole minutes \
+            from now until the call>]]. If they call it off, add [[MEET: cancel]]. If they \
+            sent their own meeting link, or just chatted, add nothing. When you \
+            add a MEET line, say in your reply that you'll send a meeting \
+            link at that time. The line is stripped before sending.
 
             """
         }

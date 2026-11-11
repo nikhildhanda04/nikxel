@@ -71,6 +71,20 @@ Sleep gaps are capped at 5 min per sample so a night of sleep doesn't get
 charged to whatever app was frontmost when you closed the laptop. Window
 titles need Accessibility (the same grant the typing animation uses).
 
+### Calls agreed in WhatsApp
+
+When a contact proposes a call ("let's connect in 20 mins", "call at 6",
+"after 30"), the bot says it'll send a link and posts it in the chat when the
+time comes. "Give me 5 more minutes" pushes the call later; "cancel the call"
+drops it. If they send their own Meet, Jitsi, Zoom or Teams link, the scheduled
+share is dropped. With a connected Google account the link is a Google Meet on
+a 30-minute calendar event, which a delay moves and a cancel deletes. Without
+one it's a Jitsi room (`meet.jit.si`): no account needed to create it, though
+the first person to join signs in with Google, GitHub or Facebook to open it.
+Draft mode drafts the link
+instead of sending it. Scheduled shares live in memory, so a restart before the
+call time drops the share (a Google calendar event stays).
+
 ### AI usage
 
 Menu bar → **AI Usage** shows what Claude Code runs have cost: today's total

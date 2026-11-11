@@ -333,6 +333,24 @@ struct CheckWABot {
                                      preview: "And the datacap task for pos…"), "truncated preview / trailing time still match")
         assert(WABotGate.showsLatest(pane, preview: ""), "nothing to check against")
 
+        // --- Calls agreed in chat --------------------------------------------
+        let both = LLMResponder.extractMarker("MEET", from: LLMResponder.extractTask(
+            "Sure, I'll send a Meet link at 5:47.\n[[TASK: Call Shreyaa]]\n[[MEET: 20]]").body)
+        assert(both.body == "Sure, I'll send a Meet link at 5:47." && both.value == "20", "\(both)")
+        assert(LLMResponder.parseMeet("20") == .inMinutes(20))
+        assert(LLMResponder.parseMeet(" Cancel ") == .cancel)
+        assert(LLMResponder.parseMeet("0") == nil && LLMResponder.parseMeet("721") == nil, "outside 1 min..12 h")
+        assert(LLMResponder.parseMeet("in a bit") == nil && LLMResponder.parseMeet(nil) == nil)
+        assert(LLMResponder.extractMarker("MEET", from: "No call talk here.").value == nil)
+        assert(ChatbotEngine.containsMeetingLink("join here https://meet.google.com/abc-defg-hij"))
+        assert(ChatbotEngine.containsMeetingLink("https://us02web.zoom.us/j/123456"))
+        assert(ChatbotEngine.containsMeetingLink("https://teams.microsoft.com/l/meetup-join/x"))
+        assert(!ChatbotEngine.containsMeetingLink("let's meet in 20 mins"))
+        // No Google: a fresh, unguessable Jitsi room, which our own detector recognises.
+        let j1 = GoogleSync.jitsiLink(), j2 = GoogleSync.jitsiLink()
+        assert(j1.hasPrefix("https://meet.jit.si/Nikxel-") && j1.count == 43 && j1 != j2, j1)
+        assert(ChatbotEngine.containsMeetingLink(j1))
+
         assert(ChatbotEngine.fingerprint("Hi 👋 there!") == ChatbotEngine.fingerprint("Hi there"))
 
         print("check_wa_bot: OK")

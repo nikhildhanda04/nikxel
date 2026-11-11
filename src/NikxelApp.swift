@@ -354,6 +354,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let setupWizard = NSMenuItem(title: "Setup Wizard…", action: #selector(openOnboarding), keyEquivalent: "")
         setupWizard.target = self; menu.addItem(setupWizard)
 
+        let copyLogs = NSMenuItem(title: "Copy Logs (to share when something breaks)", action: #selector(copyLogs), keyEquivalent: "")
+        copyLogs.target = self; menu.addItem(copyLogs)
+
         let update = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         update.target = self; menu.addItem(update)
         self.updateMenuItem = update
@@ -627,6 +630,18 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     NikxelView.tell(icon: "⚠️", title: "Regeneration failed",
                                     lines: [String("\(error)".prefix(160))], kind: .error, lifetime: .infinity)
                 }
+            }
+        }
+    }
+
+    @objc func copyLogs() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text = SupportLogs.report()
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                NikxelView.tell(icon: "📋", title: "Logs copied",
+                                lines: ["Paste them into WhatsApp (⌘V) and send."], kind: .success, lifetime: 8)
             }
         }
     }

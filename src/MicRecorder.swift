@@ -2,7 +2,11 @@ import Foundation
 import AVFoundation
 
 class MicRecorder {
-    private let engine = AVAudioEngine()
+    /// Fresh per recording. A reused engine keeps the input format it first
+    /// saw; when the mic changes between recordings (AirPods joining a Meet
+    /// call) installTap throws a format-mismatch NSException, which Swift
+    /// can't catch -- it took the whole app down.
+    private var engine = AVAudioEngine()
     private var file: AVAudioFile?
     private(set) var url: URL?
     private(set) var isRecording = false
@@ -18,6 +22,7 @@ class MicRecorder {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw MicError.permissionDenied
         }
+        engine = AVAudioEngine()
         let input = engine.inputNode
         let fmt = input.outputFormat(forBus: 0)
         guard fmt.sampleRate > 0 else { throw MicError.engineStartFailed("no input device") }
@@ -34,7 +39,8 @@ class MicRecorder {
         }
         self.url = outputURL
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, _ in
+        // nil = the bus's own current format, which by definition matches.
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buf, _ in
             guard let self = self, let f = self.file else { return }
             if self.isMuted {
                 // Write a zero-filled buffer to keep the mic timeline aligned with

@@ -109,10 +109,20 @@ private struct AgentBackend {
 }
 
 class MOMGenerator {
-    enum MOMError: Error {
+    enum MOMError: Error, CustomStringConvertible {
         case agentNotFound
         case transcriptEmpty
         case generationFailed(String)
+
+        /// Plain text, not `generationFailed("…\n…")`: the failure card splits
+        /// this on real newlines to find the reason and the "Logs:" path.
+        var description: String {
+            switch self {
+            case .agentNotFound: return "No coding agent found."
+            case .transcriptEmpty: return "The transcript was empty."
+            case .generationFailed(let s): return s
+            }
+        }
     }
 
     // Upper bound on a single agent run. Generation normally takes well under
@@ -307,8 +317,17 @@ class MOMGenerator {
         }
 
         guard task.terminationStatus == 0 else {
-            let errStr = String(data: errData, encoding: .utf8) ?? "exit \(task.terminationStatus)"
-            let snippet = errStr.isEmpty ? "(no stderr; exit \(task.terminationStatus))" : String(errStr.prefix(500))
+            // claude --output-format json reports its failures ("Not logged
+            // in", "Credit balance is too low") in stdout's `result`, with
+            // stderr empty -- which used to surface as just "exit 1".
+            var errStr = (String(data: errData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if errStr.isEmpty {
+                let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any]
+                errStr = (obj?["result"] as? String)
+                    ?? String((String(data: outData, encoding: .utf8) ?? "").suffix(500))
+                errStr = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let snippet = errStr.isEmpty ? "\(backend.whichName) exited with code \(task.terminationStatus)" : String(errStr.prefix(500))
             throw MOMError.generationFailed("\(snippet)\n\nLogs: \(workspace.path)")
         }
         if agent == .claude { UsageLog.record(outData, kind: kind) }

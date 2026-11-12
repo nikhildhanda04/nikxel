@@ -46,7 +46,7 @@ enum NoteExporter {
         let destination = markdownURL.deletingPathExtension()
             .appendingPathExtension(format.fileExtension)
         if format == .page {
-            try html(from: markdown).write(to: destination, atomically: true, encoding: .utf8)
+            try NotePage.html(from: markdown).write(to: destination, atomically: true, encoding: .utf8)
             return destination
         }
         let attributed = try attributedString(from: markdown)
@@ -271,28 +271,37 @@ enum NoteExporter {
     }
 
     /// "- None." / "None — no tasks came out of this meeting."
-    private static func isNone(_ text: String) -> Bool {
+    static func isNone(_ text: String) -> Bool {
         let t = text.lowercased().trimmingCharacters(in: .whitespaces)
         return t == "none" || t == "none." || t.hasPrefix("none —") || t.hasPrefix("none -")
     }
 
-    /// "**Task** — Owner: Vikas — Due: Not specified" -> the task, then a chip
-    /// per "Key: value" field. Parts that aren't fields stay in the text.
-    private static func fields(_ item: String) -> String {
-        let parts = item.components(separatedBy: " — ")
-        var text: [String] = [], chips: [String] = []
-        for (i, part) in parts.enumerated() {
+    /// "**Task** — Owner: Vikas — Due: Not specified" -> ("**Task**", [("Owner",
+    /// "Vikas"), ("Due", "Not specified")]). Parts that aren't fields stay text.
+    static func splitFields(_ item: String) -> (text: String, fields: [(key: String, value: String)]) {
+        var text: [String] = [], out: [(key: String, value: String)] = []
+        for (i, part) in item.components(separatedBy: " — ").enumerated() {
             guard i > 0, let colon = part.firstIndex(of: ":") else { text.append(part); continue }
             let key = part[..<colon].trimmingCharacters(in: .whitespaces)
             let value = part[part.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             guard !key.isEmpty, key.count <= 12, !value.isEmpty,
                   key.allSatisfy({ $0.isLetter || $0 == " " }) else { text.append(part); continue }
-            let unset = ["not specified", "unassigned"].contains(value.lowercased())
-            let cls = "chip \(key.lowercased().replacingOccurrences(of: " ", with: "-"))\(unset ? " unset" : "")"
-            chips.append("<span class=\"\(cls)\">&nbsp;<span class=\"k\">\(escape(key))</span>&nbsp; \(inline(value))&nbsp;</span>")
+            out.append((key, value))
         }
-        let body = inline(text.joined(separator: " — "))
-        return chips.isEmpty ? body : "\(body)<br/>\(chips.joined(separator: " "))"
+        return (text.joined(separator: " — "), out)
+    }
+
+    /// A field as a chip; "Unassigned" / "Not specified" greyed out.
+    static func chip(_ key: String, _ value: String) -> String {
+        let unset = ["not specified", "unassigned"].contains(value.lowercased())
+        let cls = "chip \(key.lowercased().replacingOccurrences(of: " ", with: "-"))\(unset ? " unset" : "")"
+        return "<span class=\"\(cls)\">&nbsp;<span class=\"k\">\(escape(key))</span>&nbsp; \(inline(value))&nbsp;</span>"
+    }
+
+    private static func fields(_ item: String) -> String {
+        let (text, fields) = splitFields(item)
+        let body = inline(text)
+        return fields.isEmpty ? body : "\(body)<br/>\(fields.map { chip($0.key, $0.value) }.joined(separator: " "))"
     }
 
     /// "1. text" / "2) text" -> "text"
@@ -304,14 +313,14 @@ enum NoteExporter {
         return String(rest.dropFirst(2))
     }
 
-    private static func escape(_ text: String) -> String {
+    static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     /// Escapes first, then applies inline markers, so the tags it emits survive.
-    private static func inline(_ text: String) -> String {
+    static func inline(_ text: String) -> String {
         var s = escape(text)
         s = wrap(s, marker: "**", tag: "b")
         s = wrap(s, marker: "`", tag: "code")

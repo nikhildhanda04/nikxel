@@ -1,11 +1,11 @@
 # Nikxel — Your Pixel Desktop Companion
 
-A tiny pixel-art character that lives on your macOS desktop. Watches your AI
+A tiny pixel-art character that lives on your macOS or Windows desktop. Watches your AI
 agents work, records meetings and writes the notes for you, surfaces today's
 calendar events, and bubbles up reminders you added while you were away from
 your laptop.
 
-![Nikxel](nikxel_avatar.png)
+![Nikxel](Nikxel.app/Contents/Resources/nikxel_avatar.png)
 
 ## What it does
 
@@ -297,6 +297,61 @@ default carries a version tag, and a copy of yours that is behind is replaced
 on the next launch. Edit the prompts freely — but delete the
 `<!-- nikxel-prompt vN -->` line at the top if you want yours left alone
 permanently.
+
+## Install (Windows)
+
+The Windows app lives in `windows/`. It's the same Nikxel (avatar, recording
+and notes, WhatsApp bot, Google, daily summary, updates), built with Electron
+from this clone, so there's no installer to download and SmartScreen never asks.
+
+### 1. Prerequisites
+
+- Windows 10 or 11
+- [Node.js](https://nodejs.org) 20 or later: `winget install OpenJS.NodeJS.LTS`
+- [Git](https://git-scm.com): `winget install Git.Git` (Check for Updates pulls with it)
+- A coding agent for the notes, e.g. Claude Code: `npm install -g @anthropic-ai/claude-code`
+
+Open a **new** terminal after installing so `node` and `git` are on the PATH.
+
+### 2. Clone and build
+
+```bat
+git clone https://github.com/nikhildhanda04/nikxel.git
+cd nikxel\windows
+setup.cmd
+```
+
+`setup.cmd` installs the dependencies, builds, and starts Nikxel. On first
+launch it adds itself to the Start menu and to startup apps, so after a restart
+it's back on its own. The avatar appears on your desktop and a Nikxel icon in
+the system tray (click the `^` arrow if it's hidden; drag it out to pin it).
+
+### 3. Walk through the setup wizard
+
+Same steps as on the Mac: your name, avatar, transcription tools, WhatsApp,
+Google, and which coding agent writes your notes. Reopen it any time from the
+tray menu → **Setup Wizard…**.
+
+- **Transcription:** the wizard downloads whisper.cpp and its model into
+  `~/.nikxel/`; ffmpeg ships with the app. No Homebrew needed.
+- **WhatsApp:** scan the QR code in Nikxel's own WhatsApp window. No Chrome needed.
+- **Microphone:** if recording is silent, check Settings → Privacy & security →
+  Microphone → **Let desktop apps access your microphone** is on.
+
+### How Windows differs from the Mac
+
+- **Reminders:** Windows has no Apple Reminders, so new **Google Tasks** pop up
+  as the reminder bubbles instead (connect Google in the wizard).
+- **Small bubbles** are translucent dark pills; Windows can't blur behind a
+  transparent window the way Liquid Glass does.
+- **Word export** shows Owner / Due as plain text rather than tags.
+- Settings, prompts, notes and your avatar live in `%USERPROFILE%\.nikxel\`,
+  exactly like `~/.nikxel/` on the Mac.
+
+### Updating
+
+Tray menu → **Check for Updates**, or run `setup.cmd` again. It quits the
+running copy, pulls, rebuilds and restarts.
 
 ## Make your own avatar
 
@@ -680,9 +735,10 @@ empty scan is usually one of two things: the root is wrong, or macOS is refusing
 to let Nikxel list that folder. The second is fixed in System Settings →
 Privacy & Security → Files and Folders → Nikxel.
 
-## Note format — Markdown, PDF or Word
+## Note format — Page, Markdown, PDF or Word
 
-Menu bar → **Note Format** → Markdown (.md) · PDF (.pdf) · Word (.docx).
+Menu bar (tray on Windows) → **Note Format** → Page (.html, the default: a styled
+page that opens in your browser) · Markdown (.md) · PDF (.pdf) · Word (.docx).
 
 The Markdown your agent wrote is **always** saved; picking PDF or Word renders
 that into a second file beside it, so nothing is ever lost to a failed
@@ -731,13 +787,21 @@ One connection covers three things: a nudge from the avatar before a meeting
 starts, action items pushed to **Google Tasks**, and agreed follow-ups created
 as **Calendar events with a Meet link**.
 
-1. Google Cloud Console → APIs & Services → Credentials.
-2. Enable the **Google Calendar API** and the **Google Tasks API**.
-3. Create OAuth client ID → "Desktop app". Download the JSON.
-4. Save it to `~/.nikxel/google_creds.json`.
-5. Status bar → **Connect Google Account…** to run the OAuth flow.
+Click **Connect Google** in the setup wizard (or status bar → **Connect Google
+Account…**) and sign in. That's it, if the build ships a Google client
+(`google_client.json` in the repo root, copied into the app by `build.sh`).
 
-See the in-app prompt for the full step-by-step.
+Without one, bring your own client, once: in Google Cloud Console enable the
+**Calendar** and **Tasks** APIs, create an OAuth client ID → "Desktop app",
+download the JSON, copy its contents and click **Paste from Clipboard** in
+Nikxel's prompt. (Saving it to `~/.nikxel/google_creds.json` still works and
+takes precedence.)
+
+## Agent check
+
+The wizard's last step tests Claude Code, OpenCode and Codex with a real
+one-word request: installed, starts, and answers. A failed answer is sorted
+into "not logged in" (with the command to run) or "failing" (with the reason).
 
 ### Sending a meeting's tasks to Google
 
@@ -828,6 +892,7 @@ opencode · claude · claude-code · codex · cursor · antigravity · kiro
 
 ## Requirements
 
+- Windows: see [Install (Windows)](#install-windows).
 - macOS 13.0 or later (Reminders full-access API uses macOS 14+ when available, falls back gracefully on 13)
 - Xcode Command Line Tools (`xcode-select --install`) — to build
 - Optional: `whisper` + `ffmpeg` and a coding agent, for the recording / MOM

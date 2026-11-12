@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>Nikxel</title>
+<style>
+  :root { color-scheme: light dark; font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px; }
+  body { margin: 0; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; height: 100vh; box-sizing: border-box; background: Canvas; color: CanvasText; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  p { margin: 0; opacity: .8; line-height: 1.4; white-space: pre-wrap; }
+  input, textarea { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid #8886; background: Field; color: FieldText; }
+  textarea { flex: 1; resize: none; font-family: Consolas, monospace; font-size: 12px; }
+  .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; flex-wrap: wrap; }
+  button { font: inherit; padding: 5px 14px; border-radius: 6px; border: 1px solid #8886; background: ButtonFace; color: ButtonText; cursor: pointer; }
+  button.default { background: #2f6fed; color: white; border-color: #2f6fed; }
+</style>
+</head>
+<body>
+  <h1 id="title"></h1>
+  <p id="message"></p>
+  <div id="field"></div>
+  <div class="buttons" id="buttons"></div>
+  <script type="module" src="./prompt.js"></script>
+</body>
+</html>

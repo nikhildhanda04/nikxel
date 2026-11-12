@@ -77,6 +77,9 @@ else
   echo ""
 fi
 codesign --force --deep --sign "$SIGN_ID" Nikxel.app
+# Launch Services caches the icon from the first time it saw this bundle;
+# re-register so Finder/Launchpad pick up AppIcon.icns.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f Nikxel.app 2>/dev/null || true
 
 # Show up in Applications (Finder, Launchpad, Spotlight) as a link to this
 # build, not a copy: a copy has no git folder, so Check for Updates couldn't

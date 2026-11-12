@@ -193,7 +193,16 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let btn = statusItem.button { btn.title = "🐱" }
+        if let btn = statusItem.button {
+            // The avatar head as a template image, so macOS tints it for
+            // light/dark menu bars like every other status icon.
+            if let icon = NSImage(named: "MenuBarIcon") {
+                icon.isTemplate = true
+                btn.image = icon
+            } else {
+                btn.title = "🐱"
+            }
+        }
         let menu = NSMenu()
         let toggle = NSMenuItem(title: "Show/Hide Nikxel", action: #selector(toggleVisibility), keyEquivalent: "")
         toggle.target = self; menu.addItem(toggle)
@@ -999,6 +1008,10 @@ struct NikxelMain {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        // Set it ourselves: Launch Services caches a bundle's icon from when it
+        // was first seen, so a clone registered before AppIcon existed kept
+        // the blank placeholder in the Dock.
+        if let icon = NSImage(named: "AppIcon") { app.applicationIconImage = icon }
         let delegate = NikxelAppDelegate()
         app.delegate = delegate
         _ = delegate

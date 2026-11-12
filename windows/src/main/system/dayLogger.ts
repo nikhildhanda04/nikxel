@@ -8,6 +8,7 @@ import { diag, cblog } from "../core/diag";
 import { bus } from "../core/bus";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
+import { DayPage } from "./dayPage";
 import { PSHelper, PS_END } from "./psHelper";
 
 /// The handful of numbers worth putting in a bubble. Separate from the
@@ -167,6 +168,22 @@ export class DayLogger {
   }
 
   /// 200 -> "3h 20m", 45 -> "45m", 120 -> "2h".
+  /// New messages seen in the chat log. It holds a preview snapshot of every
+  /// chat on each poll, so counting lines counted snapshots (thousands a day).
+  /// A chat's first sighting is what was already there; after that each
+  /// preview it hadn't shown before is one new message. Seen-before, not just
+  /// changed: previews flip between "typing…" and back all day.
+  static countMessages(entries: { name?: unknown; preview?: unknown }[]): number {
+    const seen = new Map<unknown, Set<unknown>>();
+    let n = 0;
+    for (const e of entries) {
+      const s = seen.get(e.name);
+      if (!s) { seen.set(e.name, new Set([e.preview])); continue; }
+      if (!s.has(e.preview)) { s.add(e.preview); n += 1; }
+    }
+    return n;
+  }
+
   static humanDuration(minutes: number): string {
     const h = Math.floor(minutes / 60), m = minutes % 60;
     if (h === 0) return `${m}m`;
@@ -211,7 +228,7 @@ export class DayLogger {
       stats.meetings = fs.readdirSync(this.meetingsDir).filter(f => f.startsWith(key) && f.endsWith(".md")).length;
     } catch { /* no meetings folder yet */ }
 
-    stats.messages = safeReadLog("chats", date).length;
+    stats.messages = DayLogger.countMessages(safeReadLog("chats", date));
     return stats;
   }
 
@@ -455,8 +472,12 @@ export class DayLogger {
         const output = await this.momGenerator.runPrompt(prompt, "daily-summary");
         const file = this.summaryFile(date);
         await fs.promises.writeFile(file, output, "utf8");
-        const line = DayLogger.digestLine(this.dayStats(date));
-        if (line) this.onSummaryReady?.(line, file);
+        // The .md stays: it's what the WhatsApp bot's memory reads back.
+        const stats = this.dayStats(date);
+        const page = file.replace(/\.md$/, ".html");
+        await fs.promises.writeFile(page, DayPage.html(output, stats), "utf8");
+        const line = DayLogger.digestLine(stats);
+        if (line) this.onSummaryReady?.(line, page);
       } catch (e) {
         diag("DayLogger", `summary generation failed: ${e instanceof Error ? e.message : e}`);
       } finally {

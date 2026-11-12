@@ -107,6 +107,22 @@ class DayLogger {
     }
 
     /// 200 -> "3h 20m", 45 -> "45m", 120 -> "2h".
+    /// New messages seen in the chat log. It holds a preview snapshot of every
+    /// chat on each poll, so counting lines counted snapshots (thousands a day).
+    /// A chat's first sighting is what was already there; after that each
+    /// preview it hadn't shown before is one new message. Seen-before, not just
+    /// changed: previews flip between "typing…" and back all day.
+    static func countMessages(_ entries: [[String: Any]]) -> Int {
+        var seen: [String: Set<String>] = [:], n = 0
+        for e in entries {
+            guard let name = e["name"] as? String else { continue }
+            let preview = e["preview"] as? String ?? ""
+            guard seen[name] != nil else { seen[name] = [preview]; continue }
+            if seen[name]!.insert(preview).inserted { n += 1 }
+        }
+        return n
+    }
+
     static func humanDuration(minutes: Int) -> String {
         let h = minutes / 60, m = minutes % 60
         if h == 0 { return "\(m)m" }
@@ -148,7 +164,7 @@ class DayLogger {
             stats.meetings = files.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".md") }.count
         }
 
-        stats.messages = WhatsAppActivityLogger.readLog(file: "chats", for: date).count
+        stats.messages = Self.countMessages(WhatsAppActivityLogger.readLog(file: "chats", for: date))
 
         return stats
     }
@@ -388,8 +404,12 @@ class DayLogger {
                 let output = try self.momGenerator.runPrompt(prompt, kind: "daily-summary")
                 let fileURL = self.summaryFileURL(for: date)
                 try output.write(to: fileURL, atomically: true, encoding: .utf8)
-                if let line = Self.digestLine(self.dayStats(for: date)) {
-                    DispatchQueue.main.async { self.onSummaryReady?(line, fileURL) }
+                // The .md stays: it's what the WhatsApp bot's memory reads back.
+                let stats = self.dayStats(for: date)
+                let pageURL = fileURL.deletingPathExtension().appendingPathExtension("html")
+                try DayPage.html(from: output, stats: stats).write(to: pageURL, atomically: true, encoding: .utf8)
+                if let line = Self.digestLine(stats) {
+                    DispatchQueue.main.async { self.onSummaryReady?(line, pageURL) }
                 }
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")

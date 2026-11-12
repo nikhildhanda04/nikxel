@@ -10,11 +10,11 @@ import Foundation
 /// and must not go fetching web fonts.
 enum NotePage {
 
-    private enum Block {
+    enum Block {
         case para(String), bullet(String), task(Bool, String), sub(String), code(String)
     }
 
-    private struct Section {
+    struct Section {
         let title: String
         var blocks: [Block] = []
         var key: String { title.lowercased() }
@@ -40,7 +40,7 @@ enum NotePage {
 
     // MARK: - Parsing
 
-    private static func parse(_ markdown: String) -> (title: String, sections: [Section]) {
+    static func parse(_ markdown: String) -> (title: String, sections: [Section]) {
         var title = "", sections: [Section] = [], code: [String]?
         for raw in markdown.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -134,9 +134,26 @@ enum NotePage {
 
     // MARK: - Components
 
-    /// Eyebrow + date, then the summary's opening line as the headline.
+    /// The summary's opening line as a headline, and the paragraphs after it.
     /// Prompts v6+ write that line in bold; older notes have one long
     /// paragraph, so their first sentence is promoted instead.
+    static func lead(_ summary: Section?) -> (headline: String, paras: [String]) {
+        var paras: [String] = summary?.blocks.compactMap { if case .para(let s) = $0 { return s } else { return nil } } ?? []
+        var headline = ""
+        if let first = paras.first {
+            if first.hasPrefix("**") && first.hasSuffix("**") && first.count > 4 {
+                headline = String(first.dropFirst(2).dropLast(2)); paras.removeFirst()
+            } else if let r = first.range(of: ". "), first.distance(from: first.startIndex, to: r.lowerBound) < 220 {
+                headline = String(first[..<r.lowerBound]) + "."
+                paras[0] = String(first[r.upperBound...])
+            } else if first.count < 220 {
+                headline = first; paras.removeFirst()
+            }
+        }
+        return (headline, paras)
+    }
+
+    /// Eyebrow + date, then the summary's opening line as the headline.
     private static func hero(title: String, summary: Section?, isMeeting: Bool) -> String {
         let parts = title.components(separatedBy: " — ")
         var kind = isMeeting ? "Minutes of meeting" : (parts.first ?? "Notes")
@@ -151,18 +168,7 @@ enum NotePage {
             when = "\(f.string(from: d)) · \(t.string(from: d))"
         }
 
-        var paras: [String] = summary?.blocks.compactMap { if case .para(let s) = $0 { return s } else { return nil } } ?? []
-        var headline = ""
-        if let first = paras.first {
-            if first.hasPrefix("**") && first.hasSuffix("**") && first.count > 4 {
-                headline = String(first.dropFirst(2).dropLast(2)); paras.removeFirst()
-            } else if let r = first.range(of: ". "), first.distance(from: first.startIndex, to: r.lowerBound) < 220 {
-                headline = String(first[..<r.lowerBound]) + "."
-                paras[0] = String(first[r.upperBound...])
-            } else if first.count < 220 {
-                headline = first; paras.removeFirst()
-            }
-        }
+        let (headline, paras) = lead(summary)
         let rest = paras.map { "<p>\(inl($0))</p>" }.joined()
         return """
         <header class="hero">
@@ -376,7 +382,7 @@ enum NotePage {
         blocks.compactMap { if case .para(let t) = $0, !NoteExporter.isNone(t) { return "<p>\(inl(t))</p>" } else { return nil } }.joined()
     }
 
-    private static func generic(_ blocks: [Block]) -> String {
+    static func generic(_ blocks: [Block]) -> String {
         var out = "", open = false
         for b in blocks {
             if case .bullet = b {} else if open { out += "</ul>"; open = false }
@@ -438,7 +444,7 @@ enum NotePage {
         return f.string(from: d)
     }
 
-    private static func anchor(_ s: String) -> String {
+    static func anchor(_ s: String) -> String {
         s.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
             .split(separator: "-").joined(separator: "-")
     }

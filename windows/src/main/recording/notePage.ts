@@ -11,21 +11,21 @@ import { escapeHtml as esc, fmt, inline as inl, isNone, parseLocalDate, splitFie
 ///
 /// Opened in the default browser. PDF and Word keep markdownToHtml.
 
-type Block =
+export type Block =
   | { t: "para" | "bullet" | "sub" | "code"; s: string }
   | { t: "task"; done: boolean; s: string };
 
-interface Section { title: string; key: string; blocks: Block[] }
+export interface Section { title: string; key: string; blocks: Block[] }
 
 /// Only "None." lines (or nothing at all).
-const isEmpty = (s: Section) => s.blocks.every(b => ["para", "bullet", "task"].includes(b.t) && isNone(b.s));
+export const isEmpty = (s: Section) => s.blocks.every(b => ["para", "bullet", "task"].includes(b.t) && isNone(b.s));
 /// Items that count: bullets and tasks that aren't "None."
-const count = (s: Section) => s.blocks.filter(b => (b.t === "bullet" || b.t === "task") && !isNone(b.s)).length;
+export const count = (s: Section) => s.blocks.filter(b => (b.t === "bullet" || b.t === "task") && !isNone(b.s)).length;
 const bullets = (s: Section) => s.blocks.filter(b => b.t === "bullet" && !isNone(b.s)).map(b => b.s);
 
 // MARK: - Parsing
 
-function parse(markdown: string): { title: string; sections: Section[] } {
+export function parse(markdown: string): { title: string; sections: Section[] } {
   let title = "", code: string[] | null = null;
   const sections: Section[] = [];
   const section = (t: string): Section => ({ title: t, key: t.toLowerCase(), blocks: [] });
@@ -119,17 +119,10 @@ ${body}
 
 // MARK: - Components
 
-/// Eyebrow + date, then the summary's opening line as the headline.
-/// Prompts v6+ write that line in bold; older notes have one long
-/// paragraph, so their first sentence is promoted instead.
-function hero(title: string, summary: Section | undefined, isMeeting: boolean): string {
-  const parts = title.split(" — ");
-  let kind = isMeeting ? "Minutes of meeting" : parts[0] || "Notes";
-  if (parts.length < 2) kind = title || "Note";
-  let when = parts.length === 2 ? parts[1] : "";
-  const d = parseLocalDate(when, true);
-  if (d) when = `${fmt.weekday(d)} ${d.getDate()} ${fmt.month(d)} ${d.getFullYear()} · ${fmt.time(d)}`;
-
+/// The summary's opening line as a headline, and the paragraphs after it.
+/// Prompts v6+ write that line in bold; older notes have one long paragraph,
+/// so their first sentence is promoted instead.
+export function lead(summary: Section | undefined): { headline: string; paras: string[] } {
   const paras = (summary?.blocks ?? []).filter(b => b.t === "para").map(b => b.s);
   let headline = "";
   const first = paras[0];
@@ -139,6 +132,19 @@ function hero(title: string, summary: Section | undefined, isMeeting: boolean): 
     else if (stop >= 0 && stop < 220) { headline = first.slice(0, stop) + "."; paras[0] = first.slice(stop + 2); }
     else if (first.length < 220) { headline = first; paras.shift(); }
   }
+  return { headline, paras };
+}
+
+/// Eyebrow + date, then the summary's opening line as the headline.
+function hero(title: string, summary: Section | undefined, isMeeting: boolean): string {
+  const parts = title.split(" — ");
+  let kind = isMeeting ? "Minutes of meeting" : parts[0] || "Notes";
+  if (parts.length < 2) kind = title || "Note";
+  let when = parts.length === 2 ? parts[1] : "";
+  const d = parseLocalDate(when, true);
+  if (d) when = `${fmt.weekday(d)} ${d.getDate()} ${fmt.month(d)} ${d.getFullYear()} · ${fmt.time(d)}`;
+
+  const { headline, paras } = lead(summary);
   const rest = paras.map(p => `<p>${inl(p)}</p>`).join("");
   return `<header class="hero">
 <p class="eyebrow"><span>${esc(kind)}</span>${when ? `<span class="when">${esc(when)}</span>` : ""}</p>
@@ -295,7 +301,7 @@ function extras(s: Section): string {
   return s.blocks.filter(b => b.t === "para" && !isNone(b.s)).map(b => `<p>${inl(b.s)}</p>`).join("");
 }
 
-function generic(blocks: Block[]): string {
+export function generic(blocks: Block[]): string {
   let out = "", open = false;
   for (const b of blocks) {
     if (b.t !== "bullet" && open) { out += "</ul>"; open = false; }
@@ -350,7 +356,7 @@ function shortDate(v: string): string {
   return d ? `${fmt.weekday(d, "short")} ${d.getDate()} ${fmt.month(d, "short")}` : v;
 }
 
-const anchor = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+export const anchor = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
 
 export const NotePage = { html, calendarLinks };
 

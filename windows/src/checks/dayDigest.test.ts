@@ -63,3 +63,15 @@ test("git helpers", () => {
   assert.ok(!DayLogger.isNoiseFile("src/main.ts"));
   assert.equal(DayLogger.redactSecrets("key sk_live_abcdefghijklmnop1234 <pasted_content id=1>ok"), "key [redacted] ok");
 });
+
+test("messages are preview changes, not snapshots", () => {
+  const snap = (name: string, preview: string) => ({ name, preview });
+  assert.equal(DayLogger.countMessages([
+    snap("Priya", "old"), snap("Rahul", "hi"),   // already there at start
+    snap("Priya", "old"), snap("Rahul", "hi"),   // same poll again
+    snap("Priya", "invoice?"), snap("Rahul", "hi"),
+    snap("Priya", "invoice?"), snap("Rahul", "call me"),
+    snap("Rahul", "typing…"), snap("Rahul", "call me"), // flipping back adds nothing
+  ]), 3);
+  assert.equal(DayLogger.countMessages([]), 0);
+});

@@ -15,6 +15,9 @@ echo "$PWD" > Nikxel.app/Contents/Resources/repo_path
 # The commit this binary is, which can trail the clone's HEAD when a pull
 # succeeded but the build after it didn't.
 git rev-parse HEAD > Nikxel.app/Contents/Resources/commit 2>/dev/null || true
+# Optional shared Google OAuth client. With it, "Connect Google" is one click
+# (no Cloud Console); without it, users bring their own via the paste flow.
+if [ -f google_client.json ]; then cp google_client.json Nikxel.app/Contents/Resources/google_client.json; fi
 # Liquid Glass bubbles need the macOS 26 SDK. Build with `GLASS=1 ./build.sh` on a
 # macOS 26 SDK; the default builds against older SDKs (bubbles just don't render).
 if [ "${GLASS:-0}" = "1" ]; then

@@ -1,6 +1,7 @@
 import Foundation
 import Cocoa
 import Network
+import CryptoKit
 
 /// Google OAuth, shared by everything in Nikxel that talks to Google: the
 /// calendar watcher that reads upcoming events, and GoogleSync, which writes
@@ -53,6 +54,10 @@ final class GoogleAuth {
     // MARK: - State
 
     var hasCreds: Bool { loadCreds() }
+
+    /// True when sign-in needs no setup from the user (a client is bundled or
+    /// already saved), i.e. Connect goes straight to Google's consent screen.
+    var isOneClick: Bool { loadCreds() }
 
     /// True once the user has authorized at least once.
     var isAuthorized: Bool {
@@ -124,8 +129,27 @@ final class GoogleAuth {
     /// Re-run consent from scratch -- the menu's "Connect Google Account", and
     /// the recovery path when a stored grant is missing a scope.
     func reauthenticate() {
+        // A client JSON already on the clipboard (the last step of the manual
+        // path) is taken as-is, so the user never has to find the file.
+        if !loadCreds() { importCredsFromClipboard(silent: true) }
         guard loadCreds() else { showSetupAlert(); return }
         startOAuthFlow()
+    }
+
+    /// Saves Google client credentials copied to the clipboard as
+    /// ~/.nikxel/google_creds.json. Accepts the downloaded JSON verbatim.
+    @discardableResult
+    func importCredsFromClipboard(silent: Bool = false) -> Bool {
+        guard let text = NSPasteboard.general.string(forType: .string),
+              let data = text.data(using: .utf8),
+              parseCreds(data) else {
+            clientId = nil; clientSecret = nil
+            if !silent { showAlert("The clipboard doesn't hold Google client credentials. Copy the downloaded JSON's contents, then try again.") }
+            return false
+        }
+        try? data.write(to: credsPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credsPath.path)
+        return true
     }
 
     func stop() {
@@ -137,7 +161,18 @@ final class GoogleAuth {
     @discardableResult
     private func loadCreds() -> Bool {
         if clientId != nil && clientSecret != nil { return true }
-        guard let data = try? Data(contentsOf: credsPath) else { return false }
+        // The user's own file wins, so anyone who already set up their own
+        // Cloud project (or wants a private quota) keeps working unchanged.
+        // Otherwise fall back to the client shipped inside the app, which is
+        // what makes "Connect Google" a single click.
+        let bundled = Bundle.main.url(forResource: "google_client", withExtension: "json")
+        for url in [credsPath, bundled].compactMap({ $0 }) {
+            if let data = try? Data(contentsOf: url), parseCreds(data) { return true }
+        }
+        return false
+    }
+
+    private func parseCreds(_ data: Data) -> Bool {
         // Google's downloaded creds JSON wraps everything under "installed" or "web".
         if let outer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             if let inner = (outer["installed"] as? [String: Any]) ?? (outer["web"] as? [String: Any]),
@@ -204,6 +239,10 @@ final class GoogleAuth {
         self.listener = listener
         let redirectURI = "http://127.0.0.1:\(port)/callback"
         let state = UUID().uuidString
+        // PKCE: the code only redeems with the verifier that started this
+        // flow, so a local process that sniffs the loopback redirect can't
+        // trade it for tokens. Google supports it for desktop clients.
+        let verifier = Self.randomVerifier()
 
         listener.newConnectionHandler = { [weak self] conn in
             conn.start(queue: .main)
@@ -215,7 +254,7 @@ final class GoogleAuth {
                 let body: String
                 if let code = code, returnedState == state {
                     body = "<html><body style='font-family:-apple-system;text-align:center;padding:60px'><h2>Nikxel: connected &#10003;</h2><p>You can close this tab.</p></body></html>"
-                    self?.exchangeCodeForToken(code: code, redirectURI: redirectURI)
+                    self?.exchangeCodeForToken(code: code, redirectURI: redirectURI, verifier: verifier)
                 } else {
                     body = "<html><body style='font-family:-apple-system;text-align:center;padding:60px'><h2>Authorization failed</h2></body></html>"
                 }
@@ -236,7 +275,9 @@ final class GoogleAuth {
             URLQueryItem(name: "scope", value: Self.scopes.joined(separator: " ")),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
-            URLQueryItem(name: "state", value: state)
+            URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "code_challenge", value: Self.challenge(for: verifier)),
+            URLQueryItem(name: "code_challenge_method", value: "S256")
         ]
         if let url = components.url { NSWorkspace.shared.open(url) }
     }
@@ -299,7 +340,7 @@ final class GoogleAuth {
         return nil
     }
 
-    private func exchangeCodeForToken(code: String, redirectURI: String) {
+    private func exchangeCodeForToken(code: String, redirectURI: String, verifier: String) {
         guard let clientId = clientId, let clientSecret = clientSecret else { return }
         var req = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         req.httpMethod = "POST"
@@ -309,6 +350,7 @@ final class GoogleAuth {
             "client_id": clientId,
             "client_secret": clientSecret,
             "redirect_uri": redirectURI,
+            "code_verifier": verifier,
             "grant_type": "authorization_code"
         ]
         req.httpBody = Self.formEncode(form).data(using: .utf8)
@@ -357,6 +399,21 @@ final class GoogleAuth {
         }
     }
 
+    private static func randomVerifier() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return base64URL(Data(bytes))
+    }
+
+    private static func challenge(for verifier: String) -> String {
+        base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+    }
+
+    private static func base64URL(_ d: Data) -> String {
+        d.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
     private static func formEncode(_ params: [String: String]) -> String {
         var cs = CharacterSet.urlQueryAllowed
         cs.remove(charactersIn: "+&=")
@@ -373,24 +430,24 @@ final class GoogleAuth {
         let alert = NSAlert()
         alert.messageText = "Connect your Google account"
         alert.informativeText = """
-        One-time setup:
+        This build has no shared Google client, so you need your own (free, ~3 minutes, once):
 
-        1. Open Google Cloud Console -> APIs & Services -> Credentials
-        2. Create or pick a project, enable the Google Calendar API and the
-           Google Tasks API
-        3. OAuth consent screen -> External -> add yourself as a test user
-        4. Credentials -> Create OAuth client ID -> "Desktop app"
-        5. Download the JSON (or copy client_id + client_secret)
-        6. Save it to ~/.nikxel/google_creds.json
-        7. Menu bar -> Connect Google Account
-
-        The downloaded Google JSON works as-is.
+        1. Click "Open Google Cloud Console", create a project, and enable the Google Calendar API and Google Tasks API.
+        2. OAuth consent screen -> External -> add yourself as a test user.
+        3. Credentials -> Create OAuth client ID -> "Desktop app" -> Download JSON.
+        4. Open the JSON, copy everything, and click "Paste from Clipboard" here.
         """
+        alert.addButton(withTitle: "Paste from Clipboard")
         alert.addButton(withTitle: "Open Google Cloud Console")
         alert.addButton(withTitle: "Later")
-        if alert.runOnTop() == .alertFirstButtonReturn,
-           let url = URL(string: "https://console.cloud.google.com/apis/credentials") {
-            NSWorkspace.shared.open(url)
+        switch alert.runOnTop() {
+        case .alertFirstButtonReturn:
+            if importCredsFromClipboard() { startOAuthFlow() }
+        case .alertSecondButtonReturn:
+            if let url = URL(string: "https://console.cloud.google.com/apis/credentials") {
+                NSWorkspace.shared.open(url)
+            }
+        default: break
         }
     }
 

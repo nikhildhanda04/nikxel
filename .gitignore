@@ -20,3 +20,9 @@ google_token.json
 # the app silently ran an old version.
 Nikxel.app/Contents/MacOS/Nikxel
 Nikxel.app/Contents/_CodeSignature/
+
+# Windows (Electron) app
+!windows/resources/*.png
+windows/node_modules/
+windows/dist/
+windows/release/

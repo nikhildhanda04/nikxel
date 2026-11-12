@@ -119,6 +119,10 @@ enum Updater {
 
         let fetch = git(repo, ["fetch", "origin", "main"])
         guard fetch.ok else {
+            // The clone's path can be stat'ed (so repoRoot found it) while
+            // macOS still blocks reading inside it; git then fails with
+            // "Unable to read current working directory: Operation not permitted".
+            if fetch.output.contains("Operation not permitted") { return .failure(.noFolderAccess(repo)) }
             return .failure(.git("Couldn't reach GitHub.\n\n\(fetch.output)"))
         }
 

@@ -11,7 +11,7 @@ import AppKit
 /// ~30 errors on a fresh clone. AppKit has no such toolchain dependency.
 final class OnboardingWindowController: NSWindowController {
     private enum Step: Int {
-        case welcome, avatar, deps, whatsapp, agent
+        case welcome, avatar, deps, whatsapp, google, agent
     }
 
     private let momGenerator: MOMGenerator
@@ -58,7 +58,10 @@ final class OnboardingWindowController: NSWindowController {
 
     // Agent step
     private var chosenAgent = NikxelSettings.connectedAgent
-    private var availableAgents: Set<CodingAgent> = []
+    /// Latest test result per agent; absent while that agent is still being tested.
+    private var agentHealth: [CodingAgent: MOMGenerator.AgentHealth] = [:]
+    private var agentTestRun = 0
+    private var googlePoll: Timer?
 
     private static let contentWidth: CGFloat = 440
     private static let contentHeight: CGFloat = 440
@@ -104,6 +107,7 @@ final class OnboardingWindowController: NSWindowController {
     private func go(to next: Step) {
         if step == .avatar { stopPreview() }
         if step == .whatsapp { stopPolling() }
+        if next == .agent { refreshAvailableAgents() }
         step = next
         if next == .avatar { startPreview() }
         render()
@@ -130,6 +134,7 @@ final class OnboardingWindowController: NSWindowController {
         case .avatar: buildAvatar(body: body, nav: nav)
         case .deps: buildDeps(body: body, nav: nav)
         case .whatsapp: buildWhatsApp(body: body, nav: nav)
+        case .google: buildGoogle(body: body, nav: nav)
         case .agent: buildAgent(body: body, nav: nav)
         }
 
@@ -357,11 +362,35 @@ final class OnboardingWindowController: NSWindowController {
         }
 
         nav.addArrangedSubview(button("Back", #selector(backToDeps)))
-        nav.addArrangedSubview(button("Skip for now", #selector(whatsappToAgent)))
+        nav.addArrangedSubview(button("Skip for now", #selector(whatsappToGoogle)))
         nav.addArrangedSubview(spacer())
         if waConnected {
-            nav.addArrangedSubview(defaultButton("Next", #selector(whatsappToAgent)))
+            nav.addArrangedSubview(defaultButton("Next", #selector(whatsappToGoogle)))
         }
+    }
+
+    private func buildGoogle(body: NSStackView, nav: NSStackView) {
+        body.alignment = .leading
+        body.spacing = 12
+        let connected = GoogleAuth.shared.isAuthorized
+        body.addArrangedSubview(label("Google (optional)", size: 20, bold: true, align: .left))
+        body.addArrangedSubview(label(
+            "Connect to get a heads-up before calendar events, and to file a meeting's action items in Google Tasks and follow-ups on your calendar. Nothing is sent without your OK.",
+            secondary: true, align: .left
+        ))
+        body.addArrangedSubview(depRow("Google account", found: connected, note: connected ? "connected" : "not connected"))
+        if !connected {
+            body.addArrangedSubview(button(GoogleAuth.shared.isOneClick ? "Connect Google" : "Connect Google…", #selector(connectGoogle)))
+            body.addArrangedSubview(label(
+                GoogleAuth.shared.isOneClick
+                    ? "Opens your browser to sign in. You can skip this and connect later from the menu bar."
+                    : "This build needs your own Google client first; the button walks you through it. You can skip and connect later from the menu bar.",
+                size: 11, secondary: true, align: .left
+            ))
+        }
+        nav.addArrangedSubview(button("Back", #selector(backToWhatsApp)))
+        nav.addArrangedSubview(spacer())
+        nav.addArrangedSubview(defaultButton(connected ? "Next" : "Skip for now", #selector(googleToAgent)))
     }
 
     private func buildAgent(body: NSStackView, nav: NSStackView) {
@@ -375,21 +404,21 @@ final class OnboardingWindowController: NSWindowController {
         ))
 
         for (i, agent) in CodingAgent.allCases.enumerated() {
-            let available = availableAgents.contains(agent)
-            let title = available ? agent.displayName : "\(agent.displayName) — not installed"
-            let radio = NSButton(radioButtonWithTitle: title, target: self, action: #selector(pickAgent(_:)))
+            let health = agentHealth[agent]
+            let radio = NSButton(radioButtonWithTitle: agent.displayName, target: self, action: #selector(pickAgent(_:)))
             radio.tag = i
             radio.state = (agent == chosenAgent) ? .on : .off
-            radio.isEnabled = available
+            radio.isEnabled = health != nil && health != .notInstalled
             body.addArrangedSubview(radio)
 
-            // Someone with none of these installed would otherwise hit a dead
-            // end here, so show exactly what to run and let them copy it.
-            if !available {
+            let (text, color, hint) = Self.describe(health, agent: agent)
+            let status = label(text, size: 11, color: color, align: .left)
+            body.addArrangedSubview(status)
+            if let hint = hint {
                 let row = NSStackView()
                 row.orientation = .horizontal
                 row.spacing = 8
-                let cmd = label(agent.installCommand, size: 11, secondary: true, align: .left)
+                let cmd = label(hint, size: 11, secondary: true, align: .left)
                 cmd.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
                 cmd.isSelectable = true
                 row.addArrangedSubview(cmd)
@@ -406,15 +435,39 @@ final class OnboardingWindowController: NSWindowController {
             }
         }
 
+        let testing = agentHealth.count < CodingAgent.allCases.count
         body.addArrangedSubview(label(
-            "Run the command in a terminal, then click Re-check.",
+            testing ? "Testing each one with a real request — this takes a few seconds…"
+                    : "Fix anything marked above in a terminal, then click Test again.",
             size: 11, secondary: true, align: .left
         ))
-        body.addArrangedSubview(button("Re-check", #selector(recheckAgents)))
+        let retest = button("Test again", #selector(recheckAgents))
+        retest.isEnabled = !testing
+        body.addArrangedSubview(retest)
 
-        nav.addArrangedSubview(button("Back", #selector(backToWhatsApp)))
+        nav.addArrangedSubview(button("Back", #selector(backToGoogle)))
         nav.addArrangedSubview(spacer())
         nav.addArrangedSubview(defaultButton("Finish", #selector(finishSetup)))
+    }
+
+    /// Status line, its colour, and an optional copyable terminal command.
+    /// Login is fixed by running the agent itself, so that's the command shown.
+    private static func describe(_ health: MOMGenerator.AgentHealth?, agent: CodingAgent) -> (String, NSColor, String?) {
+        let bin = agent.rawValue
+        switch health {
+        case nil:
+            return ("Testing…", .secondaryLabelColor, nil)
+        case .notInstalled:
+            return ("Not installed", .secondaryLabelColor, agent.installCommand)
+        case .broken(let why):
+            return ("Installed but won't start: \(why)", .systemRed, agent.installCommand)
+        case .notLoggedIn:
+            return ("Installed, but not logged in", .systemOrange, bin)
+        case .failing(let why):
+            return ("Installed, but a test request failed: \(why)", .systemRed, nil)
+        case .working(let version):
+            return ("✓ Installed, logged in and working" + (version.isEmpty ? "" : " (\(version))"), .systemGreen, nil)
+        }
     }
 
     private func depRow(_ name: String, found: Bool, note: String) -> NSView {
@@ -446,8 +499,24 @@ final class OnboardingWindowController: NSWindowController {
     @objc private func backToAvatar() { go(to: .avatar) }
     @objc private func depsToWhatsApp() { go(to: .whatsapp) }
     @objc private func backToDeps() { go(to: .deps) }
-    @objc private func whatsappToAgent() { go(to: .agent) }
+    @objc private func whatsappToGoogle() { go(to: .google) }
     @objc private func backToWhatsApp() { go(to: .whatsapp) }
+    @objc private func googleToAgent() { go(to: .agent) }
+    @objc private func backToGoogle() { go(to: .google) }
+    @objc private func connectGoogle() {
+        // Through the watcher so calendar polling starts the moment consent
+        // finishes; this page just watches for the token to appear.
+        (NSApp.delegate as? NikxelAppDelegate)?.calendarWatcher.reauthenticate()
+        let started = Date()
+        googlePoll?.invalidate()
+        googlePoll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            if GoogleAuth.shared.isAuthorized || Date().timeIntervalSince(started) > 300 {
+                t.invalidate(); self.googlePoll = nil
+                if self.step == .google { self.render() }
+            }
+        }
+    }
     @objc private func recheckDeps() { refreshDeps() }
     @objc private func recheckAgents() { refreshAvailableAgents() }
 
@@ -473,7 +542,7 @@ final class OnboardingWindowController: NSWindowController {
         guard sender.tag < CodingAgent.allCases.count else { return }
         let agent = CodingAgent.allCases[sender.tag]
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(agent.installCommand, forType: .string)
+        NSPasteboard.general.setString(Self.describe(agentHealth[agent], agent: agent).2 ?? agent.installCommand, forType: .string)
         agentCopied = agent
         render()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -691,20 +760,29 @@ final class OnboardingWindowController: NSWindowController {
         }
     }
 
+    /// Tests every agent in parallel: installed, starts, and answers a real
+    /// prompt (which is what proves it's logged in). Results land one by one so
+    /// a slow agent doesn't hold up the others; `agentTestRun` discards the
+    /// answers of a superseded run.
     private func refreshAvailableAgents() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            var found: Set<CodingAgent> = []
-            for agent in CodingAgent.allCases where self.momGenerator.findBinary(for: agent) != nil {
-                found.insert(agent)
-            }
-            DispatchQueue.main.async {
-                self.availableAgents = found
-                if !found.contains(self.chosenAgent),
-                   let firstAvailable = CodingAgent.allCases.first(where: { found.contains($0) }) {
-                    self.chosenAgent = firstAvailable
+        agentTestRun += 1
+        let run = agentTestRun
+        agentHealth = [:]
+        if step == .agent { render() }
+        for agent in CodingAgent.allCases {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                let health = self.momGenerator.checkAgent(agent)
+                DispatchQueue.main.async {
+                    guard run == self.agentTestRun else { return }
+                    self.agentHealth[agent] = health
+                    // Land on the first agent that actually works, unless the
+                    // user already picked one that does.
+                    if self.agentHealth[self.chosenAgent]?.isWorking != true, health.isWorking {
+                        self.chosenAgent = agent
+                    }
+                    if self.step == .agent { self.render() }
                 }
-                if self.step == .agent { self.render() }
             }
         }
     }

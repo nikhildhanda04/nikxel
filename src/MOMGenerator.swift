@@ -84,7 +84,10 @@ private struct AgentBackend {
                     "/usr/local/bin/codex"
                 ]},
                 whichName: "codex",
-                buildArgs: { prompt in ["exec", prompt] },
+                // Runs in ~/.nikxel/momworkspace, which is no git repo; without
+                // --skip-git-repo-check codex refuses with "Not inside a trusted
+                // directory". Found by the setup wizard's agent test.
+                buildArgs: { prompt in ["exec", "--skip-git-repo-check", prompt] },
                 usesStdin: false,
                 parseOutput: { String(data: $0, encoding: .utf8) }
             )
@@ -204,6 +207,70 @@ class MOMGenerator {
         return nil
     }
 
+    /// Outcome of `checkAgent`, in the order a person would fix things: install
+    /// it, sign in, then whatever else is wrong.
+    enum AgentHealth: Equatable {
+        case notInstalled
+        case broken(String)
+        case notLoggedIn(String)
+        case failing(String)
+        case working(version: String)
+
+        var isWorking: Bool { if case .working = self { return true } else { return false } }
+    }
+
+    /// Tests `agent` end to end: the binary exists, it starts (`--version` --
+    /// catches installs whose native package is missing), and a real one-word
+    /// prompt comes back. The last step is the only honest "logged in" test:
+    /// none of the CLIs share an auth-status command, and a stale token looks
+    /// fine until a request is made. Blocking -- call off the main thread.
+    func checkAgent(_ agent: CodingAgent) -> AgentHealth {
+        guard let bin = findBinary(for: agent) else { return .notInstalled }
+        let version = Self.run(bin, ["--version"], timeout: 15)
+        if version.status != 0 {
+            let why = [version.err, version.out].first { !$0.isEmpty } ?? "exited with code \(version.status)"
+            return .broken(String(why.prefix(200)))
+        }
+        let versionLine = version.out.split(separator: "\n").first.map(String.init) ?? ""
+        let dir = workspace.appendingPathComponent("healthcheck-\(agent.rawValue)", isDirectory: true)
+        do {
+            let reply = try executeAgent(binary: bin, agent: agent,
+                                         prompt: "Reply with the single word OK and nothing else.",
+                                         runDir: dir, kind: "healthcheck", timeout: 60)
+            return reply.isEmpty ? .failing("empty reply") : .working(version: versionLine)
+        } catch {
+            let msg = String("\(error)".components(separatedBy: "\n\nLogs:").first ?? "\(error)")
+            let lower = msg.lowercased()
+            let authHints = ["not logged in", "log in", "login", "/login", "unauthorized", "authenticate",
+                             "api key", "401", "sign in", "credentials", "invalid x-api-key"]
+            return authHints.contains(where: lower.contains) ? .notLoggedIn(String(msg.prefix(200)))
+                                                              : .failing(String(msg.prefix(200)))
+        }
+    }
+
+    private static func run(_ binary: String, _ args: [String], timeout: Double) -> (status: Int32, out: String, err: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: binary)
+        task.arguments = args
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = ["/opt/homebrew/bin", "/usr/local/bin", env["PATH"] ?? ""].filter { !$0.isEmpty }.joined(separator: ":")
+        task.environment = env
+        let o = Pipe(), e = Pipe()
+        task.standardOutput = o; task.standardError = e
+        task.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        task.terminationHandler = { _ in exited.signal() }
+        do { try task.run() } catch { return (-1, "", "\(error.localizedDescription)") }
+        let buf = OutputBuffer()
+        let io = DispatchGroup()
+        io.enter(); DispatchQueue.global().async { buf.setOut(o.fileHandleForReading.readDataToEndOfFile()); io.leave() }
+        io.enter(); DispatchQueue.global().async { buf.setErr(e.fileHandleForReading.readDataToEndOfFile()); io.leave() }
+        if exited.wait(timeout: .now() + timeout) == .timedOut { task.terminate(); return (-1, "", "timed out") }
+        _ = io.wait(timeout: .now() + 5)
+        func text(_ d: Data) -> String { (String(data: d, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        return (task.terminationStatus, text(buf.out), text(buf.err))
+    }
+
     private func promptPath(for mode: CaptureMode) -> URL {
         let name = mode == .notes ? "notes.md" : "meeting.md"
         return promptsDir.appendingPathComponent(name)
@@ -237,7 +304,8 @@ class MOMGenerator {
     }
 
     private func executeAgent(binary: String, agent: CodingAgent, prompt: String, runDir: URL? = nil,
-                              kind: String, claudeModel: String? = nil) throws -> String {
+                              kind: String, claudeModel: String? = nil,
+                              timeout: Double = MOMGenerator.timeoutSec) throws -> String {
         // Each run gets its own directory. These used to be fixed names in one
         // shared folder, so two overlapping runs -- easy to trigger by starting
         // a second recording while the first was still summarizing -- wiped
@@ -299,7 +367,7 @@ class MOMGenerator {
         // ponytail: fixed ceiling; make it a setting if a long transcript ever
         // legitimately runs past it.
         var timedOut = false
-        if exited.wait(timeout: .now() + Self.timeoutSec) == .timedOut {
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
             task.terminate()
             _ = exited.wait(timeout: .now() + 5)
@@ -313,7 +381,7 @@ class MOMGenerator {
         try? errData.write(to: stderrDump)
 
         if timedOut {
-            throw MOMError.generationFailed("\(backend.whichName) did not finish within \(Int(Self.timeoutSec / 60)) min and was killed.\nCheck that `\(backend.whichName)` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
+            throw MOMError.generationFailed("\(backend.whichName) did not finish within \(timeout >= 60 ? "\(Int(timeout / 60)) min" : "\(Int(timeout)) s") and was killed.\nCheck that `\(backend.whichName)` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
         }
 
         guard task.terminationStatus == 0 else {

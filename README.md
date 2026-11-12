@@ -5,7 +5,7 @@ agents work, records meetings and writes the notes for you, surfaces today's
 calendar events, and bubbles up reminders you added while you were away from
 your laptop.
 
-![Nikxel](Nikxel.app/Contents/Resources/nikxel_avatar.png)
+<img src="windows/resources/icon.png" alt="Nikxel" width="128">
 
 ## What it does
 

@@ -25,8 +25,17 @@ class MeetingCoordinator: AudioRecorderDelegate {
     /// `force` comes from the menu bar, which stays unguarded as the deliberate
     /// way to record while a summary is still being written. The avatar's
     /// double-click does not, because that is the accidental path.
+    ///
+    /// Starting takes 1-2 s (screen capture spin-up) and stopping as long
+    /// (teardown + mix), so the avatar switches at once and further toggles are
+    /// ignored until the recorder catches up -- otherwise the double-click meant
+    /// to stop it landed in that gap and started a second recording.
     func toggleRecording(force: Bool = false) {
+        guard !switching else { return }
         if recorder.isRecording {
+            switching = true
+            stateMachine.stopRecording()
+            nikxelView?.recordingStartedAt = nil
             recorder.stop()
             return
         }
@@ -34,16 +43,24 @@ class MeetingCoordinator: AudioRecorderDelegate {
             nikxelView?.pushReminder(id: "nikxel.busy", title: "Still writing your notes…")
             return
         }
+        switching = true
+        stateMachine.startRecording()
+        nikxelView?.recordingStartedAt = CACurrentMediaTime()
         recorder.captureMode = CaptureMode.current
         recorder.start()
     }
 
+    /// Between a toggle and the recorder confirming it.
+    private var switching = false
+
     func recorderDidStart() {
+        switching = false
         stateMachine.startRecording()
         nikxelView?.recordingStartedAt = CACurrentMediaTime()
     }
 
     func recorderDidStop(artifacts: RecordingArtifacts?, error: Error?) {
+        switching = false
         stateMachine.stopRecording()
         nikxelView?.recordingStartedAt = nil
 

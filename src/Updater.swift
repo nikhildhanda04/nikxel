@@ -122,13 +122,20 @@ enum Updater {
             return .failure(.git("Couldn't reach GitHub.\n\n\(fetch.output)"))
         }
 
-        let count = git(repo, ["rev-list", "--count", "HEAD..origin/main"])
+        // Compare the build, not HEAD: a failed update restores the old app
+        // but leaves HEAD pulled, which read as "up to date" forever.
+        // Builds from before the stamp fall back to HEAD.
+        let built = Bundle.main.url(forResource: "commit", withExtension: nil)
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = built.flatMap { git(repo, ["cat-file", "-e", $0 + "^{commit}"]).ok ? $0 : nil } ?? "HEAD"
+        let count = git(repo, ["rev-list", "--count", "\(base)..origin/main"])
         guard count.ok, let behind = Int(count.output) else {
             return .failure(.git("Couldn't compare against origin/main.\n\n\(count.output)"))
         }
 
         let subjects = behind == 0 ? [] :
-            git(repo, ["log", "--pretty=format:%s", "HEAD..origin/main"])
+            git(repo, ["log", "--pretty=format:%s", "\(base)..origin/main"])
                 .output
                 .components(separatedBy: .newlines)
                 .filter { !$0.isEmpty }
@@ -137,7 +144,7 @@ enum Updater {
             repo: repo,
             behind: behind,
             subjects: subjects,
-            currentCommit: git(repo, ["rev-parse", "--short", "HEAD"]).output,
+            currentCommit: git(repo, ["rev-parse", "--short", base]).output,
             branch: git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).output,
             // --porcelain lists untracked files too; -uno drops them, since the
             // built binary and anything else ignored can't block a pull.

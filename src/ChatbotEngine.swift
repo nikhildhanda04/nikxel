@@ -344,6 +344,10 @@ class ChatbotEngine {
             // Nothing unread at all -> nothing is waiting on us any more.
             if !pending.isEmpty { cblog("ChatbotEngine: inbox clear — dropped \(pending.count) pending") }
             pending.removeAll()
+            // Same decay as 3a: with nothing unread every baseline is 0, or a
+            // chat that was unread at start, then read, stays at its old count
+            // and its next message (1 > 1 is false) is never answered.
+            baselineCounts.removeAll()
             setActiveContact(nil); return
         }
 

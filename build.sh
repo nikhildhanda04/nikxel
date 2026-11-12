@@ -12,6 +12,9 @@ cp sprite_prompt.txt Nikxel.app/Contents/Resources/sprite_prompt.txt
 # The clone this was built from, so Check for Updates finds it even when the
 # app is opened from a copy or link elsewhere (Applications, Dock, login item).
 echo "$PWD" > Nikxel.app/Contents/Resources/repo_path
+# The commit this binary is, which can trail the clone's HEAD when a pull
+# succeeded but the build after it didn't.
+git rev-parse HEAD > Nikxel.app/Contents/Resources/commit 2>/dev/null || true
 # Liquid Glass bubbles need the macOS 26 SDK. Build with `GLASS=1 ./build.sh` on a
 # macOS 26 SDK; the default builds against older SDKs (bubbles just don't render).
 if [ "${GLASS:-0}" = "1" ]; then

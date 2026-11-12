@@ -393,7 +393,7 @@ enum NikxelSettings {
     /// File format for generated notes/MOMs. The Markdown the agent wrote is
     /// always saved; anything else is rendered alongside it.
     static var noteFormat: NoteExporter.Format {
-        get { NoteExporter.Format(rawValue: load().noteFormat ?? "") ?? .markdown }
+        get { NoteExporter.Format(rawValue: load().noteFormat ?? "") ?? .page }
         set { save { $0.noteFormat = newValue.rawValue } }
     }
 

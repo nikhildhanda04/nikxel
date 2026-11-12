@@ -454,7 +454,7 @@ class MOMGenerator {
     /// Bumped whenever the shipped prompts change in a way existing installs
     /// need. Every default prompt carries it as `promptVersionTag`, so an
     /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-    static let promptVersion = 5
+    static let promptVersion = 6
 
     private static let versionTagPrefix = "<!-- nikxel-prompt v"
     static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
@@ -533,7 +533,9 @@ Output this exact Markdown structure (keep section headings in English):
 # Notes — {{date}}
 
 ## Summary
-2-4 sentences capturing what this content is about and its main thrust.
+**One sentence, under 25 words: what this is about and its main takeaway.**
+
+2-3 sentences expanding on that: the main thrust and how it develops.
 
 ## Key Points
 - The substantive ideas, claims, arguments, facts, or topics covered.
@@ -638,21 +640,30 @@ Output this exact Markdown structure (keep section headings in English):
 # Meeting — {{date}}
 
 ## Summary
-A complete picture of the meeting in 5-8 sentences: what it was about, the
-main threads of discussion, what was agreed, and where things landed. Someone
-who missed the call should be able to read only this and know what happened.
+**One sentence, under 25 words: what the meeting was about and where it landed.**
+
+Then 3-5 sentences: the main threads of discussion, what was agreed, and what
+is still open. Someone who missed the call should be able to read only this
+section and know what happened. Keep it a short paragraph, not a transcript
+recap.
 
 ## Speakers
-- {{user_name}} (Me) — role/context if the transcript shows it.
-- One line per distinct person you identified in "Others", with the label you
-  will use for them below and the evidence you used ("introduced themselves",
+- **{{user_name}} (Me)** — role/context if the transcript shows it.
+- One line per distinct person you identified in "Others": the bold label you
+  will use for them below, then the evidence you used ("introduced themselves",
   "addressed as Priya", "answered all the pricing questions").
 
 ## Per-Speaker Highlights
-**{{user_name}} (Me):** what they contributed, asked, proposed, pushed back on,
-or committed to.
-**<each speaker from the Speakers list>:** the same, one block per person. Use
-the exact same label you listed above.
+One block per person: their label in bold on its own line, then 2-5 short
+bullets (one point each, one line where possible) on what they contributed,
+asked, proposed, pushed back on, or committed to. Use the exact labels from
+the Speakers list.
+
+**{{user_name}} (Me)**
+- …
+
+**<next speaker>**
+- …
 
 ## Decisions
 - The actual decisions reached — what was decided, and by whom if the

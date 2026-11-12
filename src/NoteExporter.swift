@@ -11,10 +11,11 @@ enum NoteExporter {
     /// Markdown is always written -- it's what the agent produced and what the
     /// other formats are rendered from.
     enum Format: String, CaseIterable {
-        case markdown, pdf, word
+        case page, markdown, pdf, word
 
         var displayName: String {
             switch self {
+            case .page: return "Page (.html)"
             case .markdown: return "Markdown (.md)"
             case .pdf: return "PDF (.pdf)"
             case .word: return "Word (.docx)"
@@ -23,6 +24,7 @@ enum NoteExporter {
 
         var fileExtension: String {
             switch self {
+            case .page: return "html"
             case .markdown: return "md"
             case .pdf: return "pdf"
             case .word: return "docx"
@@ -43,10 +45,14 @@ enum NoteExporter {
 
         let destination = markdownURL.deletingPathExtension()
             .appendingPathExtension(format.fileExtension)
+        if format == .page {
+            try html(from: markdown).write(to: destination, atomically: true, encoding: .utf8)
+            return destination
+        }
         let attributed = try attributedString(from: markdown)
 
         switch format {
-        case .markdown:
+        case .markdown, .page:
             return markdownURL
         case .word:
             let data = try attributed.data(
@@ -110,16 +116,32 @@ enum NoteExporter {
 
     // MARK: - Markdown
 
-    /// Minimal Markdown-to-HTML for what the note prompts actually emit:
-    /// headings, bullet and numbered lists, bold/italic/code, rules and
-    /// paragraphs. Not a general Markdown implementation.
+    /// Markdown-to-HTML for what the note prompts actually emit: headings,
+    /// lists, task lines, bold/italic/code, rules and paragraphs. Not a general
+    /// Markdown implementation.
+    ///
+    /// Styled to read as a document rather than a text dump: the title becomes
+    /// an eyebrow + date, the first Summary line a lead, "— Owner: X" style
+    /// fields chips, and "None." sections fade out. The same HTML feeds the
+    /// browser page and the PDF/Word export; AppKit's importer ignores what it
+    /// can't do (radius, padding on spans), so both stay readable.
     static func html(from markdown: String) -> String {
         var out = ""
-        var listKind: String?          // "ul" or "ol" while a list is open
+        var listKind: String?          // "ul", "ol" or "tasks" while a list is open
         var inCodeBlock = false
+        var inSection = false
+        var section = ""
+        var leadDone = false
+        var title = "Nikxel"
 
         func closeList() {
-            if let kind = listKind { out += "</\(kind)>\n"; listKind = nil }
+            if let kind = listKind { out += kind == "ol" ? "</ol>\n" : "</ul>\n"; listKind = nil }
+        }
+        func openList(_ kind: String) {
+            guard listKind != kind else { return }
+            closeList()
+            out += kind == "ol" ? "<ol>\n" : kind == "tasks" ? "<ul class=\"tasks\">\n" : "<ul>\n"
+            listKind = kind
         }
 
         for rawLine in markdown.components(separatedBy: .newlines) {
@@ -142,33 +164,135 @@ enum NoteExporter {
                 closeList()
                 let level = min(line.prefix(while: { $0 == "#" }).count, 6)
                 let text = line.dropFirst(level).trimmingCharacters(in: .whitespaces)
-                out += "<h\(level)>\(inline(text))</h\(level)>\n"
+                if level == 1 {
+                    title = text
+                    out += header(text)
+                } else if level == 2 {
+                    if inSection { out += "</section>\n" }
+                    inSection = true
+                    section = text.lowercased()
+                    out += "<section>\n<h2>\(inline(text))</h2>\n"
+                } else {
+                    out += "<h\(level)>\(inline(text))</h\(level)>\n"
+                }
             } else if line == "---" || line == "***" || line == "___" {
                 closeList()
                 out += "<hr/>\n"
             } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                if listKind != "ul" { closeList(); out += "<ul>\n"; listKind = "ul" }
-                out += "<li>\(inline(String(line.dropFirst(2))))</li>\n"
+                var item = String(line.dropFirst(2))
+                var done: Bool?
+                if item.hasPrefix("[ ] ") { done = false } else if item.lowercased().hasPrefix("[x] ") { done = true }
+                if done != nil { item = String(item.dropFirst(4)) }
+                if isNone(item) { closeList(); out += "<p class=\"none\">\(inline(item))</p>\n"; continue }
+                if let done = done {
+                    openList("tasks")
+                    out += "<li class=\"task\"><span class=\"box\">\(done ? "☑" : "☐")</span>&nbsp; \(fields(item))</li>\n"
+                } else {
+                    openList("ul")
+                    out += "<li>\(fields(item))</li>\n"
+                }
             } else if let match = numberedItem(line) {
-                if listKind != "ol" { closeList(); out += "<ol>\n"; listKind = "ol" }
+                openList("ol")
                 out += "<li>\(inline(match))</li>\n"
+            } else if isNone(line) {
+                closeList()
+                out += "<p class=\"none\">\(inline(line))</p>\n"
             } else {
                 closeList()
-                out += "<p>\(inline(line))</p>\n"
+                // The opening line of Summary is the one most people stop at.
+                // Older prompts wrote Summary as one long paragraph; that's not a lead.
+                let lead = section == "summary" && !leadDone && line.count <= 240
+                if section == "summary" { leadDone = true }
+                // "**Name:** what they said" / "**Name**" -- a speaker heading.
+                let speaker = line.hasPrefix("**") && (line.hasSuffix("**") || line.contains(":**"))
+                let cls = lead ? " class=\"lead\"" : speaker ? " class=\"who\"" : ""
+                out += "<p\(cls)>\(inline(line))</p>\n"
             }
         }
         closeList()
         if inCodeBlock { out += "</pre>\n" }
+        if inSection { out += "</section>\n" }
 
         return """
-        <html><head><meta charset="utf-8"><style>
-        body { font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.45; color: #111; }
-        h1 { font-size: 20pt; } h2 { font-size: 15pt; } h3 { font-size: 12.5pt; }
-        code, pre { font-family: Menlo, monospace; font-size: 10pt; background: #f4f4f4; }
-        pre { padding: 6pt; } hr { border: 0; border-top: 1px solid #ccc; }
-        </style></head><body>
-        \(out)</body></html>
+        <!doctype html>
+        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>\(escape(title))</title><style>\(css)</style></head><body><main>
+        \(out)</main></body></html>
         """
+    }
+
+    /// Website palette: paper, ink, the green accent, and the pastel chips.
+    private static let css = """
+    body { margin: 0; background: #f6faf5; color: #25302a; font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.55; }
+    main { max-width: 760px; margin: 32px auto; padding: 40px 48px; background: #ffffff; border: 1px solid #d7e9d6; border-radius: 18px; }
+    .eyebrow { color: #23864d; font-size: 8.5pt; font-weight: 700; letter-spacing: 1.5pt; text-transform: uppercase; margin: 0 0 4pt 0; }
+    h1 { font-size: 22pt; line-height: 1.2; font-weight: 700; margin: 0 0 6pt 0; }
+    .meta { color: #5c6a60; font-size: 10pt; margin: 0 0 8pt 0; }
+    section { margin-top: 22pt; }
+    h2 { color: #23864d; font-size: 9pt; font-weight: 700; letter-spacing: 1.2pt; text-transform: uppercase; border-top: 1px solid #d7e9d6; padding-top: 12pt; margin: 22pt 0 8pt 0; }
+    h3 { font-size: 12pt; margin: 14pt 0 6pt 0; }
+    p { margin: 0 0 8pt 0; }
+    .lead { font-size: 13pt; line-height: 1.5; font-weight: 600; }
+    .who { margin-top: 12pt; }
+    .who b { color: #23864d; }
+    ul, ol { margin: 0 0 8pt 0; padding-left: 18pt; }
+    li { margin: 0 0 5pt 0; }
+    ul.tasks { list-style-type: none; padding-left: 0; }
+    .task { margin: 0 0 9pt 0; padding: 8pt 12pt; background: #f6faf5; border-radius: 10px; }
+    .box { color: #23864d; font-size: 12pt; }
+    .chip { font-size: 8.5pt; font-weight: 600; background: #d6f3e3; border-radius: 99px; padding: 1pt 7pt; white-space: nowrap; }
+    .chip .k { color: #5c6a60; font-weight: 500; }
+    .chip.due, .chip.when { background: #fff3c4; }
+    .chip.duration { background: #e8ddff; }
+    .chip.with { background: #ffe6d3; }
+    .chip.unset { background: #eef2ee; color: #5c6a60; }
+    .none { color: #8a968d; font-style: italic; }
+    code { font-family: Menlo, monospace; font-size: 9.5pt; background: #f6faf5; border-radius: 4px; padding: 0 3pt; }
+    pre { font-family: Menlo, monospace; font-size: 9pt; line-height: 1.5; background: #f6faf5; border: 1px solid #d7e9d6; border-radius: 10px; padding: 10pt 12pt; white-space: pre-wrap; }
+    hr { border: 0; border-top: 1px solid #d7e9d6; }
+    @media print { body { background: #fff; } main { border: 0; margin: 0; padding: 0; } }
+    """
+
+    /// "Meeting — 2026-11-12 13:21" -> an eyebrow ("Minutes of meeting") over
+    /// a readable date. Anything else is shown as-is.
+    private static func header(_ title: String) -> String {
+        let parts = title.components(separatedBy: " — ")
+        guard parts.count == 2 else { return "<h1>\(inline(title))</h1>\n" }
+        let kind = parts[0] == "Meeting" ? "Minutes of meeting" : parts[0]
+        let parse = DateFormatter()
+        parse.locale = Locale(identifier: "en_US_POSIX")
+        parse.dateFormat = "yyyy-MM-dd HH:mm"
+        guard let date = parse.date(from: parts[1]) else {
+            return "<p class=\"eyebrow\">\(escape(kind))</p>\n<h1>\(inline(parts[1]))</h1>\n"
+        }
+        let day = DateFormatter(); day.dateFormat = "EEEE, d MMMM yyyy"
+        let time = DateFormatter(); time.timeStyle = .short
+        return "<p class=\"eyebrow\">\(escape(kind))</p>\n<h1>\(day.string(from: date))</h1>\n<p class=\"meta\">\(time.string(from: date))</p>\n"
+    }
+
+    /// "- None." / "None — no tasks came out of this meeting."
+    private static func isNone(_ text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: .whitespaces)
+        return t == "none" || t == "none." || t.hasPrefix("none —") || t.hasPrefix("none -")
+    }
+
+    /// "**Task** — Owner: Vikas — Due: Not specified" -> the task, then a chip
+    /// per "Key: value" field. Parts that aren't fields stay in the text.
+    private static func fields(_ item: String) -> String {
+        let parts = item.components(separatedBy: " — ")
+        var text: [String] = [], chips: [String] = []
+        for (i, part) in parts.enumerated() {
+            guard i > 0, let colon = part.firstIndex(of: ":") else { text.append(part); continue }
+            let key = part[..<colon].trimmingCharacters(in: .whitespaces)
+            let value = part[part.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty, key.count <= 12, !value.isEmpty,
+                  key.allSatisfy({ $0.isLetter || $0 == " " }) else { text.append(part); continue }
+            let unset = ["not specified", "unassigned"].contains(value.lowercased())
+            let cls = "chip \(key.lowercased().replacingOccurrences(of: " ", with: "-"))\(unset ? " unset" : "")"
+            chips.append("<span class=\"\(cls)\">&nbsp;<span class=\"k\">\(escape(key))</span>&nbsp; \(inline(value))&nbsp;</span>")
+        }
+        let body = inline(text.joined(separator: " — "))
+        return chips.isEmpty ? body : "\(body)<br/>\(chips.joined(separator: " "))"
     }
 
     /// "1. text" / "2) text" -> "text"

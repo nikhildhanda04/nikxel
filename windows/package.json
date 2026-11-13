@@ -24,6 +24,12 @@
     "electron-builder": "26.17.0",
     "typescript": "6.0.3"
   },
+  "allowScripts": {
+    "electron": true,
+    "ffmpeg-static": true,
+    "uiohook-napi": true,
+    "electron-winstaller": true
+  },
   "build": {
     "appId": "com.nikxel.Nikxel",
     "productName": "Nikxel",

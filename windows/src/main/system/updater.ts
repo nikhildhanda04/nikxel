@@ -266,7 +266,7 @@ function Stamp {
 function Build {
   # npm ci only when the dependencies changed (or are missing): it deletes
   # node_modules and downloads Electron again, minutes for nothing otherwise.
-  if ($script:depsChanged -or -not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\electron'))) {
+  if ($script:depsChanged -or -not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\electron\\dist\\electron.exe'))) {
     Log "--- npm ci"
     if ((Run $npm @('ci') $app) -ne 0) { return $false }
   }

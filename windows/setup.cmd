@@ -25,6 +25,17 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='el
 
 echo Installing dependencies...
 call npm ci --no-audit --no-fund || goto :fail
+rem npm 11.16+ skips install scripts package.json's allowScripts doesn't
+rem approve, and electron.exe / ffmpeg.exe come from those scripts. Run them
+rem directly if they were skipped anyway (an npm that ignores the field).
+if not exist "node_modules\electron\dist\electron.exe" (
+  echo Downloading Electron...
+  call node node_modules\electron\install.js || goto :fail
+)
+if not exist "node_modules\ffmpeg-static\ffmpeg.exe" (
+  echo Downloading ffmpeg...
+  call node node_modules\ffmpeg-static\install.js || goto :fail
+)
 echo Building Nikxel...
 call npm run build || goto :fail
 

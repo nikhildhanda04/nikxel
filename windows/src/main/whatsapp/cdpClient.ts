@@ -37,8 +37,9 @@ export class CDPClient {
       return false;
     }
     this.loggedAttachFailure = false;
-    // Enable Runtime so we can evaluate JS.
-    void this.send("Runtime.enable", {}, 2000);
+    // No Runtime.enable: Runtime.evaluate works without it, and with it on
+    // DevTools keeps every object WhatsApp Web logs to the console alive
+    // and streams each console call over the socket, all day.
     // A hidden window never has OS focus. Emulating it keeps `focus()` and
     // `document.hasFocus()` behaving as they did in a background Chrome tab,
     // so the message box accepts inserted text.

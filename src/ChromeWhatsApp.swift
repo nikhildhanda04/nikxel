@@ -139,6 +139,21 @@ enum ChromeBot {
         return false
     }
 
+    /// Close every tab but WhatsApp: links opened from chats and a stray
+    /// New Tab each keep a renderer alive (15-75 MB each, measured).
+    static func closeStrayTabs() {
+        guard let list = URL(string: "http://localhost:\(debugPort)/json/list"),
+              let data = try? Data(contentsOf: list),
+              let tabs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        for t in tabs where t["type"] as? String == "page" {
+            guard let id = t["id"] as? String, let url = t["url"] as? String,
+                  !url.contains("web.whatsapp.com"),
+                  let close = URL(string: "http://localhost:\(debugPort)/json/close/\(id)") else { continue }
+            _ = try? Data(contentsOf: close)
+            cblog("ChromeBot: closed stray tab \(url.prefix(80))")
+        }
+    }
+
     @discardableResult
     static func launchIfNeeded() -> Bool {
         if isPortOpen() { return true }
@@ -168,7 +183,20 @@ enum ChromeBot {
             "--user-data-dir=\(profileDir)",
             "--no-first-run",
             "--no-default-browser-check",
-            "https://web.whatsapp.com"
+            // One WhatsApp tab needs none of Chrome's own background services:
+            // fewer utility processes, no model or component downloads. Not
+            // the keychain flags -- those would make the saved login unreadable.
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+            "--disable-default-apps",
+            "--no-pings",
+            // No spare renderer kept warm for a next tab that never comes.
+            "--disable-features=Translate,MediaRouter,OptimizationHints,OptimizationGuideModelDownloading,AutofillServerCommunication,SpareRendererForSitePerProcess",
+            // An app window: WhatsApp on its own, no tabs or address bar --
+            // whose popup alone was two preloaded renderers (~170 MB).
+            "--app=https://web.whatsapp.com"
         ]
         // Detach stdio so the parent process death doesn't kill the browser.
         task.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
@@ -215,11 +243,13 @@ enum ChromeWhatsApp {
         }
         let c = CDPClient()
         if !c.connect(urlContains: "web.whatsapp.com") {
+            c.disconnect()
             cblog("CDP: no WhatsApp tab in bot Chrome. Open https://web.whatsapp.com in the bot window and scan the QR.")
             return nil
         }
         cdp = c
         cblog("CDP: connected to \(c.targetURL ?? "?")")
+        ChromeBot.closeStrayTabs()
         return c
     }
 
@@ -237,6 +267,27 @@ enum ChromeWhatsApp {
         })()
         """
         return c.eval(js) == "true"
+    }
+
+    /// WhatsApp Web's JS heap, in MB; 0 when it can't be read.
+    static func heapMB() -> Int {
+        guard let c = ensureCDP() else { return 0 }
+        return Int(c.eval("String(Math.round(((performance.memory || {}).usedJSHeapSize || 0) / 1e6))") ?? "") ?? 0
+    }
+
+    /// Reload WhatsApp Web and block until its chat list is back (or 60s).
+    @discardableResult
+    static func reloadPage() -> Bool {
+        guard let c = ensureCDP() else { return false }
+        ChromeBot.closeStrayTabs()
+        _ = c.eval("setTimeout(function(){ location.reload(); }, 0), 'ok'")
+        Thread.sleep(forTimeInterval: 3)
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            if isLoggedIn() { return true }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        return false
     }
 
     /// Get all unread chats from the sidebar.
@@ -276,7 +327,7 @@ enum ChromeWhatsApp {
             // ^ would otherwise be looking at U+202A.
             var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
             var result = [];
-            var labels = document.querySelectorAll('span[aria-label]');
+            var labels = document.querySelectorAll('#pane-side span[aria-label]');   // the chat list only
             for (var i = 0; i < labels.length; i++) {
                 var ar = labels[i].getAttribute('aria-label') || '';
                 var m = ar.match(/(\\d+)\\s*unread/i);
@@ -540,13 +591,17 @@ enum ChromeWhatsApp {
     /// WhatsApp Web writes); a US-locale M/d stamp will misparse or return nil,
     /// which only costs the idle cutoff for that message.
     static func parseStamp(_ s: String) -> Date? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        for fmt in stampFormatters { if let d = fmt.date(from: t) { return d } }
+        return nil
+    }
+
+    /// Built once: this runs per bubble, inside a retry loop.
+    private static let stampFormatters: [DateFormatter] = ["h:mm a, d/M/yyyy", "HH:mm, d/M/yyyy"].map {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
-        for f in ["h:mm a, d/M/yyyy", "HH:mm, d/M/yyyy"] {
-            fmt.dateFormat = f
-            if let d = fmt.date(from: s.trimmingCharacters(in: .whitespaces)) { return d }
-        }
-        return nil
+        fmt.dateFormat = $0
+        return fmt
     }
 
     /// Block until the open conversation has actually rendered its messages.
@@ -575,21 +630,28 @@ enum ChromeWhatsApp {
         guard let c = ensureCDP() else { return [] }
         let js = """
         (function(){
+            // Only the sidebar: `[role="row"]` page-wide also matched the
+            // open chat's message bubbles, which logged "1:36 pm" as a chat
+            // name and SVG icon names as text. Name and preview come from the
+            // same elements `unreadChats` reads; group rows keep their sender.
+            var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
             var result = [];
-            var rows = document.querySelectorAll('[role="row"]');
+            var rows = document.querySelectorAll('#pane-side [role="row"]');
             for (var i = 0; i < rows.length && result.length < \(limit); i++) {
-                var row = rows[i];
-                var titleEl = row.querySelector('span[title]');
-                var name = titleEl ? (titleEl.getAttribute('title') || '').trim() : '';
-                if (!name) {
-                    var dirEl = row.querySelector('span[dir="auto"]');
-                    name = dirEl ? dirEl.textContent.trim() : '';
+                var status = rows[i].querySelector('[data-testid="last-msg-status"]');
+                var nameEl = rows[i].querySelector('span[title]:not([data-testid="last-msg-status"])');
+                var name = nameEl ? (nameEl.getAttribute('title') || '').replace(BIDI, '').trim() : '';
+                var preview = status ? (status.getAttribute('title') || '').replace(BIDI, '').trim() : '';
+                if (!name || !preview || name === 'Message yourself') continue;
+                var sender = '';
+                for (var k = 0; k < status.children.length; k++) {
+                    if ((status.children[k].textContent || '').trim() === ':') {
+                        var auto = status.querySelector('span[dir="auto"]');
+                        if (auto) sender = (auto.textContent || '').replace(BIDI, '').trim();
+                        break;
+                    }
                 }
-                if (!name || name === 'Message yourself') continue;
-                result.push({
-                    name: name,
-                    preview: row.textContent.trim().substring(0, 300)
-                });
+                result.push({name: name, preview: (sender ? sender + ': ' : '') + preview.substring(0, 300)});
             }
             return JSON.stringify(result);
         })()
@@ -618,7 +680,7 @@ enum ChromeWhatsApp {
             cblog("CDP: callLog — Calls tab button not found (\(result)); WhatsApp Web DOM may have changed")
             return false
         }
-        Thread.sleep(forTimeInterval: 0.6)
+        Thread.sleep(forTimeInterval: 1.0)   // the list measured ~1s to render
         return true
     }
 
@@ -649,26 +711,21 @@ enum ChromeWhatsApp {
         guard openCallsTab(), let c = ensureCDP() else { return [] }
         let js = """
         (function(){
+            // A call row's visible text is [name, time, "Incoming"/"Outgoing"/
+            // "Missed" (+ " (2)")]; voice vs video is only in the icon's SVG
+            // title, which is why text inside <svg> is skipped and read apart.
+            // ponytail: English labels only; a localised WhatsApp logs no calls.
             var result = [];
-            var rows = document.querySelectorAll('[role="row"], [role="listitem"]');
+            var rows = document.querySelectorAll('#pane-side [role="row"]');
             for (var i = 0; i < rows.length && result.length < \(limit); i++) {
-                var row = rows[i];
-                var titleEl = row.querySelector('span[title]') || row.querySelector('span[dir="auto"]');
-                var name = titleEl ? (titleEl.getAttribute('title') || titleEl.textContent || '').trim() : '';
-                if (!name) continue;
-                var spans = Array.from(row.querySelectorAll('span'))
-                    .map(function(s){ return (s.textContent || '').trim(); })
-                    .filter(function(s){ return s.length > 0; });
-                var info = '', timeText = '';
-                for (var j = 0; j < spans.length; j++) {
-                    if (spans[j] === name) continue;
-                    if (/\\b(am|pm)\\b/i.test(spans[j]) || /yesterday|today|\\d{1,2}\\/\\d{1,2}/i.test(spans[j])) {
-                        timeText = spans[j];
-                    } else if (!info && spans[j].length < 60) {
-                        info = spans[j];
-                    }
+                var w = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT), n, t = [];
+                while ((n = w.nextNode())) {
+                    var s = n.parentElement.closest('svg') ? '' : n.textContent.trim();
+                    if (s) t.push(s);
                 }
-                result.push({name: name, info: info, timeText: timeText});
+                if (t.length < 3 || !/^(missed|incoming|outgoing)/i.test(t[t.length - 1])) continue;
+                var icons = Array.from(rows[i].querySelectorAll('svg title')).map(function(x){ return x.textContent; }).join(' ');
+                result.push({name: t[0], info: t[t.length - 1] + (/video/i.test(icons) ? ' video call' : ' voice call'), timeText: t[1]});
             }
             return JSON.stringify(result);
         })()

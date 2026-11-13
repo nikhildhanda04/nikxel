@@ -52,14 +52,16 @@ final class CDPClient {
         task.resume()
         ws = task
         receive()
-        // Enable Runtime so we can evaluate JS.
-        _ = sendSync("Runtime.enable", params: [:], timeout: 2.0)
+        // No Runtime.enable: Runtime.evaluate works without it, and with it on
+        // DevTools keeps every object WhatsApp Web logs to the console alive
+        // and streams each console call over the socket, all day.
         return true
     }
 
     func disconnect() {
         ws?.cancel(with: .goingAway, reason: nil)
         ws = nil
+        session.invalidateAndCancel()   // a session per client: let it go with it
     }
 
     var isConnected: Bool { ws != nil }
@@ -88,8 +90,10 @@ final class CDPClient {
                 }
                 self.receive()
             case .failure:
-                // Connection died. Caller will reconnect on next op.
+                // Connection died. Caller will reconnect on next op, with a
+                // new client -- so this one's session goes now.
                 self.ws = nil
+                self.session.invalidateAndCancel()
             }
         }
     }

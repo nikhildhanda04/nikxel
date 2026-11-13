@@ -279,18 +279,21 @@ export function createAvatarWindow(
   // Nikxel or a bubble. The renderer only sees the pointer over its own
   // window, so main polls the global position and hands it over, like the
   // Swift tick() reading NSEvent.mouseLocation each frame.
+  // Outside the window only the side matters (which way to face), so the
+  // renderer hears about a move out there only when the side flips.
   let lastCursor = "";
   const pollCursor = () => {
     if (win.isDestroyed() || !win.isVisible()) return;
     const p = screen.getCursorScreenPoint();
     const b = win.getBounds();
-    const x = p.x - b.x, y = p.y - b.y;
+    let x = p.x - b.x, y = p.y - b.y;
+    if (x < 0 || y < 0 || x >= b.width || y >= b.height) { x = x < b.width / 2 ? -1 : b.width + 1; y = -1; }
     const key = `${x},${y}`;
     if (key === lastCursor) return;
     lastCursor = key;
     send({ type: "cursor", x, y });
   };
-  const cursorTimer = setInterval(pollCursor, 16);
+  const cursorTimer = setInterval(pollCursor, 33);   // the renderer draws at 30 fps
 
   // ---- Events from the renderer -------------------------------------------
 
@@ -441,13 +444,15 @@ export function createAvatarWindow(
 
     show() {
       wantVisible = true;
+      if (!win.isDestroyed()) win.webContents.setBackgroundThrottling(false);
       if (loaded) showWindow();
     },
 
     hide() {
       wantVisible = false;
       if (dragging) mouseUp();
-      if (!win.isDestroyed()) win.hide();
+      // Hidden, the animation loop has nothing to draw: let Chromium park it.
+      if (!win.isDestroyed()) { win.webContents.setBackgroundThrottling(true); win.hide(); }
     },
 
     /// Shows a notification card above the avatar. Replaces any card already

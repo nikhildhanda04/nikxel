@@ -177,6 +177,9 @@ export class AudioRecorder {
     const mode = this.activeMode;
     this.teardown = (async () => {
       await this.stopRenderer();
+      // The capture renderer is only needed while recording; between
+      // meetings it was a whole idle Chromium renderer. Next start makes one.
+      if (this.win && !this.win.isDestroyed() && !this._isRecording) this.win.destroy();
       let artifacts: RecordingArtifacts | null = null;
       try { artifacts = await this.finalize(mode); }
       catch (e) { diag("Recorder", `finalize failed: ${e}`); }

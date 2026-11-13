@@ -102,10 +102,21 @@ enum NikxelSettings {
         return dir.appendingPathComponent("settings.json")
     }()
 
+    private static var cached: (stamp: Date, size: Int, value: Stored)?
+    private static let cacheLock = NSLock()
+
+    /// Decoded once per change to the file, not once per getter: a single bot
+    /// poll reads about ten settings. Keyed on mtime and size, so a hand edit
+    /// still takes effect at once.
     private static func load() -> Stored {
-        guard let data = try? Data(contentsOf: fileURL),
-              let s = try? JSONDecoder().decode(Stored.self, from: data) else { return Stored() }
-        return s
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let stamp = attrs[.modificationDate] as? Date,
+              let size = (attrs[.size] as? NSNumber)?.intValue else { return Stored() }
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if let c = cached, c.stamp == stamp, c.size == size { return c.value }
+        let value = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) } ?? Stored()
+        cached = (stamp, size, value)
+        return value
     }
 
     private static func save(_ mutate: (inout Stored) -> Void) {
@@ -113,6 +124,7 @@ enum NikxelSettings {
         mutate(&s)
         guard let data = try? JSONEncoder().encode(s) else { return }
         try? data.write(to: fileURL, options: .atomic)
+        cacheLock.lock(); cached = nil; cacheLock.unlock()
     }
 
     /// The user's real first name. Fed into the meeting prompt so the LLM
@@ -408,7 +420,10 @@ enum NikxelSettings {
     /// the bot's isolated Chrome profile. Purely informational — the actual
     /// connection lives in the Chrome profile dir; this just drives UI state.
     static var whatsappConnected: Bool {
-        get { load().whatsappConnected ?? false }
+        // Unset on set-ups older than the flag: WhatsApp Web's own storage
+        // in the bot profile says it was set up, so the window comes back.
+        get { load().whatsappConnected ?? FileManager.default.fileExists(
+            atPath: NSHomeDirectory() + "/.nikxel/chrome-profile/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb") }
         set { save { $0.whatsappConnected = newValue } }
     }
 

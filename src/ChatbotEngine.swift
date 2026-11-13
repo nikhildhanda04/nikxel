@@ -12,7 +12,18 @@ let logURL: URL = {
     return dir.appendingPathComponent("chatbot.log")
 }()
 
+/// Once per launch: a log past 2 MB becomes chatbot.log.1, replacing the
+/// last one, so the file stops growing for as long as Nikxel is installed.
+private let logRotated: Void = {
+    guard let size = (try? FileManager.default.attributesOfItem(atPath: logURL.path))?[.size] as? Int,
+          size > 2_000_000 else { return }
+    let old = logURL.appendingPathExtension("1")
+    try? FileManager.default.removeItem(at: old)
+    try? FileManager.default.moveItem(at: logURL, to: old)
+}()
+
 func cblog(_ msg: String) {
+    _ = logRotated
     let line = "[\(Date())] \(msg)\n"
     if let data = line.data(using: .utf8) {
         if let handle = try? FileHandle(forWritingTo: logURL) {
@@ -219,6 +230,24 @@ class ChatbotEngine {
     private(set) var activeContactName: String?
     private var cancelled = false
     private var pollingInProgress = false
+    private var lastUnreadLogged = -1
+    /// Set while the activity logger has the page on the Calls tab or mid
+    /// -reload. The chat list reads as empty then, and an empty list clears
+    /// `pending` and the baseline -- so polls skip instead.
+    private var held = false
+
+    var hasPending: Bool { !pending.isEmpty }
+
+    /// Run `work` (on the caller's background queue) with polling held off,
+    /// once any poll in flight has finished. `work` returning false means the
+    /// page didn't come back cleanly: re-baseline so old unread isn't new.
+    func withPollingHeld(_ work: () -> Bool) {
+        held = true
+        defer { held = false }
+        let deadline = Date().addingTimeInterval(60)
+        while pollingInProgress && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        if !work() { baselineReady = false }
+    }
     private var baselineReady = false
 
     // User toggle (persisted). When false, the bot never auto-replies, even in a meeting.
@@ -324,7 +353,7 @@ class ChatbotEngine {
     private func stopPolling() { timer?.invalidate(); timer = nil; currentInterval = 0 }
 
     private func checkAndReply() {
-        guard !cancelled, !pollingInProgress else { return }
+        guard !cancelled, !pollingInProgress, !held else { return }
         pollingInProgress = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             defer { self?.pollingInProgress = false }
@@ -338,7 +367,11 @@ class ChatbotEngine {
         sendDueMeets()
         // 1. Get all unread chats via Chrome JS (fast — no AX traversal needed).
         let unreadChats = ChromeWhatsApp.unreadChats()
-        cblog("ChatbotEngine: unread=\(unreadChats.count)")
+        // Only when it moves: every 10-20s all day was most of the log.
+        if unreadChats.count != lastUnreadLogged {
+            lastUnreadLogged = unreadChats.count
+            cblog("ChatbotEngine: unread=\(unreadChats.count)")
+        }
         guard !cancelled else { setActiveContact(nil); return }
         if unreadChats.isEmpty {
             // Nothing unread at all -> nothing is waiting on us any more.
@@ -636,7 +669,7 @@ class ChatbotEngine {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.meetTimer == nil else { return }
             self.meetTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-                guard let self = self, !self.pollingInProgress else { return }
+                guard let self = self, !self.pollingInProgress, !self.held else { return }
                 self.pollingInProgress = true
                 DispatchQueue.global(qos: .utility).async {
                     defer { self.pollingInProgress = false }

@@ -117,6 +117,27 @@ export class ChatbotEngine {
   get activeContactName(): string | null { return this._activeContactName; }
   private cancelled = false;
   private pollingInProgress = false;
+  private lastUnreadLogged = -1;
+  /// Set while the activity logger has the page on the Calls tab or mid
+  /// -reload. The chat list reads as empty then, and an empty list clears
+  /// `pending` and the baseline -- so polls skip instead.
+  private held = false;
+
+  get hasPending(): boolean { return this.pending.size > 0; }
+
+  /// Run `work` with polling held off, once any poll in flight has finished.
+  /// `work` resolving false means the page didn't come back cleanly:
+  /// re-baseline so old unread isn't taken as new.
+  async withPollingHeld(work: () => Promise<boolean>): Promise<void> {
+    this.held = true;
+    try {
+      const deadline = Date.now() + 60_000;
+      while (this.pollingInProgress && Date.now() < deadline) await new Promise(r => setTimeout(r, 200));
+      if (!(await work())) this.baselineReady = false;
+    } finally {
+      this.held = false;
+    }
+  }
   private baselineReady = false;
 
   private readonly onMeetingStateChanged = () => this.meetingStateChanged();
@@ -223,7 +244,7 @@ export class ChatbotEngine {
   }
 
   private checkAndReply(): void {
-    if (this.cancelled || this.pollingInProgress) return;
+    if (this.cancelled || this.pollingInProgress || this.held) return;
     this.pollingInProgress = true;
     this.performCheck()
       .catch(e => cblog(`ChatbotEngine: poll failed — ${e instanceof Error ? e.stack ?? e.message : e}`))
@@ -236,7 +257,11 @@ export class ChatbotEngine {
     await this.sendDueMeets();
     // 1. Get all unread chats via the page's DOM (fast — one evaluate).
     const unreadChats = await ChromeWhatsApp.unreadChats();
-    cblog(`ChatbotEngine: unread=${unreadChats.length}`);
+    // Only when it moves: every 10-20s all day was most of the log.
+    if (unreadChats.length !== this.lastUnreadLogged) {
+      this.lastUnreadLogged = unreadChats.length;
+      cblog(`ChatbotEngine: unread=${unreadChats.length}`);
+    }
     if (this.cancelled) { this.setActiveContact(null); return; }
     if (unreadChats.length === 0) {
       // Nothing unread at all -> nothing is waiting on us any more.
@@ -530,7 +555,7 @@ export class ChatbotEngine {
     }
     if (this.meetTimer === null) {
       this.meetTimer = setInterval(() => {
-        if (this.pollingInProgress) return;
+        if (this.pollingInProgress || this.held) return;
         this.pollingInProgress = true;
         this.sendDueMeets()
           .catch(e => cblog(`ChatbotEngine: Meet link send failed — ${e}`))

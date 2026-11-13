@@ -17,7 +17,10 @@ class WhatsAppActivityLogger {
     private var chatTimer: Timer?
     private var callTimer: Timer?
     private let chatInterval: TimeInterval = 120   // 2 min — cheap, no tab switch
-    private let callInterval: TimeInterval = 600   // 10 min — switches tabs, so less often
+    private let callInterval: TimeInterval = 1800  // 30 min — switches tabs and holds the bot, so rarely
+    /// WhatsApp Web's heap only grows: measured 374 MB after 3.7 days, 178 MB
+    /// right after a reload (its tab 471 -> 362 MB). Past this, reload it.
+    private let reloadAboveMB = 350
 
     private let logDir: URL
     private let queue = DispatchQueue(label: "nikxel.whatsapp-activity", qos: .utility)
@@ -26,6 +29,14 @@ class WhatsAppActivityLogger {
     // delta-logging shape as DayLogger's app-usage sampler.
     private var lastPreview: [String: String] = [:]
     private var seenCallKeys: Set<String> = []
+    private var dedupeDay = ""
+
+    /// Each day's log starts from nothing, so the dedupe does too -- and the
+    /// sets stop growing with every day the app stays open.
+    private func rollDay() {
+        let day = Self.dayFormatter.string(from: Date())
+        if day != dedupeDay { dedupeDay = day; lastPreview = [:]; seenCallKeys = [] }
+    }
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -38,7 +49,9 @@ class WhatsAppActivityLogger {
         chatTimer = Timer.scheduledTimer(withTimeInterval: chatInterval, repeats: true) { [weak self] _ in
             self?.pollChats()
         }
-        pollCalls()
+        // Not at once: at launch WhatsApp Web is still loading, has no Calls
+        // tab, and a miss then waited out the whole interval.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in self?.pollCalls() }
         callTimer = Timer.scheduledTimer(withTimeInterval: callInterval, repeats: true) { [weak self] _ in
             self?.pollCalls()
         }
@@ -56,6 +69,11 @@ class WhatsAppActivityLogger {
             guard let self = self else { return }
             let chats = ChromeWhatsApp.allChatsPreview()
             guard !chats.isEmpty else { return }
+            // A chat list means a logged-in WhatsApp, so the window is worth
+            // relaunching after a restart. Set-ups from before this flag
+            // existed never got it, and lost WhatsApp after their next reboot.
+            if !NikxelSettings.whatsappConnected { NikxelSettings.whatsappConnected = true }
+            self.rollDay()
             for chat in chats {
                 if self.lastPreview[chat.name] == chat.preview { continue }
                 self.lastPreview[chat.name] = chat.preview
@@ -65,17 +83,36 @@ class WhatsAppActivityLogger {
                     "preview": chat.preview
                 ])
             }
+            self.reloadIfBloated()
         }
+    }
+
+    /// Only while the bot has nothing in hand: a reload drops the open chat.
+    private func reloadIfBloated() {
+        let bot = ChatbotEngine.shared
+        guard !bot.hasPending else { return }
+        let mb = ChromeWhatsApp.heapMB()
+        guard mb > reloadAboveMB else { return }
+        cblog("WhatsApp Web heap \(mb) MB — reloading it")
+        bot.withPollingHeld { ChromeWhatsApp.reloadPage() }
     }
 
     private func pollCalls() {
         queue.async { [weak self] in
             guard let self = self else { return }
-            let calls = ChromeWhatsApp.callLog()
+            var calls: [WACall] = []
+            // Held: while the Calls tab is up the bot would read zero unread.
             // Always restore the Chats tab afterward — ChatbotEngine's unread
             // polling assumes the chat list, not the call log, is on screen.
-            defer { ChromeWhatsApp.openChatsTab() }
-            for call in calls {
+            ChatbotEngine.shared.withPollingHeld {
+                calls = ChromeWhatsApp.callLog()
+                ChromeWhatsApp.openChatsTab()
+                return true
+            }
+            self.rollDay()
+            // Only today's rows carry a clock time; "Yesterday" and dated
+            // rows were re-logged into today's file after every restart.
+            for call in calls where call.timeText.contains(":") {
                 let key = "\(call.name)|\(call.info)|\(call.timeText)"
                 if self.seenCallKeys.contains(key) { continue }
                 self.seenCallKeys.insert(key)
@@ -107,10 +144,14 @@ class WhatsAppActivityLogger {
         }
     }
 
-    private static func fileURL(logDir: URL, file: String, for date: Date) -> URL {
+    private static let dayFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        return logDir.appendingPathComponent("\(file)-\(fmt.string(from: date)).jsonl")
+        return fmt
+    }()
+
+    private static func fileURL(logDir: URL, file: String, for date: Date) -> URL {
+        logDir.appendingPathComponent("\(file)-\(dayFormatter.string(from: date)).jsonl")
     }
 
     /// Read back today's (or any day's) raw entries for `DayLogger` to fold

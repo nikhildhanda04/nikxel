@@ -79,7 +79,21 @@ function isFile(p: string): boolean {
 /// Full path of an executable by name, searching PATH plus extraPathDirs().
 /// On Windows tries each PATHEXT extension (.exe, .cmd, ...). Also accepts an
 /// absolute path, returned as-is if it exists.
+const found = new Map<string, string>();
+
+/// Hits are cached (a tool that's gone is looked up again); misses aren't,
+/// since setup installs tools while Nikxel runs. Every git call came through
+/// here, statting each PATH directory times each PATHEXT extension.
 export function which(name: string, extraCandidates: string[] = []): string | null {
+  const key = name + "\0" + extraCandidates.join("\0");
+  const hit = found.get(key);
+  if (hit && isFile(hit)) return hit;
+  const p = lookup(name, extraCandidates);
+  if (p) found.set(key, p); else found.delete(key);
+  return p;
+}
+
+function lookup(name: string, extraCandidates: string[]): string | null {
   for (const c of extraCandidates) if (isFile(c)) return c;
   if (path.isAbsolute(name)) return isFile(name) ? name : null;
   const env = augmentedEnv();

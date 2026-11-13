@@ -84,17 +84,29 @@ interface Stored {
 
 export const SETTINGS_FILE = nikxelPath("settings.json");
 
+let cache: { mtime: number; size: number; s: Stored } | null = null;
+
+/// Parsed once per change to the file, not once per getter: a single bot
+/// poll reads about ten settings. Keyed on mtime and size, so a hand edit
+/// still takes effect at once. Read-only -- `save` works on a copy.
 function load(): Stored {
+  let st: fs.Stats;
+  try { st = fs.statSync(SETTINGS_FILE); } catch { cache = null; return {}; }
+  if (cache && cache.mtime === st.mtimeMs && cache.size === st.size) return cache.s;
+  let parsed: Stored = {};
   try {
     const obj = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
-    return obj && typeof obj === "object" ? obj : {};
-  } catch { return {}; }
+    if (obj && typeof obj === "object") parsed = obj;
+  } catch { /* unreadable: defaults */ }
+  cache = { mtime: st.mtimeMs, size: st.size, s: parsed };
+  return parsed;
 }
 
 function save(mutate: (s: Stored) => void): void {
-  const s = load();
+  const s = structuredClone(load());
   mutate(s);
   try { writeAtomic(SETTINGS_FILE, JSON.stringify(s, null, 2)); } catch { /* read-only home: settings just don't stick */ }
+  cache = null;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));

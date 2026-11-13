@@ -2,7 +2,7 @@ import * as path from "path";
 import { StateMachine } from "../core/stateMachine";
 import { isWin } from "../core/paths";
 import { run } from "../core/proc";
-import { PSHelper, PS_END } from "./psHelper";
+import { desktopRequest, stopDesktopHelper } from "./desktopHelper";
 
 /// One candidate process from a poll: cumulative CPU seconds on Windows,
 /// ps's own %cpu elsewhere.
@@ -13,8 +13,8 @@ interface ProcInfo { pid: number; image: string; cmd: string; cpuSeconds?: numbe
 /// OpenCodeMonitor.swift (which defines AgentMonitor).
 ///
 /// The Mac version ran `ps aux` and `ps -p <pid> -o %cpu=` every 1.5 s. On
-/// Windows that would be two process spawns per tick, so one long-lived
-/// PowerShell answers each tick instead: Get-Process for the candidates and
+/// Windows that would be two process spawns per tick, so the long-lived
+/// PowerShell in desktopHelper answers each tick instead: Get-Process for the candidates and
 /// their CPU seconds, plus the command line (Win32_Process, cached per pid)
 /// for node.exe and bun.exe — Claude Code, Codex and OpenCode installed with
 /// npm all run as node.exe, so the image name alone says nothing.
@@ -27,7 +27,6 @@ export class AgentMonitor {
   /// pid -> (CPU seconds, when) from the previous poll, to turn the
   /// cumulative CPU time Windows reports into a percentage.
   private prevCpu = new Map<number, { cpu: number; at: number }>();
-  private helper: PSHelper | null = null;
 
   static readonly agentNames = ["opencode", "claude", "claude-code", "codex", "cursor", "antigravity", "kiro"];
 
@@ -35,15 +34,14 @@ export class AgentMonitor {
 
   startMonitoring(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => this.check(), 1500);
+    this.timer = setInterval(() => this.check(), 2000);
     this.check();
   }
 
   stopMonitoring(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    this.helper?.stop();
-    this.helper = null;
+    stopDesktopHelper();
   }
 
   private async check(): Promise<void> {
@@ -129,8 +127,7 @@ export class AgentMonitor {
   }
 
   private async pollWindows(): Promise<ProcInfo[] | null> {
-    if (!this.helper) this.helper = new PSHelper("agent-monitor", AGENT_POLL_SCRIPT);
-    const out = await this.helper.request("poll", 15_000);
+    const out = await desktopRequest("agent", 15_000);
     if (out === null) return null;
     const procs: ProcInfo[] = [];
     for (const line of out.split("\n")) {
@@ -157,37 +154,3 @@ export class AgentMonitor {
     return procs;
   }
 }
-
-/// One answer per "poll" line: `pid<TAB>cpuSeconds<TAB>image<TAB>commandLine`
-/// for each candidate. The wildcard names are case-insensitive here; the
-/// case-sensitive match happens in matchAgent. Command lines are only looked
-/// up for node/bun (a CIM query is the expensive part) and cached per pid.
-const AGENT_POLL_SCRIPT = `
-$cmdCache = @{}
-$names = @('node', 'bun', ${AgentMonitor.agentNames.map(n => `'*${n}*'`).join(", ")})
-while ($null -ne ($line = [Console]::In.ReadLine())) {
-  try {
-    $procs = @(Get-Process -Name $names -ErrorAction SilentlyContinue)
-    $live = @{}
-    foreach ($p in $procs) {
-      $id = $p.Id
-      $live[$id] = $true
-      $cpu = 0.0
-      if ($null -ne $p.CPU) { $cpu = [double]$p.CPU }
-      $cmd = ''
-      if ($p.ProcessName -eq 'node' -or $p.ProcessName -eq 'bun') {
-        if ($cmdCache.ContainsKey($id)) { $cmd = $cmdCache[$id] }
-        else {
-          $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -Property CommandLine -ErrorAction SilentlyContinue
-          if ($ci -and $ci.CommandLine) { $cmd = ($ci.CommandLine -replace "[\`t\`r\`n]", ' ') }
-          $cmdCache[$id] = $cmd
-        }
-      }
-      [Console]::Out.WriteLine(("{0}\`t{1}\`t{2}\`t{3}" -f $id, $cpu.ToString([Globalization.CultureInfo]::InvariantCulture), $p.ProcessName, $cmd))
-    }
-    foreach ($k in @($cmdCache.Keys)) { if (-not $live.ContainsKey($k)) { $cmdCache.Remove($k) } }
-  } catch { }
-  [Console]::Out.WriteLine('${PS_END}')
-  [Console]::Out.Flush()
-}
-`;

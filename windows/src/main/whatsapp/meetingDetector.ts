@@ -1,8 +1,7 @@
-import type { ChildProcess } from "child_process";
 import { isWin } from "../core/paths";
-import { spawnProcess, killTree } from "../core/proc";
+import { desktopRequest } from "../system/desktopHelper";
 import { bus } from "../core/bus";
-import { cblog, diag } from "../core/diag";
+import { cblog } from "../core/diag";
 
 /// One look at the desktop: every visible top-level window with its owning
 /// process name, and the apps Windows currently lists as using the microphone.
@@ -54,154 +53,22 @@ export function detectMeeting(s: DesktopSnapshot): boolean {
   return s.mic.some(isMeetingMicUser);
 }
 
-/// Long-lived PowerShell that answers each "check" line with one JSON line,
-/// so an 8 s poll doesn't start (and compile the Win32 shim in) a new
-/// PowerShell every tick.
-const HELPER_SCRIPT = String.raw`
-$ErrorActionPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
-Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-public static class NxMeetWin {
-    private delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr l);
-    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] private static extern int GetWindowTextLengthW(IntPtr h);
-    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    public static List<string> Titles() {
-        var list = new List<string>();
-        EnumProc cb = delegate(IntPtr h, IntPtr l) {
-            if (!IsWindowVisible(h)) return true;
-            int n = GetWindowTextLengthW(h);
-            if (n == 0) return true;
-            var sb = new StringBuilder(n + 1);
-            GetWindowTextW(h, sb, sb.Capacity);
-            uint pid;
-            GetWindowThreadProcessId(h, out pid);
-            list.Add(pid.ToString() + "\t" + sb.ToString());
-            return true;
-        };
-        EnumWindows(cb, IntPtr.Zero);
-        GC.KeepAlive(cb);
-        return list;
-    }
-}
-'@
-$mic = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
-function Get-MicInUse {
-    $out = @()
-    foreach ($root in @($mic, "$mic\NonPackaged")) {
-        foreach ($k in @(Get-ChildItem -LiteralPath $root)) {
-            $p = Get-ItemProperty -LiteralPath $k.PSPath
-            if ($p.LastUsedTimeStart -and $p.LastUsedTimeStop -eq 0) { $out += [string]$k.PSChildName }
-        }
-    }
-    return ,$out
-}
-while ($true) {
-    $line = [Console]::In.ReadLine()
-    if ($line -eq $null) { break }
-    $procs = @{}
-    foreach ($p in @(Get-Process)) { $procs[[int]$p.Id] = $p.ProcessName }
-    $wins = @()
-    foreach ($w in [NxMeetWin]::Titles()) {
-        $parts = $w.Split([char]9, 2)
-        $wins += @{ proc = [string]$procs[[int]$parts[0]]; title = [string]$parts[1] }
-    }
-    $res = @{ windows = $wins; mic = (Get-MicInUse) }
-    [Console]::Out.WriteLine(($res | ConvertTo-Json -Compress -Depth 4))
-    [Console]::Out.Flush()
-}
-`;
-
-class DesktopProbe {
-  private child: ChildProcess | null = null;
-  private buffer = "";
-  private waiting: ((line: string | null) => void) | null = null;
-  private loggedFailure = false;
-
-  private ensure(): ChildProcess | null {
-    if (this.child && this.child.exitCode === null && !this.child.killed) return this.child;
-    const encoded = Buffer.from(HELPER_SCRIPT, "utf16le").toString("base64");
-    let child: ChildProcess;
-    try {
-      child = spawnProcess("powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-        { stdio: ["pipe", "pipe", "ignore"] });
-    } catch (e) {
-      this.logOnce(`couldn't start PowerShell (${e})`);
-      return null;
-    }
-    this.buffer = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (d: string) => {
-      this.buffer += d;
-      let nl: number;
-      while ((nl = this.buffer.indexOf("\n")) >= 0) {
-        const line = this.buffer.slice(0, nl).trim();
-        this.buffer = this.buffer.slice(nl + 1);
-        if (!line) continue;
-        const w = this.waiting; this.waiting = null;
-        w?.(line);
-      }
-    });
-    child.on("error", e => this.logOnce(`PowerShell helper error (${e})`));
-    child.on("exit", () => {
-      if (this.child === child) this.child = null;
-      const w = this.waiting; this.waiting = null;
-      w?.(null);
-    });
-    child.stdin?.on("error", () => { /* helper exited */ });
-    this.child = child;
-    return child;
-  }
-
-  private logOnce(msg: string): void {
-    if (this.loggedFailure) return;
-    this.loggedFailure = true;
-    diag("MeetingDetector", msg);
-  }
-
-  /// One snapshot, or null when the helper can't answer. The first call waits
-  /// for PowerShell to start and compile its Win32 shim, so it gets longer.
-  async snapshot(): Promise<DesktopSnapshot | null> {
-    if (this.waiting) return null;   // previous check still running
-    const child = this.ensure();
-    if (!child?.stdin) return null;
-    const line = await new Promise<string | null>(resolve => {
-      const timer = setTimeout(() => {
-        if (this.waiting === done) this.waiting = null;
-        this.logOnce("PowerShell helper timed out — restarting it");
-        killTree(child);
-        resolve(null);
-      }, 20_000);
-      const done = (l: string | null) => { clearTimeout(timer); resolve(l); };
-      this.waiting = done;
-      child.stdin!.write("check\n");
-    });
-    if (!line) return null;
-    try {
-      const obj = JSON.parse(line);
-      // ConvertTo-Json writes a one-element array as a bare object/string.
-      const arr = (v: unknown) => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]);
-      return {
-        windows: arr(obj.windows)
-          .filter((w: any) => w && typeof w === "object")
-          .map((w: any) => ({ proc: String(w.proc ?? ""), title: String(w.title ?? "") })),
-        mic: arr(obj.mic).map(String),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  stop(): void {
-    if (this.child) { this.child.stdin?.end(); killTree(this.child); }
-    this.child = null;
+/// One look at the desktop, or null when the helper can't answer.
+async function snapshot(): Promise<DesktopSnapshot | null> {
+  const line = await desktopRequest("meet", 20_000);
+  if (!line) return null;
+  try {
+    const obj = JSON.parse(line);
+    // ConvertTo-Json writes a one-element array as a bare object/string.
+    const arr = (v: unknown) => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]);
+    return {
+      windows: arr(obj.windows)
+        .filter((w: any) => w && typeof w === "object")
+        .map((w: any) => ({ proc: String(w.proc ?? ""), title: String(w.title ?? "") })),
+      mic: arr(obj.mic).map(String),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -213,7 +80,6 @@ export class MeetingDetector {
   private _manualOverride = false;
   private _isInMeeting = false;
   private checking = false;
-  private probe = new DesktopProbe();
 
   /// When true, force `isInMeeting` regardless of auto-detection. Used for
   /// offline / in-person meetings where there's no Meet tab to detect.
@@ -246,7 +112,6 @@ export class MeetingDetector {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    this.probe.stop();
     this.autoDetected = false;
     this._manualOverride = false;
     this.setInMeeting(false);
@@ -257,7 +122,7 @@ export class MeetingDetector {
     // dev build on a Mac) only the manual override applies.
     if (!isWin || this.checking) return;
     this.checking = true;
-    this.probe.snapshot()
+    snapshot()
       .then(s => {
         // A failed probe keeps the last answer rather than ending a meeting
         // because PowerShell hiccuped.

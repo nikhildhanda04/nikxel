@@ -12,6 +12,18 @@ class GoogleCalendarWatcher {
     private var timer: Timer?
     private var firedEventIds: Set<String> = []
     private var leadMinutes: Int = 2
+    /// Each fetch looks a poll ahead and sets a timer per event, so the alert
+    /// still lands on time; this used to be a fetch every 30 seconds.
+    private let pollInterval: TimeInterval = 300
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
+    }()
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    private static let dayOnly: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone.current; return f
+    }()
 
     var onReminder: ((String) -> Void)?
 
@@ -40,7 +52,7 @@ class GoogleCalendarWatcher {
 
     private func scheduleTimer() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.checkUpcoming() }
+        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in self?.checkUpcoming() }
         timer?.fire()
     }
 
@@ -53,9 +65,8 @@ class GoogleCalendarWatcher {
 
     private func fetchEvents(accessToken: String) {
         let now = Date()
-        let windowEnd = now.addingTimeInterval(TimeInterval(leadMinutes * 60 + 60))
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
+        let windowEnd = now.addingTimeInterval(TimeInterval(leadMinutes * 60) + pollInterval + 60)
+        let iso = Self.iso
         var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
         components.queryItems = [
             URLQueryItem(name: "timeMin", value: iso.string(from: now)),
@@ -83,15 +94,17 @@ class GoogleCalendarWatcher {
                 let startStr = (start["dateTime"] as? String) ?? (start["date"] as? String) ?? ""
                 guard let startDate = Self.parseGCalDate(startStr) else { continue }
                 let secondsUntil = startDate.timeIntervalSinceNow
-                if secondsUntil <= Double(self.leadMinutes * 60) && secondsUntil > 0 {
-                    self.firedEventIds.insert(id)
-                    let minutesUntil = max(1, Int(secondsUntil / 60))
+                guard secondsUntil > 0 else { continue }
+                self.firedEventIds.insert(id)
+                // Wall-clock, so a Mac that sleeps through it doesn't alert late.
+                let fireIn = max(0, secondsUntil - Double(self.leadMinutes * 60))
+                DispatchQueue.main.asyncAfter(wallDeadline: .now() + fireIn) { [weak self] in
+                    let left = startDate.timeIntervalSinceNow
+                    guard let self = self, left > -60 else { return }
+                    let minutesUntil = max(1, Int(left / 60))
                     let when = minutesUntil <= 1 ? "starting now" : "in \(minutesUntil) min"
-                    let text = "📅 \(title) — \(when)"
-                    DispatchQueue.main.async {
-                        self.stateMachine.triggerAlert()
-                        self.onReminder?(text)
-                    }
+                    self.stateMachine.triggerAlert()
+                    self.onReminder?("📅 \(title) — \(when)")
                 }
             }
             if self.firedEventIds.count > 200 { self.firedEventIds.removeAll() }
@@ -99,12 +112,9 @@ class GoogleCalendarWatcher {
     }
 
     static func parseGCalDate(_ s: String) -> Date? {
-        let f1 = ISO8601DateFormatter(); f1.formatOptions = [.withInternetDateTime]
-        if let d = f1.date(from: s) { return d }
-        let f2 = ISO8601DateFormatter(); f2.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f2.date(from: s) { return d }
+        if let d = iso.date(from: s) { return d }
+        if let d = isoFractional.date(from: s) { return d }
         // All-day events: "YYYY-MM-DD"
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"; df.timeZone = TimeZone.current
-        return df.date(from: s)
+        return dayOnly.date(from: s)
     }
 }

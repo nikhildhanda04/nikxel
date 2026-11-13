@@ -9,6 +9,12 @@ class NikxelView: NSView, StateMachineDelegate {
     private var wiggle: CGFloat = 0
     private var scale: CGFloat = 1
     private var animTimer: Timer?
+    private var animHz: Double = 0
+    /// The sheet decoded once. Cropping the NSImage's own CGImage re-ran the
+    /// PNG decoder on every draw -- most of Nikxel's CPU, at 60 fps.
+    private var sheetCG: CGImage?
+    /// What the last frame showed; tick() only redraws when it changes.
+    private var drawnKey: [CGFloat] = []
 
     private var frameIndex: Int = 0
     private var frameElapsed: TimeInterval = 0
@@ -171,6 +177,7 @@ class NikxelView: NSView, StateMachineDelegate {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.magnificationFilter = .nearest
+        layer?.contentsFormat = .RGBA8Uint   // not the default 16-bit float: half the backing store
         loadSprites()
         NotificationCenter.default.addObserver(
             forName: NikxelSprites.changedNotification, object: nil, queue: .main
@@ -183,8 +190,36 @@ class NikxelView: NSView, StateMachineDelegate {
         #endif
         stateMachine.delegate = self
         lastTick = CACurrentMediaTime()
-        animTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60, repeats: true) { [weak self] _ in self?.tick() }
+        runTimer(hz: 30)
         needsDisplay = true
+    }
+
+    private func runTimer(hz: Double) {
+        guard hz != animHz else { return }
+        animHz = hz
+        animTimer?.invalidate(); animTimer = nil
+        if hz > 0 {
+            animTimer = Timer.scheduledTimer(withTimeInterval: 1 / hz, repeats: true) { [weak self] _ in self?.tick() }
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+        guard let w = window else { return }
+        NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged),
+                                               name: NSWindow.didChangeOcclusionStateNotification, object: w)
+    }
+
+    /// Hidden, on a locked screen or behind a sleeping display: no frames.
+    @objc private func occlusionChanged() {
+        if window?.occlusionState.contains(.visible) == true {
+            lastTick = CACurrentMediaTime()
+            runTimer(hz: 30)
+            needsDisplay = true
+        } else {
+            runTimer(hz: 0)
+        }
     }
 
     #if HAS_LIQUID_GLASS
@@ -222,11 +257,23 @@ class NikxelView: NSView, StateMachineDelegate {
         }
         if let path = NikxelSprites.activePath,
            let sheet = NSImage(contentsOfFile: path) { spriteSheet = sheet }
+        sheetCG = spriteSheet.flatMap(Self.decoded)
         // A swapped sheet invalidates the cached per-frame alpha mask, which is
         // what hit-testing uses -- stale masks would make the new avatar
         // clickable in the old one's silhouette.
         alphaMask = nil
         alphaMaskKey = -1
+    }
+
+    /// `img` drawn into a plain bitmap, so it stays decoded.
+    private static func decoded(_ img: NSImage) -> CGImage? {
+        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        return ctx.makeImage()
     }
 
     func stateRow(_ s: NikxelState) -> Int {
@@ -328,8 +375,7 @@ class NikxelView: NSView, StateMachineDelegate {
     private let hitTolerancePx: Int = 2
 
     private func ensureAlphaMask() -> [UInt8]? {
-        guard let sheet = spriteSheet,
-              let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        guard let cg = sheetCG else { return nil }
         let mf = (currentState == .dragging) ? 1 : frameCount
         let col = frameIndex % mf
         let row = stateRow(currentState)
@@ -595,7 +641,16 @@ class NikxelView: NSView, StateMachineDelegate {
         layoutBubbles(cx: avatarCenter.x, cy: avatarCenter.y)
         #endif
 
-        needsDisplay = true
+        // Redraw only when something on screen moved. Offsets are rounded to
+        // half a point -- one Retina pixel, where nearest-neighbour drawing
+        // snaps them anyway. The idle bob alone used to repaint 60 times a second.
+        let animating = puffActive || springActive || currentState == .dragging
+            || currentState == .recording || currentState == .momReady
+            || bubbleOpacity > 0 || isOverheated()
+        let key: [CGFloat] = [CGFloat(frameIndex), (bounce * 2).rounded(), (wiggle * 2).rounded(), scale,
+                              reminderOpacity, texterOpacity, meetingDotOpacity]
+        if animating || key != drawnKey { drawnKey = key; needsDisplay = true }
+        runTimer(hz: puffActive || springActive || currentState == .dragging ? 60 : 30)
     }
 
     func easeOutBounce(_ t: Double) -> Double {
@@ -633,7 +688,7 @@ class NikxelView: NSView, StateMachineDelegate {
         // Character (skipped while hidden by the puff)
         if avatarHiddenByPuff {
             // fall through to draw the dust cloud below
-        } else if let sheet = spriteSheet {
+        } else if let cg = sheetCG {
             ctx.saveGState()
             ctx.translateBy(x: cx + wiggle, y: cy + bounce)
             ctx.scaleBy(x: facingRight ? scale : -scale, y: scale)
@@ -641,8 +696,7 @@ class NikxelView: NSView, StateMachineDelegate {
             let mf = (currentState == .dragging) ? 1 : frameCount
             let fx = CGFloat(frameIndex % mf) * 64
             let fy = CGFloat(stateRow(currentState)) * 64
-            if let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil),
-               let cropped = cg.cropping(to: CGRect(x: fx, y: fy, width: 64, height: 64)) {
+            if let cropped = cg.cropping(to: CGRect(x: fx, y: fy, width: 64, height: 64)) {
                 ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: charSize, height: charSize))
             }
             ctx.restoreGState()

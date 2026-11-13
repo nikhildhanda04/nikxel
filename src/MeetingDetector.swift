@@ -48,7 +48,9 @@ class MeetingDetector {
 
     private func check() {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let detected = Self.checkArcTabs() || Self.checkWindowTitles()
+            // Titles first: one AX read per window. The Arc scan is an Apple
+            // Event per tab, so it only runs when the titles found nothing.
+            let detected = Self.checkWindowTitles() || Self.checkArcTabs()
             DispatchQueue.main.async {
                 self?.autoDetected = detected
                 self?.recomputeState()
@@ -96,10 +98,10 @@ class MeetingDetector {
             "com.microsoft.edgemac"        // Edge
         ]
 
-        for bid in bundleIDs {
-            guard let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == bid
-            }) else { continue }
+        // Every instance, not the first: Nikxel's own WhatsApp Chrome shares
+        // Chrome's bundle ID and could hide the user's real one.
+        for app in NSWorkspace.shared.runningApplications
+            where app.bundleIdentifier.map(bundleIDs.contains) == true {
 
             let axApp = AXUIElementCreateApplication(app.processIdentifier)
             var windowRef: CFTypeRef?

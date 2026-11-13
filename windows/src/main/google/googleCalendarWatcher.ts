@@ -8,6 +8,10 @@ import { GoogleAuth } from "./googleAuth";
 /// All the OAuth plumbing this used to own -- creds, tokens, the loopback
 /// listener, refresh -- now lives in GoogleAuth, shared with GoogleSync so both
 /// features run off one grant and one token file.
+/// Each fetch looks a poll ahead and sets a timer per event, so the alert
+/// still lands on time; this used to be a fetch every 30 seconds.
+const POLL_MS = 300_000;
+
 export class GoogleCalendarWatcher {
   readonly stateMachine: StateMachine;
   private timer: NodeJS.Timeout | null = null;
@@ -42,7 +46,7 @@ export class GoogleCalendarWatcher {
 
   private scheduleTimer(): void {
     if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => void this.checkUpcoming(), 30_000);
+    this.timer = setInterval(() => void this.checkUpcoming(), POLL_MS);
     void this.checkUpcoming();
   }
 
@@ -54,7 +58,7 @@ export class GoogleCalendarWatcher {
 
   private async fetchEvents(accessToken: string): Promise<void> {
     const now = new Date();
-    const windowEnd = new Date(now.getTime() + (this.leadMinutes * 60 + 60) * 1000);
+    const windowEnd = new Date(now.getTime() + (this.leadMinutes * 60 + 60) * 1000 + POLL_MS);
     const params = new URLSearchParams({
       timeMin: internetDateTime(now),
       timeMax: internetDateTime(windowEnd),
@@ -92,14 +96,18 @@ export class GoogleCalendarWatcher {
       const startDate = GoogleCalendarWatcher.parseGCalDate(startStr);
       if (!startDate) continue;
       const secondsUntil = (startDate.getTime() - Date.now()) / 1000;
-      if (secondsUntil <= this.leadMinutes * 60 && secondsUntil > 0) {
-        this.firedEventIds.add(id);
-        const minutesUntil = Math.max(1, Math.floor(secondsUntil / 60));
+      if (secondsUntil <= 0) continue;
+      this.firedEventIds.add(id);
+      const fireIn = Math.max(0, secondsUntil - this.leadMinutes * 60);
+      setTimeout(() => {
+        // A PC that slept through it doesn't alert late.
+        const left = (startDate.getTime() - Date.now()) / 1000;
+        if (left <= -60) return;
+        const minutesUntil = Math.max(1, Math.floor(left / 60));
         const when = minutesUntil <= 1 ? "starting now" : `in ${minutesUntil} min`;
-        const text = `📅 ${title} — ${when}`;
         this.stateMachine.triggerAlert();
-        this.onReminder?.(text);
-      }
+        this.onReminder?.(`📅 ${title} — ${when}`);
+      }, fireIn * 1000);
     }
     if (this.firedEventIds.size > 200) this.firedEventIds.clear();
   }

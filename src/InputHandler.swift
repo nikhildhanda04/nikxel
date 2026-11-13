@@ -48,12 +48,14 @@ class InputHandler {
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
+            // The tap hands the event back as is; passRetained added a retain
+            // nothing released -- one leaked event per keystroke.
             callback: { proxy, type, event, refcon in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let handler = Unmanaged<InputHandler>.fromOpaque(refcon).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = handler.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return Unmanaged.passRetained(event)
+                    return Unmanaged.passUnretained(event)
                 }
                 if type == .keyDown {
                     DispatchQueue.main.async {
@@ -61,7 +63,7 @@ class InputHandler {
                         handler.nikxelView?.recordKeystroke()
                     }
                 }
-                return Unmanaged.passRetained(event)
+                return Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {

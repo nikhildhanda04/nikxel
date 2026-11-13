@@ -29,7 +29,9 @@ class ReminderWatcher {
     private var lastFetch: TimeInterval = 0
     private var didShowDeniedAlert = false
 
-    private let pollInterval: TimeInterval = 60
+    /// A backstop only: EKEventStoreChanged and wake already trigger a fetch
+    /// whenever reminders change, so this was 1,440 needless fetches a day.
+    private let pollInterval: TimeInterval = 900
     private let changeDebounce: TimeInterval = 2
     private let seenKey = "nikxel.reminders.seenIDs"
     private let bootstrapKey = "nikxel.reminders.bootstrapDone"
@@ -185,6 +187,7 @@ class ReminderWatcher {
         // Prune IDs we used to know about but that are no longer in the
         // incomplete set (completed, deleted, or due-date moved out of view).
         // Keeps the persisted set bounded over years of use.
+        let before = seenIDs
         seenIDs.formIntersection(currentIDs)
 
         for r in reminders {
@@ -194,7 +197,7 @@ class ReminderWatcher {
             let title = (r.title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "Reminder"
             onReminder?(PendingReminder(id: id, title: title))
         }
-        persistSeen()
+        if seenIDs != before { persistSeen() }
     }
 
     private func persistSeen() {

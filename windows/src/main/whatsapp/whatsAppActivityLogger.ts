@@ -1,7 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { HOME, appendLine, dayStamp, ensureDir } from "../core/paths";
-import { ChromeWhatsApp } from "./chromeWhatsApp";
+import { ChromeWhatsApp, WACall } from "./chromeWhatsApp";
+import { ChatbotEngine } from "./chatbotEngine";
+import { cblog } from "../core/diag";
+import { Settings } from "../core/settings";
 
 /// Where the day's WhatsApp activity goes. The Mac used
 /// ~/Library/Application Support/Nikxel/whatsapp; Windows' equivalent is
@@ -31,8 +34,12 @@ export class WhatsAppActivityLogger {
 
   private chatTimer: NodeJS.Timeout | null = null;
   private callTimer: NodeJS.Timeout | null = null;
+  private firstCalls: NodeJS.Timeout | null = null;
   private readonly chatInterval = 120_000;   // 2 min — cheap, no tab switch
-  private readonly callInterval = 600_000;   // 10 min — switches tabs, so less often
+  private readonly callInterval = 1_800_000; // 30 min — switches tabs and holds the bot, so rarely
+  /// WhatsApp Web's heap only grows: measured 374 MB after 3.7 days, 178 MB
+  /// right after a reload (its tab 471 -> 362 MB). Past this, reload it.
+  private readonly reloadAboveMB = 350;
 
   private readonly logDir: string;
   // One poll at a time, like the Mac's serial queue.
@@ -42,6 +49,14 @@ export class WhatsAppActivityLogger {
   // delta-logging shape as DayLogger's app-usage sampler.
   private lastPreview = new Map<string, string>();
   private seenCallKeys = new Set<string>();
+  private dedupeDay = "";
+
+  /// Each day's log starts from nothing, so the dedupe does too -- and the
+  /// sets stop growing with every day the app stays open.
+  private rollDay(): void {
+    const day = dayStamp(new Date());
+    if (day !== this.dedupeDay) { this.dedupeDay = day; this.lastPreview.clear(); this.seenCallKeys.clear(); }
+  }
 
   constructor() {
     this.logDir = logDirectory();
@@ -52,13 +67,16 @@ export class WhatsAppActivityLogger {
     this.stop();
     this.pollChats();
     this.chatTimer = setInterval(() => this.pollChats(), this.chatInterval);
-    this.pollCalls();
+    // Not at once: at launch WhatsApp Web is still loading, has no Calls
+    // tab, and a miss then waited out the whole interval.
+    this.firstCalls = setTimeout(() => this.pollCalls(), 120_000);
     this.callTimer = setInterval(() => this.pollCalls(), this.callInterval);
   }
 
   stop(): void {
     if (this.chatTimer) clearInterval(this.chatTimer);
     if (this.callTimer) clearInterval(this.callTimer);
+    if (this.firstCalls) clearTimeout(this.firstCalls);
     this.chatTimer = null;
     this.callTimer = null;
   }
@@ -73,28 +91,47 @@ export class WhatsAppActivityLogger {
     this.enqueue(async () => {
       const chats = await ChromeWhatsApp.allChatsPreview();
       if (chats.length === 0) return;
+      // A chat list means a logged-in WhatsApp, so the window is worth
+      // reopening after a restart, whatever path got it logged in.
+      if (!Settings.whatsappConnected) Settings.whatsappConnected = true;
+      this.rollDay();
       for (const chat of chats) {
         if (this.lastPreview.get(chat.name) === chat.preview) continue;
         this.lastPreview.set(chat.name, chat.preview);
         this.appendJSONL("chats", { t: Date.now() / 1000, name: chat.name, preview: chat.preview });
       }
+      await this.reloadIfBloated();
     });
+  }
+
+  /// Only while the bot has nothing in hand: a reload drops the open chat.
+  private async reloadIfBloated(): Promise<void> {
+    const bot = ChatbotEngine.shared;
+    if (bot.hasPending) return;
+    const mb = await ChromeWhatsApp.heapMB();
+    if (mb <= this.reloadAboveMB) return;
+    cblog(`WhatsApp Web heap ${mb} MB — reloading it`);
+    await bot.withPollingHeld(() => ChromeWhatsApp.reloadPage());
   }
 
   private pollCalls(): void {
     this.enqueue(async () => {
-      try {
-        const calls = await ChromeWhatsApp.callLog();
-        for (const call of calls) {
-          const key = `${call.name}|${call.info}|${call.timeText}`;
-          if (this.seenCallKeys.has(key)) continue;
-          this.seenCallKeys.add(key);
-          this.appendJSONL("calls", { t: Date.now() / 1000, name: call.name, info: call.info, timeText: call.timeText });
-        }
-      } finally {
-        // Always restore the Chats tab afterward — ChatbotEngine's unread
-        // polling assumes the chat list, not the call log, is on screen.
-        await ChromeWhatsApp.openChatsTab();
+      let calls: WACall[] = [];
+      // Held: while the Calls tab is up the bot would read zero unread.
+      // Always restore the Chats tab afterward — ChatbotEngine's unread
+      // polling assumes the chat list, not the call log, is on screen.
+      await ChatbotEngine.shared.withPollingHeld(async () => {
+        try { calls = await ChromeWhatsApp.callLog(); } finally { await ChromeWhatsApp.openChatsTab(); }
+        return true;
+      });
+      this.rollDay();
+      // Only today's rows carry a clock time; "Yesterday" and dated
+      // rows were re-logged into today's file after every restart.
+      for (const call of calls.filter(c => c.timeText.includes(":"))) {
+        const key = `${call.name}|${call.info}|${call.timeText}`;
+        if (this.seenCallKeys.has(key)) continue;
+        this.seenCallKeys.add(key);
+        this.appendJSONL("calls", { t: Date.now() / 1000, name: call.name, info: call.info, timeText: call.timeText });
       }
     });
   }

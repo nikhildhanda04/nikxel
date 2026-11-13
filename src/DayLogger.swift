@@ -173,9 +173,9 @@ class DayLogger {
 
     private var liveCache: (text: String, at: Date, inMeeting: Bool)?
     /// `aggregateGit` shells out to git once per repo under ~/Desktop, and a
-    /// busy chat can ask for this several times a minute. Two minutes is well
-    /// inside "what are you working on right now".
-    private let liveCacheTTL: TimeInterval = 120
+    /// busy chat can ask for this several times a minute. Ten minutes is
+    /// still "what are you working on right now".
+    private let liveCacheTTL: TimeInterval = 600
 
     /// What the user is doing right now and what today has looked like so far,
     /// as a few short lines. Fills the gap the end-of-day summaries leave: until
@@ -351,10 +351,14 @@ class DayLogger {
         return out
     }
 
-    private static func dayKey(_ date: Date) -> String {
+    private static let dayKeyFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        return fmt.string(from: date)
+        return fmt
+    }()
+
+    private static func dayKey(_ date: Date) -> String {
+        dayKeyFormatter.string(from: date)
     }
 
     // MARK: - Scheduling
@@ -546,7 +550,19 @@ class DayLogger {
         "venv", ".venv", "__pycache__", "Library", "Applications",
     ]
 
+    private var reposCache: (root: String, repos: [URL], at: Date)?
+
+    /// The tree walk is the slow half of every git pass, and new clones are
+    /// rare: an hour-old list is fine.
     private func findRepos() -> [URL] {
+        let root = NikxelSettings.projectsRoot
+        if let c = reposCache, c.root == root, Date().timeIntervalSince(c.at) < 3600 { return c.repos }
+        let repos = scanRepos()
+        reposCache = (root, repos, Date())
+        return repos
+    }
+
+    private func scanRepos() -> [URL] {
         var repoDirs: [URL] = []
         // Not .skipsHiddenFiles: `.git` is itself hidden, so that option made
         // this scan find no repos at all. Other dot-dirs are skipped by hand.
@@ -852,11 +868,13 @@ class DayLogger {
         if entries.isEmpty { return "" }
         let timeFmt = DateFormatter()
         timeFmt.dateFormat = "HH:mm"
-        var lines: [String] = []
+        var lines: [String] = [], seen: Set<String> = []
         for e in entries {
             guard let t = e["t"] as? TimeInterval,
                   let name = e["name"] as? String,
-                  let preview = e["preview"] as? String else { continue }
+                  let preview = e["preview"] as? String,
+                  // A preview that flips back is the same message: say it once.
+                  seen.insert(name + "\u{0}" + preview).inserted else { continue }
             let time = timeFmt.string(from: Date(timeIntervalSince1970: t))
             let oneLine = preview.replacingOccurrences(of: "\n", with: " ")
             lines.append("- [\(time)] \(name): \(oneLine)")

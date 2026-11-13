@@ -111,6 +111,8 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // No Hunspell and dictionary download for a window the bot types into.
+      spellcheck: false,
       // Keep timers and rendering alive while hidden, or the bot's polling
       // sees a frozen page. Also keeps the Page Visibility API "visible".
       backgroundThrottling: false,
@@ -229,6 +231,27 @@ export const ChromeWhatsApp = {
     return (await c.eval(js)) === "true";
   },
 
+  /// WhatsApp Web's JS heap, in MB; 0 when it can't be read.
+  async heapMB(): Promise<number> {
+    const c = ensureCDP();
+    if (!c) return 0;
+    return parseInt((await c.eval("String(Math.round(((performance.memory || {}).usedJSHeapSize || 0) / 1e6))")) ?? "", 10) || 0;
+  },
+
+  /// Reload WhatsApp Web and wait until its chat list is back (or 60s).
+  async reloadPage(): Promise<boolean> {
+    const c = ensureCDP();
+    if (!c) return false;
+    await c.eval("setTimeout(function(){ location.reload(); }, 0), 'ok'");
+    await sleep(3000);
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      if (await ChromeWhatsApp.isLoggedIn()) return true;
+      await sleep(1000);
+    }
+    return false;
+  },
+
   /// Get all unread chats from the sidebar.
   ///
   /// Also reports whether each row is a group and whether the user was
@@ -267,7 +290,7 @@ export const ChromeWhatsApp = {
         // ^ would otherwise be looking at U+202A.
         var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
         var result = [];
-        var labels = document.querySelectorAll('span[aria-label]');
+        var labels = document.querySelectorAll('#pane-side span[aria-label]');   // the chat list only
         for (var i = 0; i < labels.length; i++) {
             var ar = labels[i].getAttribute('aria-label') || '';
             var m = ar.match(/(\\d+)\\s*unread/i);
@@ -638,21 +661,28 @@ export const ChromeWhatsApp = {
     if (!c) return [];
     const js = `
     (function(){
+        // Only the sidebar: [role="row"] page-wide also matched the
+        // open chat's message bubbles, which logged "1:36 pm" as a chat
+        // name and SVG icon names as text. Name and preview come from the
+        // same elements unreadChats reads; group rows keep their sender.
+        var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
         var result = [];
-        var rows = document.querySelectorAll('[role="row"]');
+        var rows = document.querySelectorAll('#pane-side [role="row"]');
         for (var i = 0; i < rows.length && result.length < ${Math.floor(limit)}; i++) {
-            var row = rows[i];
-            var titleEl = row.querySelector('span[title]');
-            var name = titleEl ? (titleEl.getAttribute('title') || '').trim() : '';
-            if (!name) {
-                var dirEl = row.querySelector('span[dir="auto"]');
-                name = dirEl ? dirEl.textContent.trim() : '';
+            var status = rows[i].querySelector('[data-testid="last-msg-status"]');
+            var nameEl = rows[i].querySelector('span[title]:not([data-testid="last-msg-status"])');
+            var name = nameEl ? (nameEl.getAttribute('title') || '').replace(BIDI, '').trim() : '';
+            var preview = status ? (status.getAttribute('title') || '').replace(BIDI, '').trim() : '';
+            if (!name || !preview || name === 'Message yourself') continue;
+            var sender = '';
+            for (var k = 0; k < status.children.length; k++) {
+                if ((status.children[k].textContent || '').trim() === ':') {
+                    var auto = status.querySelector('span[dir="auto"]');
+                    if (auto) sender = (auto.textContent || '').replace(BIDI, '').trim();
+                    break;
+                }
             }
-            if (!name || name === 'Message yourself') continue;
-            result.push({
-                name: name,
-                preview: row.textContent.trim().substring(0, 300)
-            });
+            result.push({name: name, preview: (sender ? sender + ': ' : '') + preview.substring(0, 300)});
         }
         return JSON.stringify(result);
     })()
@@ -683,7 +713,7 @@ export const ChromeWhatsApp = {
       cblog(`CDP: callLog — Calls tab button not found (${result}); WhatsApp Web DOM may have changed`);
       return false;
     }
-    await sleep(600);
+    await sleep(1000);   // the list measured ~1s to render
     return true;
   },
 
@@ -716,26 +746,21 @@ export const ChromeWhatsApp = {
     if (!c) return [];
     const js = `
     (function(){
+        // A call row's visible text is [name, time, "Incoming"/"Outgoing"/
+        // "Missed" (+ " (2)")]; voice vs video is only in the icon's SVG
+        // title, which is why text inside <svg> is skipped and read apart.
+        // ponytail: English labels only; a localised WhatsApp logs no calls.
         var result = [];
-        var rows = document.querySelectorAll('[role="row"], [role="listitem"]');
+        var rows = document.querySelectorAll('#pane-side [role="row"]');
         for (var i = 0; i < rows.length && result.length < ${Math.floor(limit)}; i++) {
-            var row = rows[i];
-            var titleEl = row.querySelector('span[title]') || row.querySelector('span[dir="auto"]');
-            var name = titleEl ? (titleEl.getAttribute('title') || titleEl.textContent || '').trim() : '';
-            if (!name) continue;
-            var spans = Array.from(row.querySelectorAll('span'))
-                .map(function(s){ return (s.textContent || '').trim(); })
-                .filter(function(s){ return s.length > 0; });
-            var info = '', timeText = '';
-            for (var j = 0; j < spans.length; j++) {
-                if (spans[j] === name) continue;
-                if (/\\b(am|pm)\\b/i.test(spans[j]) || /yesterday|today|\\d{1,2}\\/\\d{1,2}/i.test(spans[j])) {
-                    timeText = spans[j];
-                } else if (!info && spans[j].length < 60) {
-                    info = spans[j];
-                }
+            var w = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT), n, t = [];
+            while ((n = w.nextNode())) {
+                var s = n.parentElement.closest('svg') ? '' : n.textContent.trim();
+                if (s) t.push(s);
             }
-            result.push({name: name, info: info, timeText: timeText});
+            if (t.length < 3 || !/^(missed|incoming|outgoing)/i.test(t[t.length - 1])) continue;
+            var icons = Array.from(rows[i].querySelectorAll('svg title')).map(function(x){ return x.textContent; }).join(' ');
+            result.push({name: t[0], info: t[t.length - 1] + (/video/i.test(icons) ? ' video call' : ' voice call'), timeText: t[1]});
         }
         return JSON.stringify(result);
     })()

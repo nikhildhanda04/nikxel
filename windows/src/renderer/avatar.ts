@@ -132,6 +132,7 @@ const ctx = canvas.getContext("2d")!;
 /// Offscreen layer for the sprite when it's tinted red, so the tint only
 /// lands on Nikxel and not on the shadow or dust around it.
 const layer = document.createElement("canvas");
+layer.width = layer.height = 1;
 const lctx = layer.getContext("2d")!;
 let dpr = 0;
 
@@ -139,10 +140,17 @@ function fitCanvas(): void {
   const d = window.devicePixelRatio || 1;
   if (d === dpr) return;
   dpr = d;
-  for (const c of [canvas, layer]) {
-    c.width = Math.round(VIEW_W * d);
-    c.height = Math.round(VIEW_H * d);
-  }
+  canvas.width = Math.round(VIEW_W * d);
+  canvas.height = Math.round(VIEW_H * d);
+  if (layer.width > 1) fitLayer();
+}
+
+/// The tint layer only matters while overheating, so it gets its full-size
+/// backing store (megabytes at high DPI) on first use, not at startup.
+function fitLayer(): void {
+  if (layer.width === canvas.width && layer.height === canvas.height) return;
+  layer.width = canvas.width;
+  layer.height = canvas.height;
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +746,7 @@ function draw(): void {
       // Overheat red tint, on the sprite's own pixels only.
       const wpm = keyTimestamps.length / 5.0 * (60.0 / wpmWindow);
       const intensity = Math.min(1.0, (wpm - overheatWPM) / 30.0);
+      fitLayer();
       lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       lctx.clearRect(0, 0, VIEW_W, VIEW_H);
       drawCharacter(lctx);
@@ -1287,14 +1296,33 @@ window.addEventListener("dragstart", e => e.preventDefault());
 
 let started = false;
 
+/// What the last drawn frame showed. A frame that would look the same is
+/// skipped: the sprite steps at 2.5-8 fps and the idle bob is 2px, yet every
+/// vsync (60-144 Hz) cleared and repainted the whole 640x700 canvas. Offsets
+/// are rounded to half a pixel, below what nearest-neighbour drawing shows.
+let drawnKey = "";
+let dirty = true;   // set by every message from main but the cursor
+let lastFrame = 0;
+
 function frame(): void {
-  tick();
-  draw();
   requestAnimationFrame(frame);
+  const t = now();
+  // 30 fps, except while something follows the hand.
+  const fast = localDragging || currentState === "dragging" || puffActive || springActive;
+  if (!fast && t - lastFrame < 1 / 30 - 0.002) return;
+  lastFrame = t;
+  tick();
+  const animating = fast || currentState === "recording" || currentState === "momReady"
+    || bubbleOpacity > 0 || isOverheated(t);
+  const key = [frameIndex, Math.round(bounce * 2), Math.round(wiggle * 2), scale, facingRight,
+    reminderOpacity, texterOpacity, meetingDotOpacity, card?.opacity ?? -1,
+    reminderBubbles.map(b => b.opacity).join("|")].join();
+  if (dirty || animating || key !== drawnKey) { dirty = false; drawnKey = key; draw(); }
 }
 
 bridge.onMessage(raw => {
   const m = raw as FromMain;
+  if (m.type !== "cursor") dirty = true;
   switch (m.type) {
     case "init":
       currentState = m.state;

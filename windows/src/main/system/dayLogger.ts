@@ -9,7 +9,7 @@ import { bus } from "../core/bus";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { DayPage } from "./dayPage";
-import { PSHelper, PS_END } from "./psHelper";
+import { desktopRequest } from "./desktopHelper";
 
 /// The handful of numbers worth putting in a bubble. Separate from the
 /// narrative summary, which is prose and takes an agent run to produce.
@@ -32,9 +32,9 @@ const DURATION_CAP = 5 * 60;
 // Fire EOD summary at this hour (24h). 22 = 10pm.
 const SUMMARY_HOUR = 22;
 /// `aggregateGit` shells out to git once per repo under the projects root,
-/// and a busy chat can ask for this several times a minute. Two minutes is
-/// well inside "what are you working on right now".
-const LIVE_CACHE_TTL = 120_000;
+/// and a busy chat can ask for this several times a minute. Ten minutes is
+/// still "what are you working on right now".
+const LIVE_CACHE_TTL = 600_000;
 /// Past this, the slow half of the live context (git, agent prompts) is too
 /// old to call "right now" and is left out until the refresh lands.
 const LIVE_STALE_LIMIT = 30 * 60_000;
@@ -82,7 +82,6 @@ export class DayLogger {
   private summaryTimer: NodeJS.Timeout | null = null;
   private lastSample: { app: string; title: string } | null = null;
   private sampling = false;
-  private fg: PSHelper | null = null;
   /// Days whose summary is being written right now, so the 10pm timer and a
   /// wake-time backfill can't both start one.
   private generating = new Set<string>();
@@ -108,8 +107,11 @@ export class DayLogger {
     // through its fire time needs re-aiming.
     bus.on("wake", this.onWake);
     // Warm the slow half of the live context, so the bot's first reply of
-    // the day already knows what's in hand.
-    setTimeout(() => this.refreshLiveSlow(), 20_000);
+    // the day already knows what's in hand -- only when there is a bot to
+    // reply: it's a repo walk and dozens of git runs.
+    setTimeout(() => {
+      if (Settings.whatsappConnected && Settings.botEnabled && Settings.waWorkContext) this.refreshLiveSlow();
+    }, 20_000);
   }
 
   stop(): void {
@@ -117,8 +119,6 @@ export class DayLogger {
     if (this.summaryTimer) clearTimeout(this.summaryTimer);
     this.sampleTimer = null; this.summaryTimer = null;
     bus.off("wake", this.onWake);
-    this.fg?.stop();
-    this.fg = null;
   }
 
   generateSummaryNow(): void {
@@ -362,8 +362,7 @@ export class DayLogger {
 
   private async foreground(): Promise<{ app: string; title: string } | null> {
     if (!isWin) return null;
-    if (!this.fg) this.fg = new PSHelper("foreground", FOREGROUND_SCRIPT);
-    const out = await this.fg.request("fg", 20_000);
+    const out = await desktopRequest("fg", 20_000);
     if (!out) return null;
     try {
       const obj = JSON.parse(out);
@@ -575,7 +574,20 @@ export class DayLogger {
     "AppData", "$RECYCLE.BIN", "System Volume Information", "bin", "obj",
   ]);
 
+  private reposCache: { root: string; repos: string[]; at: number } | null = null;
+
+  /// The tree walk is the slow half of every git pass, and new clones are
+  /// rare: an hour-old list is fine.
   private async findRepos(): Promise<string[]> {
+    const root = Settings.projectsRoot;
+    const c = this.reposCache;
+    if (c && c.root === root && Date.now() - c.at < 3_600_000) return c.repos;
+    const repos = await this.scanRepos();
+    this.reposCache = { root, repos, at: Date.now() };
+    return repos;
+  }
+
+  private async scanRepos(): Promise<string[]> {
     const scanRoot = Settings.projectsRoot;
     const repoDirs: string[] = [];
     // `.git` is itself hidden, so hidden entries are checked for it before
@@ -829,9 +841,13 @@ export class DayLogger {
   // MARK: - WhatsApp
 
   private aggregateWhatsAppChats(date: Date): string {
-    const lines: string[] = [];
+    const lines: string[] = [], seen = new Set<string>();
     for (const e of safeReadLog("chats", date)) {
       if (typeof e?.t !== "number" || typeof e.name !== "string" || typeof e.preview !== "string") continue;
+      // A preview that flips back is the same message: say it once.
+      const key = e.name + "\0" + e.preview;
+      if (seen.has(key)) continue;
+      seen.add(key);
       lines.push(`- [${hhmm(new Date(e.t * 1000))}] ${e.name}: ${e.preview.replace(/\n/g, " ")}`);
     }
     return lines.join("\n");
@@ -1006,72 +1022,3 @@ try {
   });
 }
 
-/// Answers each "fg" line with one JSON object: the foreground window's
-/// app name and title. The app name is the executable's file description
-/// ("Visual Studio Code", "Google Chrome") -- the nearest thing to the
-/// Mac's localizedName -- falling back to the exe name. UWP apps all show up
-/// as ApplicationFrameHost, so for those the window title names the app.
-const FOREGROUND_SCRIPT = `
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class NxFg {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] public static extern int GetWindowTextLengthW(IntPtr h);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-  [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool QueryFullProcessImageNameW(IntPtr h, uint flags, StringBuilder s, ref uint n);
-  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
-  public static string Title(IntPtr h) {
-    int len = GetWindowTextLengthW(h);
-    if (len <= 0) return "";
-    var sb = new StringBuilder(len + 1);
-    GetWindowTextW(h, sb, sb.Capacity);
-    return sb.ToString();
-  }
-  public static string ImagePath(uint pid) {
-    IntPtr hp = OpenProcess(0x1000, false, pid);
-    if (hp == IntPtr.Zero) return "";
-    try {
-      var sb = new StringBuilder(1024);
-      uint n = (uint)sb.Capacity;
-      return QueryFullProcessImageNameW(hp, 0, sb, ref n) ? sb.ToString() : "";
-    } finally { CloseHandle(hp); }
-  }
-}
-"@
-$names = @{}
-while ($null -ne ($line = [Console]::In.ReadLine())) {
-  $app = ''; $title = ''
-  try {
-    $h = [NxFg]::GetForegroundWindow()
-    if ($h -ne [IntPtr]::Zero) {
-      $title = [NxFg]::Title($h)
-      $fpid = [uint32]0
-      [void][NxFg]::GetWindowThreadProcessId($h, [ref]$fpid)
-      $exe = [NxFg]::ImagePath($fpid)
-      if ($exe) {
-        if ($names.ContainsKey($exe)) { $app = $names[$exe] }
-        else {
-          $desc = ''
-          try { $desc = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileDescription } catch { }
-          if ($desc) { $desc = $desc.Trim() }
-          if (-not $desc) { $desc = [IO.Path]::GetFileNameWithoutExtension($exe) }
-          $names[$exe] = $desc
-          $app = $desc
-        }
-        if ([IO.Path]::GetFileName($exe) -ieq 'ApplicationFrameHost.exe' -and $title) { $app = $title }
-      }
-    }
-  } catch { }
-  $json = (@{ app = [string]$app; title = [string]$title } | ConvertTo-Json -Compress)
-  # \\uXXXX for anything non-ASCII, so a title survives even if the console
-  # encoding couldn't be switched to UTF-8.
-  $json = [regex]::Replace($json, '[^\\x00-\\x7F]', [Text.RegularExpressions.MatchEvaluator]{ param($m) '\\u{0:x4}' -f [int][char]$m.Value })
-  [Console]::Out.WriteLine($json)
-  [Console]::Out.WriteLine('${PS_END}')
-  [Console]::Out.Flush()
-}
-`;

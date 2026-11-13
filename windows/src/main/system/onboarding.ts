@@ -173,6 +173,7 @@ export class OnboardingWindowController {
         preload: preloadPath("onboarding"),
         contextIsolation: true,
         nodeIntegration: false,
+        spellcheck: false,
       },
     });
     w.setMenuBarVisibility(false);

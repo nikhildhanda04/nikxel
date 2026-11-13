@@ -347,6 +347,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let connectReminders = NSMenuItem(title: "Connect Apple Reminders…", action: #selector(connectAppleReminders), keyEquivalent: "")
         connectReminders.target = self; menu.addItem(connectReminders)
 
+        let connectSlack = NSMenuItem(title: "Connect Slack…", action: #selector(connectSlack), keyEquivalent: "")
+        connectSlack.target = self; menu.addItem(connectSlack)
+
         let templateItem = NSMenuItem(title: "Summary Template", action: nil, keyEquivalent: "")
         let templateSubmenu = NSMenu()
         templateItem.submenu = templateSubmenu
@@ -661,6 +664,33 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func connectGoogleCalendar() {
         calendarWatcher.reauthenticate()
+    }
+
+    /// Signs in to Slack in the browser. The daily summary reads the day's
+    /// messages with the token; nothing else does.
+    @objc func connectSlack() {
+        if Slack.isConnected {
+            NikxelView.ask(title: "Slack is connected", lines: ["Today's messages go into your daily summary."],
+                           buttons: [("Reconnect", { [weak self] in self?.startSlackSignIn() }),
+                                     ("Disconnect", {
+                                         Slack.disconnect()
+                                         NikxelView.tell(icon: "💬", title: "Slack disconnected", lines: ["Summaries no longer include Slack."])
+                                     }),
+                                     ("Cancel", {})])
+        } else {
+            startSlackSignIn()
+        }
+    }
+
+    private func startSlackSignIn() {
+        Slack.connect { result in
+            switch result {
+            case .success(let team):
+                NikxelView.tell(icon: "💬", title: "Slack connected", lines: ["\(team): today's messages go into your daily summary."])
+            case .failure(let e):
+                NikxelView.tell(icon: "⚠️", title: "Slack sign-in didn't finish", lines: ["Slack said: \(e.localizedDescription)."], kind: .warning)
+            }
+        }
     }
 
     @objc func toggleGoogleSync() {

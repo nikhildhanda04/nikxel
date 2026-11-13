@@ -440,11 +440,11 @@ export class GoogleAuth {
     }
   }
 
-  private static randomVerifier(): string {
+  static randomVerifier(): string {
     return crypto.randomBytes(32).toString("base64url");
   }
 
-  private static challenge(verifier: string): string {
+  static challenge(verifier: string): string {
     return crypto.createHash("sha256").update(verifier, "utf8").digest("base64url");
   }
 

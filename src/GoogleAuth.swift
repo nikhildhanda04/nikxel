@@ -325,7 +325,7 @@ final class GoogleAuth {
         attempt(0)
     }
 
-    private static func queryParam(request: String, key: String) -> String? {
+    static func queryParam(request: String, key: String) -> String? {
         guard let firstLine = request.split(separator: "\r\n", maxSplits: 1).first else { return nil }
         let parts = firstLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
@@ -399,13 +399,13 @@ final class GoogleAuth {
         }
     }
 
-    private static func randomVerifier() -> String {
+    static func randomVerifier() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return base64URL(Data(bytes))
     }
 
-    private static func challenge(for verifier: String) -> String {
+    static func challenge(for verifier: String) -> String {
         base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
     }
 
@@ -414,7 +414,7 @@ final class GoogleAuth {
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    private static func formEncode(_ params: [String: String]) -> String {
+    static func formEncode(_ params: [String: String]) -> String {
         var cs = CharacterSet.urlQueryAllowed
         cs.remove(charactersIn: "+&=")
         return params.map { k, v in

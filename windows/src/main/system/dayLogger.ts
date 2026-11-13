@@ -10,6 +10,7 @@ import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { DayPage } from "./dayPage";
 import { desktopRequest } from "./desktopHelper";
+import * as Slack from "./slack";
 
 /// The handful of numbers worth putting in a bubble. Separate from the
 /// narrative summary, which is prose and takes an agent run to produce.
@@ -501,6 +502,8 @@ export class DayLogger {
     if (waChats) parts.push("## WhatsApp chats (preview snapshots through the day)\n" + waChats);
     const waCalls = this.aggregateWhatsAppCalls(date);
     if (waCalls) parts.push("## WhatsApp calls\n" + waCalls);
+    const slack = await Slack.messages(dayStamp(date));
+    if (slack.length) parts.push("## Slack messages\n" + slack.join("\n"));
     return parts.join("\n\n");
   }
 
@@ -885,11 +888,13 @@ export class DayLogger {
 - Claude Code session prompts: the user's actual messages to Claude today, timestamped, with project name.
 - Opencode session prompts: the user's actual messages to opencode today, timestamped.
 - WhatsApp chats: periodic preview-text snapshots of each chat through the day (name + a short text excerpt), NOT full conversations.
+  Who wrote each line: "<chat>: You: …" is a message the USER sent to that chat. "<chat>: <Sender>: …" in a group is from that sender. A line with no sender in a one-to-one chat is from the contact the chat is named after. Never flip these: a "You:" line is the user asking or telling the other person, not the other way round.
 - WhatsApp calls: call-log entries (caller, missed/incoming/outgoing, WhatsApp's own time label) — no call content/audio is available unless that call happened to be recorded as a meeting (in which case it shows up under Meetings too).
+- Slack messages: the day's messages from channels and DMs the user can see (channel or "DM", sender, text). Their own messages appear under their own Slack name.
 
 The session prompts are the most informative signal: they tell you LITERALLY what bug or feature the user was working on, in their own words. Use them as the spine of the narrative.
 
-For WhatsApp chats specifically: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
+For WhatsApp chats and Slack messages: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
 
 ${Settings.languageInstruction}
 
@@ -916,6 +921,11 @@ Output this exact Markdown structure:
 - Calls: one bullet per call (who, missed/incoming/outgoing, when). If none, write "- No calls today."
 - Tasks assigned in chats: one bullet per task you can identify — "<Who> asked you to <what> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
 - Anything else notable from chats worth a quick mention. If nothing, write "- Nothing else notable."
+
+## Slack
+- Only if there is a "Slack messages" section in the data; otherwise leave this whole section out.
+- Tasks asked of you: one bullet per task — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
+- The main threads or decisions in channels you took part in, briefly. Skip channel chatter you weren't part of.
 
 ## Browsing & Reading
 - Time in browser/reading apps, summarized ("~45 min in Chrome — mostly docs"). Don't list every URL.

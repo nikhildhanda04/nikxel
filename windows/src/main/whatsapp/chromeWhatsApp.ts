@@ -665,6 +665,7 @@ export const ChromeWhatsApp = {
         // open chat's message bubbles, which logged "1:36 pm" as a chat
         // name and SVG icon names as text. Name and preview come from the
         // same elements unreadChats reads; group rows keep their sender.
+        var TICK = /^(wds-ic-)?(read|delivered|sent|pending|msg-check|msg-dblcheck|msg-time|status-check|status-dblcheck|status-time)$/;
         var BIDI = /[\\u202A-\\u202E\\u200E\\u200F\\u2066-\\u2069]/g;
         var result = [];
         var rows = document.querySelectorAll('#pane-side [role="row"]');
@@ -680,6 +681,16 @@ export const ChromeWhatsApp = {
                     var auto = status.querySelector('span[dir="auto"]');
                     if (auto) sender = (auto.textContent || '').replace(BIDI, '').trim();
                     break;
+                }
+            }
+            // The preview never names you: your own last message is marked only
+            // by its sent/delivered/read tick. Without this, everything you sent
+            // in a 1:1 chat read as the other person writing to you.
+            if (!sender) {
+                var marks = status.querySelectorAll('svg title, [data-icon]');
+                for (var m = 0; m < marks.length; m++) {
+                    var icon = marks[m].getAttribute('data-icon') || marks[m].textContent || '';
+                    if (TICK.test(icon)) { sender = 'You'; break; }
                 }
             }
             result.push({name: name, preview: (sender ? sender + ': ' : '') + preview.substring(0, 300)});

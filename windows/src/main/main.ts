@@ -22,6 +22,7 @@ import { SummaryTemplates } from "./recording/summaryTemplates";
 import { UsageLog, UsageTotals } from "./recording/usageLog";
 import { AgentMonitor } from "./system/agentMonitor";
 import { DayLogger } from "./system/dayLogger";
+import * as Slack from "./system/slack";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
 import { SupportLogs } from "./system/supportLogs";
@@ -281,6 +282,7 @@ class NikxelApp {
       // Apple Reminders on the Mac. Windows has none, so new Google Tasks
       // (added from a phone, Gmail, Calendar) bubble up instead.
       item("Connect Google Tasks Reminders…", () => this.reminderWatcher.reauthenticate()),
+      item("Connect Slack…", () => this.connectSlack()),
       { label: "Summary Template", submenu: this.templateMenu() },
       item("Edit Nikxel Settings (name, language)…", () => this.editSettings()),
       item("Regenerate Unfinished Summary…", () => this.regenerateUnfinished()),
@@ -349,6 +351,32 @@ class NikxelApp {
       defaultId: 0, cancelId: 1, noLink: true,
     });
     if (r.response === 0) openFile(SummaryTemplates.activeURL);
+  }
+
+  /// Signs in to Slack in the browser. The daily summary reads the day's
+  /// messages with the token; nothing else does.
+  private connectSlack(): void {
+    if (!Slack.isConnected()) { void this.startSlackSignIn(); return; }
+    ui.ask({
+      title: "Slack is connected", lines: ["Today's messages go into your daily summary."],
+      buttons: [
+        { title: "Reconnect", action: () => void this.startSlackSignIn() },
+        { title: "Disconnect", action: () => {
+          Slack.disconnect();
+          ui.tell({ icon: "💬", title: "Slack disconnected", lines: ["Summaries no longer include Slack."] });
+        } },
+        { title: "Cancel", action: () => {} },
+      ],
+    });
+  }
+
+  private async startSlackSignIn(): Promise<void> {
+    try {
+      const team = await Slack.connect();
+      ui.tell({ icon: "💬", title: "Slack connected", lines: [`${team}: today's messages go into your daily summary.`] });
+    } catch (e) {
+      ui.tell({ icon: "⚠️", title: "Slack sign-in didn't finish", kind: "warning", lines: [`Slack said: ${(e as Error).message}.`] });
+    }
   }
 
   private async newTemplate(): Promise<void> {

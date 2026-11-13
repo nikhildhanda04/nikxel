@@ -13,7 +13,8 @@ class DayLogger {
     private let meetingsDir: URL
     private let scanRoot: URL
     private var sampleTimer: Timer?
-    private var summaryTimer: Timer?
+    /// Bumped to cancel a scheduled summary.
+    private var summaryGeneration = 0
     private var lastSample: (app: String, title: String)?
     private let sampleInterval: TimeInterval = 15
     // Cap each sample's attributed duration so a sleep-through-the-night gap
@@ -45,7 +46,7 @@ class DayLogger {
 
     func stop() {
         sampleTimer?.invalidate(); sampleTimer = nil
-        summaryTimer?.invalidate(); summaryTimer = nil
+        summaryGeneration += 1
     }
 
     func generateSummaryNow() {
@@ -372,12 +373,14 @@ class DayLogger {
         return cal.date(byAdding: .day, value: 1, to: today) ?? reference
     }
 
+    /// On the wall clock, not a Timer: a Timer's countdown stops while the
+    /// Mac sleeps, so every nap in the evening pushed 10pm later.
     private func scheduleSummary() {
-        summaryTimer?.invalidate()
-        let fire = nextSummaryFireDate(after: Date())
-        let interval = max(1, fire.timeIntervalSinceNow)
-        summaryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
+        summaryGeneration += 1
+        let generation = summaryGeneration
+        let interval = max(1, nextSummaryFireDate(after: Date()).timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + interval) { [weak self] in
+            guard let self = self, generation == self.summaryGeneration else { return }
             self.generateSummary(for: Date())
             self.scheduleSummary()
         }
@@ -438,6 +441,8 @@ class DayLogger {
         if !waChats.isEmpty { parts.append("## WhatsApp chats (preview snapshots through the day)\n" + waChats) }
         let waCalls = aggregateWhatsAppCalls(for: date)
         if !waCalls.isEmpty { parts.append("## WhatsApp calls\n" + waCalls) }
+        let slack = Slack.messages(on: Self.dayKey(date))
+        if !slack.isEmpty { parts.append("## Slack messages\n" + slack.joined(separator: "\n")) }
         return parts.joined(separator: "\n\n")
     }
 
@@ -924,11 +929,13 @@ You are generating an end-of-day journal entry for the user, based on raw activi
 - Claude Code session prompts: the user's actual messages to Claude today, timestamped, with project name.
 - Opencode session prompts: the user's actual messages to opencode today, timestamped.
 - WhatsApp chats: periodic preview-text snapshots of each chat through the day (name + a short text excerpt), NOT full conversations.
+  Who wrote each line: "<chat>: You: …" is a message the USER sent to that chat. "<chat>: <Sender>: …" in a group is from that sender. A line with no sender in a one-to-one chat is from the contact the chat is named after. Never flip these: a "You:" line is the user asking or telling the other person, not the other way round.
 - WhatsApp calls: call-log entries (caller, missed/incoming/outgoing, WhatsApp's own time label) — no call content/audio is available unless that call happened to be recorded as a meeting (in which case it shows up under Meetings too).
+- Slack messages: the day's messages from channels and DMs the user can see (channel or "DM", sender, text). Their own messages appear under their own Slack name.
 
 The session prompts are the most informative signal: they tell you LITERALLY what bug or feature the user was working on, in their own words. Use them as the spine of the narrative.
 
-For WhatsApp chats specifically: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
+For WhatsApp chats and Slack messages: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
 
 \(NikxelSettings.languageInstruction)
 
@@ -955,6 +962,11 @@ Output this exact Markdown structure:
 - Calls: one bullet per call (who, missed/incoming/outgoing, when). If none, write "- No calls today."
 - Tasks assigned in chats: one bullet per task you can identify — "<Who> asked you to <what> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
 - Anything else notable from chats worth a quick mention. If nothing, write "- Nothing else notable."
+
+## Slack
+- Only if there is a "Slack messages" section in the data; otherwise leave this whole section out.
+- Tasks asked of you: one bullet per task — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
+- The main threads or decisions in channels you took part in, briefly. Skip channel chatter you weren't part of.
 
 ## Browsing & Reading
 - Time in browser/reading apps, summarized ("~45 min in Chrome — mostly docs"). Don't list every URL.

@@ -43,9 +43,11 @@ export const WHISPER_DIR = path.join(HOME, ".nikxel", "bin", "whisper");
 const DLL_NOT_FOUND = [3221225781, -1073741515];
 const VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
 
+/// Not /releases/latest: since v1.9.3 the version tags (v1.9.5) carry no
+/// files and the binaries go on a build release (b5454) cut the same day.
+const WHISPER_RELEASE_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=20";
 /// The release asset. Only the plain CPU build: the BLAS/CUDA variants need
 /// extra runtimes most machines don't have.
-const WHISPER_RELEASE_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest";
 const WHISPER_ASSET = /whisper-bin-x64\.zip/;
 
 /// Depth-limited search for a file name. The release zip has nested its
@@ -208,10 +210,16 @@ export async function installWhisper(progress: (msg: string, frac?: number) => v
     headers: { "User-Agent": "Nikxel", Accept: "application/vnd.github+json" },
   });
   if (!res.ok) throw new Error(`Couldn't reach GitHub for whisper.cpp (HTTP ${res.status}).`);
-  const release = (await res.json()) as { tag_name?: string; assets?: { name: string; browser_download_url: string }[] };
-  const assets = release.assets ?? [];
-  const asset = assets.find(a => /^whisper-bin-x64\.zip$/i.test(a.name)) ?? assets.find(a => WHISPER_ASSET.test(a.name));
-  if (!asset) throw new Error(`The latest whisper.cpp release (${release.tag_name ?? "unknown"}) has no Windows x64 build.`);
+  type Release = { tag_name?: string; assets?: { name: string; browser_download_url: string }[] };
+  const releases = (await res.json()) as Release[];
+  // Newest first; take the first that actually ships the Windows build.
+  let release: Release | undefined, asset: { name: string; browser_download_url: string } | undefined;
+  for (const r of releases) {
+    const assets = r.assets ?? [];
+    asset = assets.find(a => /^whisper-bin-x64\.zip$/i.test(a.name)) ?? assets.find(a => WHISPER_ASSET.test(a.name));
+    if (asset) { release = r; break; }
+  }
+  if (!release || !asset) throw new Error("No recent whisper.cpp release has a Windows x64 build.");
   diag("Transcriber", `installing whisper.cpp ${release.tag_name} from ${asset.browser_download_url}`);
 
   const binDir = ensureDir(path.dirname(WHISPER_DIR));

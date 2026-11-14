@@ -100,6 +100,18 @@ class NikxelApp {
       });
     };
 
+    // Both land around 9am on a Sunday. Each waits for an answer, and the
+    // week (written second) would replace the tasks, so closing the week
+    // card brings the tasks back.
+    this.dayLogger.onMorningTasks = (tasks, page) => this.showOpenTasks(tasks, page);
+    this.dayLogger.onWeekReady = (line, filePath) => {
+      const back = () => this.pendingTasksCard?.();
+      ui.ask({ icon: "☀️", title: "Your week, in short", lines: [line], buttons: [
+        { title: "Open", action: () => { openFile(filePath); back(); } },
+        { title: "Later", action: back },
+      ] });
+    };
+
     this.meetingDetector = MeetingDetector.shared;
     this.chatbotEngine = ChatbotEngine.shared;
     this.chatbotEngine.onRepliesSent = (batch, drafted) => this.showReplyCard(batch, drafted);
@@ -275,6 +287,7 @@ class NikxelApp {
       item("Open Meetings Folder", () => openFolder(documentsDir("meetings"))),
       item("Open Daily Summaries Folder", () => openFolder(documentsDir("daily"))),
       item("Summarize Today Now", () => this.dayLogger.generateSummaryNow()),
+      item("Summarize This Week Now", () => this.dayLogger.generateWeekNow()),
       { label: "AI Usage", submenu: this.usageMenu() },
       item("Connect Google Account…", () => this.calendarWatcher.reauthenticate()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
@@ -377,6 +390,24 @@ class NikxelApp {
     } catch (e) {
       ui.tell({ icon: "⚠️", title: "Slack sign-in didn't finish", kind: "warning", lines: [`Slack said: ${(e as Error).message}.`] });
     }
+  }
+
+  /// Set while the open-tasks card is up, to show it again after a card
+  /// that replaced it.
+  private pendingTasksCard: (() => void) | null = null;
+
+  private showOpenTasks(tasks: string[], page: string): void {
+    const shown = tasks.slice(0, 5).map(t => t.length > 110 ? t.slice(0, 109) + "…" : t);
+    const more = tasks.length > 5 ? [`…and ${tasks.length - 5} more in the summary.`] : [];
+    const show = () => ui.ask({
+      icon: "📌", title: tasks.length === 1 ? "1 task still open" : `${tasks.length} tasks still open`,
+      lines: [...shown, ...more], bulleted: true, buttons: [
+        { title: "Open summary", action: () => { this.pendingTasksCard = null; openFile(page); } },
+        { title: "Got it", action: () => { this.pendingTasksCard = null; } },
+      ],
+    });
+    this.pendingTasksCard = show;
+    show();
   }
 
   private async newTemplate(): Promise<void> {

@@ -78,6 +78,18 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 action: { NSWorkspace.shared.openFile(fileURL) })
         }
 
+        // Both land around 9am on a Sunday. Each waits for an answer, and the
+        // week (written second) would replace the tasks, so closing the week
+        // card brings the tasks back.
+        dayLogger.onMorningTasks = { [weak self] tasks, page in self?.showOpenTasks(tasks, page: page) }
+        dayLogger.onWeekReady = { [weak self] line, fileURL in
+            let back: () -> Void = { [weak self] in self?.pendingTasksCard?() }
+            NikxelView.ask(icon: "☀️", title: "Your week, in short", lines: [line], buttons: [
+                ("Open", { NSWorkspace.shared.openFile(fileURL); back() }),
+                ("Later", back),
+            ])
+        }
+
         meetingDetector = MeetingDetector.shared
         chatbotEngine = ChatbotEngine.shared
         chatbotEngine.onRepliesSent = { [weak self] batch, drafted in
@@ -329,6 +341,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let summarizeNow = NSMenuItem(title: "Summarize Today Now", action: #selector(summarizeNow), keyEquivalent: "")
         summarizeNow.target = self; menu.addItem(summarizeNow)
 
+        let summarizeWeek = NSMenuItem(title: "Summarize This Week Now", action: #selector(summarizeWeekNow), keyEquivalent: "")
+        summarizeWeek.target = self; menu.addItem(summarizeWeek)
+
         let usageItem = NSMenuItem(title: "AI Usage", action: nil, keyEquivalent: "")
         let usageSubmenu = NSMenu()
         usageSubmenu.delegate = self   // filled in menuNeedsUpdate, fresh on every open
@@ -550,6 +565,28 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             .appendingPathComponent("Documents/nikxel/meetings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(dir)
+    }
+
+    /// Set while the open-tasks card is up, to show it again after a card
+    /// that replaced it.
+    private var pendingTasksCard: (() -> Void)?
+
+    private func showOpenTasks(_ tasks: [String], page: URL) {
+        let shown = tasks.prefix(5).map { $0.count > 110 ? String($0.prefix(109)) + "…" : $0 }
+        let more = tasks.count > 5 ? ["…and \(tasks.count - 5) more in the summary."] : []
+        let show = { [weak self] in
+            NikxelView.ask(icon: "📌", title: tasks.count == 1 ? "1 task still open" : "\(tasks.count) tasks still open",
+                           lines: shown + more, bulleted: true, buttons: [
+                               ("Open summary", { self?.pendingTasksCard = nil; NSWorkspace.shared.openFile(page) }),
+                               ("Got it", { self?.pendingTasksCard = nil }),
+                           ])
+        }
+        pendingTasksCard = show
+        show()
+    }
+
+    @objc func summarizeWeekNow() {
+        dayLogger.generateWeekNow()
     }
 
     @objc func openDaily() {

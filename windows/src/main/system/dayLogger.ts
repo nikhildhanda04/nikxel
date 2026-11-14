@@ -1,7 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Worker } from "worker_threads";
-import { HOME, isWin, documentsDir, dayStamp, ensureDir, readText } from "../core/paths";
+import { HOME, isWin, documentsDir, dayStamp, ensureDir, readText, nikxelPath, writeAtomic } from "../core/paths";
+import { isNone } from "../recording/markdown";
+import { ui } from "../core/ui";
 import { Settings } from "../core/settings";
 import { run, which } from "../core/proc";
 import { diag, cblog } from "../core/diag";
@@ -32,6 +34,8 @@ const SAMPLE_INTERVAL = 15;
 const DURATION_CAP = 5 * 60;
 // Fire EOD summary at this hour (24h). 22 = 10pm.
 const SUMMARY_HOUR = 22;
+/// Sunday (0), 9am: the week in review. 9am every day: the open tasks.
+const WEEK_DAY = 0, MORNING_HOUR = 9;
 /// `aggregateGit` shells out to git once per repo under the projects root,
 /// and a busy chat can ask for this several times a minute. Ten minutes is
 /// still "what are you working on right now".
@@ -86,11 +90,18 @@ export class DayLogger {
   /// Days whose summary is being written right now, so the 10pm timer and a
   /// wake-time backfill can't both start one.
   private generating = new Set<string>();
-  private readonly onWake = () => { this.scheduleSummary(); this.backfillIfMissed(); };
+  private weekTimer: NodeJS.Timeout | null = null;
+  private morningTimer: NodeJS.Timeout | null = null;
+  private weekRunning = false;
+  private readonly onWake = () => { this.scheduleSummary(); this.scheduleWeek(); this.scheduleMorning(); this.backfillIfMissed(); };
 
   /// Fired right after an end-of-day summary is written, with the one-line
   /// digest for the avatar bubble and the file it came from.
   onSummaryReady: ((line: string, filePath: string) => void) | null = null;
+  /// The same for the Sunday-morning week in review.
+  onWeekReady: ((line: string, filePath: string) => void) | null = null;
+  /// Each morning: the tasks the latest summary still has open, and its page.
+  onMorningTasks: ((tasks: string[], page: string) => void) | null = null;
 
   constructor(private readonly momGenerator: MOMGenerator) {
     this.logDir = ensureDir(logDirectory());
@@ -103,6 +114,8 @@ export class DayLogger {
     this.sample();
     this.sampleTimer = setInterval(() => this.sample(), SAMPLE_INTERVAL * 1000);
     this.scheduleSummary();
+    this.scheduleWeek();
+    this.scheduleMorning();
     this.backfillIfMissed();
     // Wakes are when a missed 10pm is noticed, and when a timer that slept
     // through its fire time needs re-aiming.
@@ -117,8 +130,8 @@ export class DayLogger {
 
   stop(): void {
     if (this.sampleTimer) clearInterval(this.sampleTimer);
-    if (this.summaryTimer) clearTimeout(this.summaryTimer);
-    this.sampleTimer = null; this.summaryTimer = null;
+    for (const t of [this.summaryTimer, this.weekTimer, this.morningTimer]) if (t) clearTimeout(t);
+    this.sampleTimer = null; this.summaryTimer = null; this.weekTimer = null; this.morningTimer = null;
     bus.off("wake", this.onWake);
   }
 
@@ -451,11 +464,169 @@ export class DayLogger {
   /// file isn't there yet. Safe to call from app launch, wake-from-sleep,
   /// and external triggers.
   backfillIfMissed(): void {
+    this.weekBackfill();
+    this.morningBackfill();
     const now = new Date();
     const todayFire = new Date(now.getFullYear(), now.getMonth(), now.getDate(), SUMMARY_HOUR, 0, 0);
     if (now < todayFire) return;
     if (fs.existsSync(this.summaryFile(now))) return;
     this.generateSummary(now);
+  }
+
+  // MARK: - Open tasks
+
+  /// The bullets under "## Open tasks", without their "— open" tail. The
+  /// summary prompt carries this list from day to day, dropping what a later
+  /// day shows done, so the latest summary's list is the whole backlog.
+  static openTasks(markdown: string): string[] {
+    const out: string[] = [];
+    let inside = false;
+    for (const raw of markdown.split(/\r?\n/)) {
+      if (raw.startsWith("## ")) { inside = raw.slice(3).trim().toLowerCase() === "open tasks"; continue; }
+      if (!inside || !(raw.startsWith("- ") || raw.startsWith("* "))) continue;
+      const t = raw.slice(2).trim();
+      if (isNone(t) || t.toLowerCase().startsWith("nothing")) continue;
+      out.push(t.replace(/\s+[—–-]\s*\**(open|unclear)\**\.?\s*$/i, ""));
+    }
+    return out;
+  }
+
+  /// 9am, every day: the open tasks, once. Missed (asleep, off) -> the first
+  /// launch or wake after it, the same day.
+  private scheduleMorning(): void {
+    if (this.morningTimer) clearTimeout(this.morningTimer);
+    const now = new Date();
+    let fire = new Date(now.getFullYear(), now.getMonth(), now.getDate(), MORNING_HOUR, 0, 0);
+    if (fire <= now) fire = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, MORNING_HOUR, 0, 0);
+    this.morningTimer = setTimeout(() => { this.morningBackfill(); this.scheduleMorning(); }, Math.max(1000, fire.getTime() - Date.now()));
+  }
+
+  private morningBackfill(): void {
+    const now = new Date(), today = dayStamp(now);
+    const marker = nikxelPath("open_tasks_shown");
+    if (now.getHours() < MORNING_HOUR || readText(marker)?.trim() === today) return;
+    writeAtomic(marker, today);
+    const latest = DayLogger.recentSummaryEntries(7, Number.MAX_SAFE_INTEGER, undefined, now)[0];
+    if (!latest) return;
+    const tasks = DayLogger.openTasks(latest.text);
+    if (tasks.length) this.onMorningTasks?.(tasks, path.join(this.summaryDir, `${latest.day}.html`));
+  }
+
+  // MARK: - Week in review
+
+  /// Sunday, 9am: the week that ended last night, written from its daily
+  /// summaries rather than the raw logs -- seven short files, not a week of
+  /// samples, so it costs one ordinary agent run.
+  static get weekDirectory(): string {
+    return documentsDir("weekly");
+  }
+
+  private static lastWeekFire(now: Date): Date {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() - WEEK_DAY + 7) % 7), MORNING_HOUR, 0, 0);
+    return d > now ? new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7, MORNING_HOUR, 0, 0) : d;
+  }
+
+  private scheduleWeek(): void {
+    if (this.weekTimer) clearTimeout(this.weekTimer);
+    const last = DayLogger.lastWeekFire(new Date());
+    const fire = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 7, MORNING_HOUR, 0, 0);
+    // setTimeout tops out at ~24.8 days; a week is well inside it.
+    this.weekTimer = setTimeout(() => { this.generateWeek(fire); this.scheduleWeek(); }, Math.max(1000, fire.getTime() - Date.now()));
+  }
+
+  /// The last Sunday 9am that has passed, if its week was never written
+  /// (the PC was off or asleep through Sunday morning). Only until Tuesday
+  /// morning: by midweek, last week's review is noise.
+  private weekBackfill(): void {
+    const last = DayLogger.lastWeekFire(new Date());
+    if (Date.now() - last.getTime() >= 2 * 86_400_000) return;
+    if (fs.existsSync(this.weekFile(last))) return;
+    this.generateWeek(last);
+  }
+
+  generateWeekNow(): void {
+    this.generateWeek(new Date(), true);
+  }
+
+  private weekFile(sunday: Date): string {
+    return path.join(DayLogger.weekDirectory, `${dayStamp(sunday)}.md`);
+  }
+
+  /// `end` is the morning it's written; the week is the seven days before.
+  private generateWeek(end: Date, force = false): void {
+    if (this.weekRunning) return;
+    this.weekRunning = true;
+    (async () => {
+      try {
+        const days = DayLogger.recentSummaryEntries(7, 6000, undefined, end).reverse();
+        // A fresh install has nothing to look back on; a backfill with no
+        // days would otherwise retry on every wake.
+        if (!days.length) {
+          if (force) ui.tell({ icon: "☀️", title: "No week to sum up yet", lines: ["The week in review is written from the daily summaries, and there are none for the last seven days."] });
+          return;
+        }
+        const stats = emptyStats();
+        for (let offset = 1; offset <= 7; offset++) {
+          const s = this.dayStats(new Date(end.getFullYear(), end.getMonth(), end.getDate() - offset, 12));
+          stats.codingSeconds += s.codingSeconds; stats.activeSeconds += s.activeSeconds;
+          stats.meetings += s.meetings; stats.messages += s.messages;
+        }
+        const report = days.map(d => `### ${d.day}\n${d.text}`).join("\n\n");
+        const output = await this.momGenerator.runPrompt(this.weekPrompt(report, end), "weekly-summary");
+        const file = this.weekFile(end);
+        ensureDir(DayLogger.weekDirectory);
+        await fs.promises.writeFile(file, output, "utf8");
+        const page = file.replace(/\.md$/, ".html");
+        await fs.promises.writeFile(page, DayPage.html(output, stats, true), "utf8");
+        this.onWeekReady?.(DayLogger.digestLine(stats) ?? `${days.length} day${days.length === 1 ? "" : "s"} summed up`, page);
+      } catch (e) {
+        diag("DayLogger", `week summary failed: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        this.weekRunning = false;
+      }
+    })();
+  }
+
+  private weekPrompt(report: string, sunday: Date): string {
+    const day = dayStamp(sunday);
+    return `You are writing the user's week in review, read on Sunday morning. Below are the end-of-day summaries Nikxel wrote for each day of the past week (some days may be missing -- the Mac was off). They are your only source.
+
+${Settings.languageInstruction}
+
+Write it warm, specific and short enough to read over coffee. Not "worked on several projects" but "shipped the Datacap certification fixes for Produce POS and got the car-wash invoice bug to prod".
+
+Output this exact Markdown structure:
+
+# ${day} — Week in review
+
+## Summary
+2-3 sentences: the shape of the week -- what it was mostly about, the biggest win, and how it felt (steady, scattered, a crunch).
+
+## Highlights
+- 3-6 bullets: the things worth remembering -- shipped work, decisions, milestones. Name the day in each ("Tue:").
+
+## What you worked on
+- One bullet per project, biggest first: what moved this week and where it stands now. Indent 1-3 sub-bullets for detail.
+
+## Meetings
+- The meetings that mattered, one bullet each: "<Day>: <who/what> — <outcome>". Skip routine stand-ups unless something came out of them. If none, write "- None this week."
+
+## Open tasks
+- Things people asked of the user during the week (WhatsApp, Slack, meetings) that the daily summaries left open or unclear and that no later day shows done. End each with " — open" or " — unclear". If none, write "- Nothing left open."
+
+## Patterns
+- 2-4 observations from across the days: when focus was best, what kept interrupting, late nights, a day that got lost. Only what the summaries support.
+
+## Next week
+- 2-4 suggestions that follow from the open tasks and in-flight work. Concrete, not motivational.
+
+Rules:
+- Never invent anything not in the daily summaries. Keep who-asked-whom exactly as the daily summaries have it.
+- Output ONLY the Markdown — no preamble, no closing remarks.
+
+---
+DAILY SUMMARIES:
+${report}`;
   }
 
   // MARK: - Aggregation
@@ -502,6 +673,9 @@ export class DayLogger {
     if (waChats) parts.push("## WhatsApp chats (preview snapshots through the day)\n" + waChats);
     const waCalls = this.aggregateWhatsAppCalls(date);
     if (waCalls) parts.push("## WhatsApp calls\n" + waCalls);
+    const prev = DayLogger.recentSummaryEntries(7, Number.MAX_SAFE_INTEGER, undefined, date)[0];
+    const open = prev ? DayLogger.openTasks(prev.text) : [];
+    if (open.length) parts.push(`## Still open from before (from the ${prev.day} summary)\n` + open.map(t => "- " + t).join("\n"));
     const slack = await Slack.messages(dayStamp(date));
     if (slack.length) parts.push("## Slack messages\n" + slack.join("\n"));
     return parts.join("\n\n");
@@ -887,6 +1061,7 @@ export class DayLogger {
 - Git activity per project: commits today, uncommitted changes, current branch, recent commit history.
 - Claude Code session prompts: the user's actual messages to Claude today, timestamped, with project name.
 - Opencode session prompts: the user's actual messages to opencode today, timestamped.
+- Still open from before: the open-task list from the previous summary, carried forward (may be absent).
 - WhatsApp chats: periodic preview-text snapshots of each chat through the day (name + a short text excerpt), NOT full conversations.
   Who wrote each line: "<chat>: You: …" is a message the USER sent to that chat. "<chat>: <Sender>: …" in a group is from that sender. A line with no sender in a one-to-one chat is from the contact the chat is named after. Never flip these: a "You:" line is the user asking or telling the other person, not the other way round.
 - WhatsApp calls: call-log entries (caller, missed/incoming/outgoing, WhatsApp's own time label) — no call content/audio is available unless that call happened to be recorded as a meeting (in which case it shows up under Meetings too).
@@ -926,6 +1101,12 @@ Output this exact Markdown structure:
 - Only if there is a "Slack messages" section in the data; otherwise leave this whole section out.
 - Tasks asked of you: one bullet per task — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
 - The main threads or decisions in channels you took part in, briefly. Skip channel chatter you weren't part of.
+
+## Open tasks
+- The running list of everything still owed: each item from "Still open from before" UNLESS today's data shows it done (a reply, a commit, a message saying it's done) -- then drop it -- plus every task asked of the user today (WhatsApp, Slack, meetings) that isn't done yet.
+- One bullet each: "<what> — for <who> (asked <weekday or date>) — open". Use "— unclear" instead when you can't tell. Keep the original asked-date for carried items.
+- Only things asked of the user. Never list something the user asked someone else to do.
+- If nothing is open, write "- Nothing open."
 
 ## Browsing & Reading
 - Time in browser/reading apps, summarized ("~45 min in Chrome — mostly docs"). Don't list every URL.

@@ -115,7 +115,7 @@ enum NotePage {
 
         return """
         <!doctype html>
-        <html lang="en"><head><meta charset="utf-8">
+        <html lang="en"><head><meta charset="utf-8">\(NoteExporter.favicon)
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
         <title>\(esc(title.isEmpty ? "Nikxel note" : title))</title>
         <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

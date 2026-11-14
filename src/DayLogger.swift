@@ -41,6 +41,8 @@ class DayLogger {
             self?.sample()
         }
         scheduleSummary()
+        scheduleWeek()
+        scheduleMorning()
         backfillIfMissed()
     }
 
@@ -56,6 +58,10 @@ class DayLogger {
     /// Fired on the main thread right after an end-of-day summary is written,
     /// with the one-line digest for the avatar bubble and the file it came from.
     var onSummaryReady: ((String, URL) -> Void)?
+    /// The same for the Sunday-morning week in review.
+    var onWeekReady: ((String, URL) -> Void)?
+    /// Each morning: the tasks the latest summary still has open, and its page.
+    var onMorningTasks: (([String], URL) -> Void)?
 
     // MARK: - Digest
 
@@ -390,6 +396,8 @@ class DayLogger {
     /// file isn't there yet. Safe to call from app launch, wake-from-sleep,
     /// and external triggers (LaunchAgent).
     func backfillIfMissed() {
+        weekBackfill()
+        morningBackfill()
         let now = Date()
         let cal = Calendar.current
         var comps = cal.dateComponents([.year, .month, .day], from: now)
@@ -397,6 +405,182 @@ class DayLogger {
         guard let todayFire = cal.date(from: comps), now >= todayFire else { return }
         if FileManager.default.fileExists(atPath: summaryFileURL(for: now).path) { return }
         generateSummary(for: now)
+    }
+
+    // MARK: - Open tasks
+
+    /// The bullets under "## Open tasks", without their "— open" tail. The
+    /// summary prompt carries this list from day to day, dropping what a later
+    /// day shows done, so the latest summary's list is the whole backlog.
+    static func openTasks(in markdown: String) -> [String] {
+        var out: [String] = [], inside = false
+        for raw in markdown.components(separatedBy: .newlines) {
+            if raw.hasPrefix("## ") { inside = raw.dropFirst(3).trimmingCharacters(in: .whitespaces).lowercased() == "open tasks"; continue }
+            guard inside, raw.hasPrefix("- ") || raw.hasPrefix("* ") else { continue }
+            var t = raw.dropFirst(2).trimmingCharacters(in: .whitespaces)
+            if NoteExporter.isNone(t) || t.lowercased().hasPrefix("nothing") { continue }
+            if let r = t.range(of: #"\s+[—–-]\s*\**(open|unclear)\**\.?\s*$"#, options: [.regularExpression, .caseInsensitive]) {
+                t = String(t[..<r.lowerBound])
+            }
+            out.append(t)
+        }
+        return out
+    }
+
+    /// 9am, every day: the open tasks, once. Missed (asleep, off) -> the first
+    /// launch or wake after it, the same day.
+    private static let morningHour = 9
+    private var morningGeneration = 0
+    private static let morningShownKey = "nikxel.openTasksShownDay"
+
+    private func scheduleMorning() {
+        morningGeneration += 1
+        let generation = morningGeneration
+        guard let fire = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: Self.morningHour, minute: 0, second: 0),
+                                                   matchingPolicy: .nextTime) else { return }
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + max(1, fire.timeIntervalSinceNow)) { [weak self] in
+            guard let self = self, generation == self.morningGeneration else { return }
+            self.morningBackfill()
+            self.scheduleMorning()
+        }
+    }
+
+    private func morningBackfill() {
+        let now = Date(), today = Self.dayKey(now)
+        guard Calendar.current.component(.hour, from: now) >= Self.morningHour,
+              UserDefaults.standard.string(forKey: Self.morningShownKey) != today else { return }
+        UserDefaults.standard.set(today, forKey: Self.morningShownKey)
+        guard let latest = Self.recentSummaries(days: 7, maxCharsPerDay: .max, now: now).first else { return }
+        let tasks = Self.openTasks(in: latest.text)
+        guard !tasks.isEmpty else { return }
+        let page = summaryDir.appendingPathComponent("\(latest.day).html")
+        onMorningTasks?(tasks, page)
+    }
+
+    // MARK: - Week in review
+
+    /// Sunday, 9am: the week that ended last night, written from its daily
+    /// summaries rather than the raw logs -- seven short files, not a week of
+    /// samples, so it costs one ordinary agent run.
+    private static let weekFire = DateComponents(hour: 9, minute: 0, second: 0, weekday: 1)
+    private var weekGeneration = 0
+    private var weekRunning = false
+
+    static var weekDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/nikxel/weekly", isDirectory: true)
+    }
+
+    private func scheduleWeek() {
+        weekGeneration += 1
+        let generation = weekGeneration
+        guard let fire = Calendar.current.nextDate(after: Date(), matching: Self.weekFire, matchingPolicy: .nextTime) else { return }
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + max(1, fire.timeIntervalSinceNow)) { [weak self] in
+            guard let self = self, generation == self.weekGeneration else { return }
+            self.generateWeek(endingBefore: fire)
+            self.scheduleWeek()
+        }
+    }
+
+    /// The last Sunday 9am that has passed, if its week was never written
+    /// (the Mac was off or asleep through Sunday morning). Only until Tuesday
+    /// morning: by midweek, last week's review is noise.
+    private func weekBackfill() {
+        guard let last = Calendar.current.nextDate(after: Date(), matching: Self.weekFire,
+                                                   matchingPolicy: .nextTime, direction: .backward),
+              Date().timeIntervalSince(last) < 2 * 86_400,
+              !FileManager.default.fileExists(atPath: weekFileURL(for: last).path) else { return }
+        generateWeek(endingBefore: last)
+    }
+
+    func generateWeekNow() {
+        generateWeek(endingBefore: Date(), force: true)
+    }
+
+    private func weekFileURL(for sunday: Date) -> URL {
+        Self.weekDirectory.appendingPathComponent("\(Self.dayKey(sunday)).md")
+    }
+
+    /// `end` is the morning it's written; the week is the seven days before.
+    private func generateWeek(endingBefore end: Date, force: Bool = false) {
+        guard !weekRunning else { return }
+        weekRunning = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            defer { DispatchQueue.main.async { self.weekRunning = false } }
+            let days = Self.recentSummaries(days: 7, maxCharsPerDay: 6000, now: end).reversed()
+            // A fresh install has nothing to look back on; a backfill with no
+            // days would otherwise retry on every wake.
+            guard !days.isEmpty || force else { return }
+            if days.isEmpty {
+                DispatchQueue.main.async { NikxelView.tell(icon: "☀️", title: "No week to sum up yet", lines: ["The week in review is written from the daily summaries, and there are none for the last seven days."]) }
+                return
+            }
+            var stats = DayStats()
+            for offset in 1...7 {
+                guard let d = Calendar.current.date(byAdding: .day, value: -offset, to: end) else { continue }
+                let s = self.dayStats(for: d)
+                stats.codingSeconds += s.codingSeconds; stats.activeSeconds += s.activeSeconds
+                stats.meetings += s.meetings; stats.messages += s.messages
+            }
+            do {
+                let report = days.map { "### \($0.day)\n\($0.text)" }.joined(separator: "\n\n")
+                let output = try self.momGenerator.runPrompt(self.weekPrompt(report: report, sunday: end), kind: "weekly-summary")
+                try? FileManager.default.createDirectory(at: Self.weekDirectory, withIntermediateDirectories: true)
+                let fileURL = self.weekFileURL(for: end)
+                try output.write(to: fileURL, atomically: true, encoding: .utf8)
+                let pageURL = fileURL.deletingPathExtension().appendingPathExtension("html")
+                try DayPage.html(from: output, stats: stats, morning: true).write(to: pageURL, atomically: true, encoding: .utf8)
+                let line = Self.digestLine(stats) ?? "\(days.count) day\(days.count == 1 ? "" : "s") summed up"
+                DispatchQueue.main.async { self.onWeekReady?(line, pageURL) }
+            } catch {
+                NSLog("DayLogger: week summary failed: \(error)")
+            }
+        }
+    }
+
+    private func weekPrompt(report: String, sunday: Date) -> String {
+        let day = Self.dayKey(sunday)
+        return """
+You are writing the user's week in review, read on Sunday morning. Below are the end-of-day summaries Nikxel wrote for each day of the past week (some days may be missing -- the Mac was off). They are your only source.
+
+\(NikxelSettings.languageInstruction)
+
+Write it warm, specific and short enough to read over coffee. Not "worked on several projects" but "shipped the Datacap certification fixes for Produce POS and got the car-wash invoice bug to prod".
+
+Output this exact Markdown structure:
+
+# \(day) — Week in review
+
+## Summary
+2-3 sentences: the shape of the week -- what it was mostly about, the biggest win, and how it felt (steady, scattered, a crunch).
+
+## Highlights
+- 3-6 bullets: the things worth remembering -- shipped work, decisions, milestones. Name the day in each ("Tue:").
+
+## What you worked on
+- One bullet per project, biggest first: what moved this week and where it stands now. Indent 1-3 sub-bullets for detail.
+
+## Meetings
+- The meetings that mattered, one bullet each: "<Day>: <who/what> — <outcome>". Skip routine stand-ups unless something came out of them. If none, write "- None this week."
+
+## Open tasks
+- Things people asked of the user during the week (WhatsApp, Slack, meetings) that the daily summaries left open or unclear and that no later day shows done. End each with " — open" or " — unclear". If none, write "- Nothing left open."
+
+## Patterns
+- 2-4 observations from across the days: when focus was best, what kept interrupting, late nights, a day that got lost. Only what the summaries support.
+
+## Next week
+- 2-4 suggestions that follow from the open tasks and in-flight work. Concrete, not motivational.
+
+Rules:
+- Never invent anything not in the daily summaries. Keep who-asked-whom exactly as the daily summaries have it.
+- Output ONLY the Markdown — no preamble, no closing remarks.
+
+---
+DAILY SUMMARIES:
+\(report)
+"""
     }
 
     // MARK: - Aggregation
@@ -441,6 +625,12 @@ class DayLogger {
         if !waChats.isEmpty { parts.append("## WhatsApp chats (preview snapshots through the day)\n" + waChats) }
         let waCalls = aggregateWhatsAppCalls(for: date)
         if !waCalls.isEmpty { parts.append("## WhatsApp calls\n" + waCalls) }
+        if let prev = Self.recentSummaries(days: 7, maxCharsPerDay: .max, now: date).first {
+            let open = Self.openTasks(in: prev.text)
+            if !open.isEmpty {
+                parts.append("## Still open from before (from the \(prev.day) summary)\n" + open.map { "- " + $0 }.joined(separator: "\n"))
+            }
+        }
         let slack = Slack.messages(on: Self.dayKey(date))
         if !slack.isEmpty { parts.append("## Slack messages\n" + slack.joined(separator: "\n")) }
         return parts.joined(separator: "\n\n")
@@ -928,6 +1118,7 @@ You are generating an end-of-day journal entry for the user, based on raw activi
 - Git activity per project: commits today, uncommitted changes, current branch, recent commit history.
 - Claude Code session prompts: the user's actual messages to Claude today, timestamped, with project name.
 - Opencode session prompts: the user's actual messages to opencode today, timestamped.
+- Still open from before: the open-task list from the previous summary, carried forward (may be absent).
 - WhatsApp chats: periodic preview-text snapshots of each chat through the day (name + a short text excerpt), NOT full conversations.
   Who wrote each line: "<chat>: You: …" is a message the USER sent to that chat. "<chat>: <Sender>: …" in a group is from that sender. A line with no sender in a one-to-one chat is from the contact the chat is named after. Never flip these: a "You:" line is the user asking or telling the other person, not the other way round.
 - WhatsApp calls: call-log entries (caller, missed/incoming/outgoing, WhatsApp's own time label) — no call content/audio is available unless that call happened to be recorded as a meeting (in which case it shows up under Meetings too).
@@ -967,6 +1158,12 @@ Output this exact Markdown structure:
 - Only if there is a "Slack messages" section in the data; otherwise leave this whole section out.
 - Tasks asked of you: one bullet per task — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
 - The main threads or decisions in channels you took part in, briefly. Skip channel chatter you weren't part of.
+
+## Open tasks
+- The running list of everything still owed: each item from "Still open from before" UNLESS today's data shows it done (a reply, a commit, a message saying it's done) -- then drop it -- plus every task asked of the user today (WhatsApp, Slack, meetings) that isn't done yet.
+- One bullet each: "<what> — for <who> (asked <weekday or date>) — open". Use "— unclear" instead when you can't tell. Keep the original asked-date for carried items.
+- Only things asked of the user. Never list something the user asked someone else to do.
+- If nothing is open, write "- Nothing open."
 
 ## Browsing & Reading
 - Time in browser/reading apps, summarized ("~45 min in Chrome — mostly docs"). Don't list every URL.

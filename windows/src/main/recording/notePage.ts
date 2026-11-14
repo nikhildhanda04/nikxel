@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { escapeHtml as esc, fmt, inline as inl, isNone, parseLocalDate, splitFields } from "./markdown";
+import { escapeHtml as esc, favicon, fmt, inline as inl, isNone, parseLocalDate, splitFields } from "./markdown";
 
 /// Port of NotePage.swift.
 ///
@@ -100,7 +100,7 @@ function html(markdown: string): string {
 
   // Google Fonts as on the Mac; the stacks fall back to Segoe UI / Consolas offline.
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">${favicon}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title || "Nikxel note")}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

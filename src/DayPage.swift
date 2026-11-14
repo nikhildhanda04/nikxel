@@ -5,6 +5,7 @@ import Foundation
 /// takeaway, the day's numbers as tiles, the work as a timeline, meetings as
 /// cards, chat tasks with a done/open status, and the lighter sections side
 /// by side. Unknown sections fall back to NotePage's generic layout.
+/// The Sunday week in review uses the same page at sunrise (`morning`).
 enum DayPage {
 
     /// "… — open" / "… — done." at the end of a bullet, as the prompt asks for chat tasks.
@@ -41,7 +42,7 @@ enum DayPage {
         return roots
     }
 
-    static func html(from markdown: String, stats: DayLogger.DayStats? = nil) -> String {
+    static func html(from markdown: String, stats: DayLogger.DayStats? = nil, morning: Bool = false) -> String {
         let (title, sections) = NotePage.parse(markdown)
         var body = "", empty: [String] = [], side: [NotePage.Section] = []
         for s in sections where s.key != "summary" {
@@ -51,7 +52,7 @@ enum DayPage {
             switch s.key {
             case "what you worked on": body += section(s, items.count, timeline(items) + paras(s))
             case "meetings": body += section(s, items.count, meetings(items) + paras(s))
-            case "whatsapp": body += section(s, items.count, statusList(items) + paras(s))
+            case "whatsapp", "slack", "open tasks": body += section(s, items.count, statusList(items) + paras(s))
             default: body += section(s, s.count, NotePage.generic(s.blocks))
             }
         }
@@ -64,17 +65,17 @@ enum DayPage {
 
         return """
         <!doctype html>
-        <html lang="en"><head><meta charset="utf-8">
+        <html lang="en"><head><meta charset="utf-8">\(NoteExporter.favicon)
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-        <title>\(esc(title.isEmpty ? "Day in review" : title))</title>
+        <title>\(esc(title.isEmpty ? (morning ? "Week in review" : "Day in review") : title))</title>
         <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap">
-        <style>\(css)</style></head><body>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,800;9..144,900&display=swap">
+        <style>\(css)\(morning ? morningCSS : "")</style></head><body>
         <main>
-        \(hero(title: title, summary: sections.first { $0.key == "summary" }))
+        \(hero(title: title, summary: sections.first { $0.key == "summary" }, morning: morning))
         \(stats.map(tiles) ?? "")
         \(body)
-        <footer>Written by Nikxel from today's activity on this computer. Nothing here left it.</footer>
+        <footer>Written by Nikxel from \(morning ? "this week's daily summaries" : "today's activity") on this computer. Nothing here left it.</footer>
         </main>
         </body></html>
         """
@@ -85,20 +86,28 @@ enum DayPage {
     }
 
     /// "2026-11-12 — Day in review" -> the date large, the takeaway beneath it.
-    private static func hero(title: String, summary: NotePage.Section?) -> String {
+    /// A week's title carries the Sunday it was written; the week shown is
+    /// the seven days before it.
+    private static func hero(title: String, summary: NotePage.Section?, morning: Bool) -> String {
         let parts = title.components(separatedBy: " — ")
         let p = DateFormatter(); p.locale = Locale(identifier: "en_US_POSIX"); p.dateFormat = "yyyy-MM-dd"
         let d = p.date(from: parts[0])
-        var date = title.isEmpty ? "Today" : title, year = "", kind = "Day in review"
+        var date = title.isEmpty ? (morning ? "This week" : "Today") : title, year = ""
+        var kind = morning ? "Week in review" : "Day in review"
         if let d = d {
             let f = DateFormatter(); f.dateFormat = "EEEE, d MMMM"; date = f.string(from: d)
+            if morning, let from = Calendar.current.date(byAdding: .day, value: -7, to: d),
+               let to = Calendar.current.date(byAdding: .day, value: -1, to: d) {
+                let a = DateFormatter(); a.dateFormat = "d MMM"
+                date = "\(a.string(from: from)) – \(a.string(from: to))"
+            }
             let y = DateFormatter(); y.dateFormat = "yyyy"; year = y.string(from: d)
             if parts.count > 1 { kind = parts[1] }
         }
         let (headline, paras) = NotePage.lead(summary)
         return """
         <header class="sky">
-        <div class="moon" aria-hidden="true"></div>
+        <div class="\(morning ? "sun" : "moon")" aria-hidden="true"></div>
         <p class="eyebrow"><span>\(esc(kind))</span>\(year.isEmpty ? "" : "<span class=\"yr\">\(year)</span>")</p>
         <p class="date">\(esc(date))</p>
         \(headline.isEmpty ? "" : "<h1>\(inl(headline))</h1>")
@@ -159,6 +168,33 @@ enum DayPage {
 
     private static func esc(_ s: String) -> String { NoteExporter.escape(s) }
     private static func inl(_ s: String) -> String { NoteExporter.inline(s) }
+
+    // Sunrise over the dusk sheet: peach-to-sky header with a sun, warm paper
+    // and terracotta ink by day; a dawn plum by night. Only the tokens and the
+    // header change, so both pages keep one layout.
+    private static let morningCSS = """
+    :root {
+      --bg: #fbf6ee; --surface: #fffdf9; --ink: #2d2118; --muted: #6e5b4b; --faint: #a8968a; --line: #efe3d3;
+      --accent: #c2531f; --lamp: #d9891a; --lamp-soft: #fdecd0; --indigo-soft: #fbe6d6; --sage: #e2f0e2; --rose: #fbe3e2;
+      --sky-a: #ffcf9a; --sky-b: #9fd2f0; --sky-ink: #2d2118; --sky-muted: #7a5a3f;
+    }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+      --bg: #17110d; --surface: #211913; --ink: #f5ebe1; --muted: #c4b2a2; --faint: #8a7768; --line: #3a2c22;
+      --accent: #ff9a5c; --lamp: #f5b54a; --lamp-soft: #3d2c17; --indigo-soft: #33241a; --sage: #1c3326; --rose: #3d2228;
+      --sky-a: #5b2e3c; --sky-b: #d0773f; --sky-ink: #fff4e8; --sky-muted: #f2c9a4; color-scheme: dark; } }
+    :root[data-theme="dark"] {
+      --bg: #17110d; --surface: #211913; --ink: #f5ebe1; --muted: #c4b2a2; --faint: #8a7768; --line: #3a2c22;
+      --accent: #ff9a5c; --lamp: #f5b54a; --lamp-soft: #3d2c17; --indigo-soft: #33241a; --sage: #1c3326; --rose: #3d2228;
+      --sky-a: #5b2e3c; --sky-b: #d0773f; --sky-ink: #fff4e8; --sky-muted: #f2c9a4; color-scheme: dark; }
+    .sky { background: linear-gradient(200deg, var(--sky-b) 0%, var(--sky-a) 100%); }
+    .sun { position: absolute; top: 22px; right: 26px; width: 56px; height: 56px; border-radius: 50%;
+      background: radial-gradient(circle, #fff6d8 0 38%, #ffd36b 60%, #ffb347 100%);
+      box-shadow: 0 0 0 10px rgba(255, 214, 120, .28), 0 0 44px 18px rgba(255, 190, 90, .45); }
+    .date { font-weight: 900; letter-spacing: -.025em; }
+    h1 { font-weight: 600; }
+    h2 { font-weight: 800; letter-spacing: -.01em; }
+    @media print { .sun { display: none; } }
+    """
 
     // Dusk palette: warm paper and indigo ink by day, deep indigo with lamp-amber
     // by night. Fraunces for the date and headline sets it apart from the

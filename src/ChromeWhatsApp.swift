@@ -154,6 +154,17 @@ enum ChromeBot {
         }
     }
 
+    /// Quits the bot browser (only the one on our profile, never the user's
+    /// own) and waits for its debug port to close.
+    static func quit() {
+        let kill = Process()
+        kill.launchPath = "/usr/bin/pkill"
+        kill.arguments = ["-f", "user-data-dir=\(profileDir)"]
+        try? kill.run(); kill.waitUntilExit()
+        let deadline = Date().addingTimeInterval(5)
+        while isPortOpen() && Date() < deadline { Thread.sleep(forTimeInterval: 0.3) }
+    }
+
     @discardableResult
     static func launchIfNeeded() -> Bool {
         if isPortOpen() { return true }
@@ -251,6 +262,25 @@ enum ChromeWhatsApp {
         cblog("CDP: connected to \(c.targetURL ?? "?")")
         ChromeBot.closeStrayTabs()
         return c
+    }
+
+    /// Logs WhatsApp out of Nikxel for good: auto-replies off, the bot
+    /// browser quit, and its profile (the WhatsApp session) deleted, so
+    /// nothing relaunches it until the user connects again from setup.
+    /// Call on the main thread (the bot's poll timer lives there); `done`
+    /// runs on main once the browser is gone.
+    static func disconnect(done: @escaping () -> Void) {
+        ChatbotEngine.shared.isEnabled = false
+        NikxelSettings.whatsappConnected = false
+        DispatchQueue.global(qos: .userInitiated).async {
+            cdpLock.lock(); cdp?.disconnect(); cdp = nil; cdpLock.unlock()
+            ChromeBot.quit()
+            try? FileManager.default.removeItem(atPath: ChromeBot.profileDir)
+            // A chat poll in flight when the browser went down sets this back.
+            NikxelSettings.whatsappConnected = false
+            cblog("ChromeWhatsApp: disconnected — bot browser quit, session removed")
+            DispatchQueue.main.async(execute: done)
+        }
     }
 
     // MARK: - High-level API

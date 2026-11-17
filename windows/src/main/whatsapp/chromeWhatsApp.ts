@@ -214,6 +214,19 @@ export const ChromeWhatsApp = {
   /// Hides the window without closing the session.
   hide(): void { win?.hide(); },
 
+  /// Logs WhatsApp out of Nikxel for good: the window destroyed and its
+  /// session wiped, so nothing reopens it until the user connects again.
+  async disconnect(): Promise<void> {
+    Settings.whatsappConnected = false;
+    const w = win;
+    win = null; cdp = null;
+    if (w && !w.isDestroyed()) w.destroy();
+    await session.fromPartition(PARTITION).clearStorageData().catch(() => {});
+    // A chat poll in flight when the window went down sets this back.
+    Settings.whatsappConnected = false;
+    cblog("ChromeWhatsApp: disconnected — window closed, session removed");
+  },
+
   // MARK: - High-level API
 
   /// True once WhatsApp Web has a logged-in chat list visible (as opposed

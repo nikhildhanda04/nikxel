@@ -31,6 +31,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var waDraftItem: NSMenuItem?
     private var waQuietItem: NSMenuItem?
     private var waChatTasksItem: NSMenuItem?
+    private var waConnectItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var checkingForUpdates = false
     private var googleSyncMenuItem: NSMenuItem?
@@ -235,6 +236,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let waItem = NSMenuItem(title: "WhatsApp Bot", action: nil, keyEquivalent: "")
         let waMenu = NSMenu()
+        waMenu.delegate = self   // menuWillOpen: Connect/Disconnect stays current
 
         let bot = NSMenuItem(title: "Auto-Replies: On",
                              action: #selector(toggleBotEnabled), keyEquivalent: "")
@@ -286,6 +288,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let editNever = NSMenuItem(title: "Edit Never-Reply List…", action: #selector(editNeverReply), keyEquivalent: "")
         editNever.target = self; waMenu.addItem(editNever)
+
+        waMenu.addItem(NSMenuItem.separator())
+        let waConn = NSMenuItem(title: "Disconnect WhatsApp…", action: #selector(toggleWhatsAppConnection), keyEquivalent: "")
+        waConn.target = self; waMenu.addItem(waConn)
+        self.waConnectItem = waConn
 
         waItem.submenu = waMenu
         menu.addItem(waItem)
@@ -527,6 +534,25 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let chatTasks = NikxelSettings.waChatTasks
         waChatTasksItem?.state = chatTasks ? .on : .off
         waChatTasksItem?.title = chatTasks ? "Tasks from Chats: On" : "Tasks from Chats: Off"
+
+        waConnectItem?.title = NikxelSettings.whatsappConnected ? "Disconnect WhatsApp…" : "Connect WhatsApp…"
+    }
+
+    /// Disconnecting is for people who don't want WhatsApp in Nikxel at all:
+    /// the bot browser stops reopening itself, across restarts too.
+    @objc func toggleWhatsAppConnection() {
+        guard NikxelSettings.whatsappConnected else { showOnboarding(); return }
+        NikxelView.ask(title: "Disconnect WhatsApp?",
+                       lines: ["Auto-replies stop, the WhatsApp window closes and won't open again, and Nikxel logs out of WhatsApp.",
+                               "Reconnect any time from this menu."],
+                       buttons: [("Disconnect", { [weak self] in
+                                     ChromeWhatsApp.disconnect {
+                                         self?.refreshWAMenu()
+                                         NikxelView.tell(icon: "💬", title: "WhatsApp disconnected",
+                                                         lines: ["Nikxel won't open WhatsApp again until you reconnect."])
+                                     }
+                                 }),
+                                 ("Cancel", {})])
     }
 
     /// A disabled item used as a label inside a submenu.
@@ -1089,7 +1115,13 @@ struct NikxelMain {
 // MARK: - AI usage submenu
 
 extension NikxelAppDelegate: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu.items.contains(where: { $0 === waConnectItem }) { refreshWAMenu() }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // Only the AI Usage submenu is rebuilt; the WhatsApp one just refreshes.
+        guard !menu.items.contains(where: { $0 === waConnectItem }) else { return }
         menu.removeAllItems()
         func info(_ title: String) {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")

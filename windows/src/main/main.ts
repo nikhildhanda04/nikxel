@@ -256,6 +256,10 @@ class NikxelApp {
       item("Edit Bot Personality…", () => this.editBotPersonality()),
       item("Edit Trusted Contacts…", () => openFile(WAContactLists.seedIfMissing("trusted"))),
       item("Edit Never-Reply List…", () => openFile(WAContactLists.seedIfMissing("neverReply"))),
+      sep,
+      Settings.whatsappConnected
+        ? item("Disconnect WhatsApp…", () => this.disconnectWhatsApp())
+        : item("Connect WhatsApp…", () => this.showOnboarding()),
     ];
 
     const sizes: [string, number][] = [["Small", 0.6], ["Medium", 0.8], ["Large", 1.0], ["Extra Large", 1.25]];
@@ -364,6 +368,24 @@ class NikxelApp {
       defaultId: 0, cancelId: 1, noLink: true,
     });
     if (r.response === 0) openFile(SummaryTemplates.activeURL);
+  }
+
+  /// Disconnecting is for people who don't want WhatsApp in Nikxel at all:
+  /// the WhatsApp window stops reopening itself, across restarts too.
+  private disconnectWhatsApp(): void {
+    ui.ask({
+      title: "Disconnect WhatsApp?",
+      lines: ["Auto-replies stop, the WhatsApp window closes and won't open again, and Nikxel logs out of WhatsApp.",
+        "Reconnect any time from this menu."],
+      buttons: [
+        { title: "Disconnect", action: () => {
+          this.chatbotEngine.isEnabled = false;
+          void ChromeWhatsApp.disconnect().then(() =>
+            ui.tell({ icon: "💬", title: "WhatsApp disconnected", lines: ["Nikxel won't open WhatsApp again until you reconnect."] }));
+        } },
+        { title: "Cancel", action: () => {} },
+      ],
+    });
   }
 
   /// Signs in to Slack in the browser. The daily summary reads the day's

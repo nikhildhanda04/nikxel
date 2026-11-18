@@ -25,7 +25,14 @@ if [ "${GLASS:-0}" = "1" ]; then
 else
   TARGET=arm64-apple-macos15.0; GLASSFLAG=""
 fi
-swiftc -parse-as-library -target "$TARGET" $GLASSFLAG -o Nikxel.app/Contents/MacOS/Nikxel -framework Cocoa -framework CoreGraphics -framework ApplicationServices -framework QuartzCore -framework ScreenCaptureKit -framework AVFoundation -framework AudioToolbox -framework CoreMedia -framework Network -framework UserNotifications -framework EventKit src/*.swift
+# Features only the owner's build has (editing daily and weekly summaries)
+# live in private/, which .gitignore keeps off GitHub. A clone without it
+# builds the public app.
+PRIVATE_SRC=(); PRIVATEFLAG=()
+if [ -n "$(ls private/*.swift 2>/dev/null)" ]; then
+  PRIVATE_SRC=(private/*.swift); PRIVATEFLAG=(-D NIKXEL_PRIVATE); echo "Including private/ (owner build)"
+fi
+swiftc -parse-as-library -target "$TARGET" $GLASSFLAG "${PRIVATEFLAG[@]}" -o Nikxel.app/Contents/MacOS/Nikxel -framework Cocoa -framework CoreGraphics -framework ApplicationServices -framework QuartzCore -framework ScreenCaptureKit -framework AVFoundation -framework AudioToolbox -framework CoreMedia -framework Network -framework UserNotifications -framework EventKit -framework WebKit src/*.swift "${PRIVATE_SRC[@]}"
 chmod +x Nikxel.app/Contents/MacOS/Nikxel
 # macOS 15+ stamps com.apple.provenance on files it writes, and codesign
 # refuses to sign a bundle carrying any extended attributes ("resource fork,

@@ -23,6 +23,7 @@ import { UsageLog, UsageTotals } from "./recording/usageLog";
 import { AgentMonitor } from "./system/agentMonitor";
 import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
+import * as PageShare from "./system/pageShare";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
 import { SupportLogs } from "./system/supportLogs";
@@ -131,6 +132,7 @@ class NikxelApp {
     this.calendarWatcher.start();
     this.reminderWatcher.start();
     this.dayLogger.start();
+    PageShare.start();
     this.meetingDetector.start();
     this.chatbotEngine.start(this.meetingCoordinator.momGen);
     this.whatsAppActivityLogger.start();

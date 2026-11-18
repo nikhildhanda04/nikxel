@@ -142,17 +142,20 @@ class Transcriber {
         let existing = env["PATH"] ?? ""
         env["PATH"] = (extraPaths + [existing]).filter { !$0.isEmpty }.joined(separator: ":")
         task.environment = env
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        task.standardOutput = outPipe
-        task.standardError = errPipe
+        // Straight into the log files, not a Pipe read after exit: a long meeting
+        // prints more than the 64 KB a pipe holds, and whisper then blocks on
+        // write forever.
+        let outLog = outDir.appendingPathComponent("\(stem).whisper.stdout.log")
+        let errLog = outDir.appendingPathComponent("\(stem).whisper.stderr.log")
+        FileManager.default.createFile(atPath: outLog.path, contents: nil)
+        FileManager.default.createFile(atPath: errLog.path, contents: nil)
+        task.standardOutput = try FileHandle(forWritingTo: outLog)
+        task.standardError = try FileHandle(forWritingTo: errLog)
         try task.run()
         task.waitUntilExit()
 
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        try? outData.write(to: outDir.appendingPathComponent("\(stem).whisper.stdout.log"))
-        try? errData.write(to: outDir.appendingPathComponent("\(stem).whisper.stderr.log"))
+        let outData = (try? Data(contentsOf: outLog)) ?? Data()
+        let errData = (try? Data(contentsOf: errLog)) ?? Data()
 
         let fm = FileManager.default
         if fm.fileExists(atPath: txtURL.path) { return romanized(txtURL) }

@@ -128,7 +128,7 @@ enum NotePage {
         <footer>Written by Nikxel from the recording's transcript. Tick tasks off here; the ticks stay in this browser only.</footer>
         </main>
         <script>\(js)</script>
-        </body></html>
+        \(PageShare.widget(editable: true))</body></html>
         """
     }
 

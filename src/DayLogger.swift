@@ -139,6 +139,18 @@ class DayLogger {
 
     /// Counts today's coding time, meetings and WhatsApp messages off the same
     /// logs the narrative summary is built from.
+    /// The seven days before `end` (a Sunday), added up for the week page.
+    func weekStats(end: Date) -> DayStats {
+        var stats = DayStats()
+        for offset in 1...7 {
+            guard let d = Calendar.current.date(byAdding: .day, value: -offset, to: end) else { continue }
+            let s = dayStats(for: d)
+            stats.codingSeconds += s.codingSeconds; stats.activeSeconds += s.activeSeconds
+            stats.meetings += s.meetings; stats.messages += s.messages
+        }
+        return stats
+    }
+
     func dayStats(for date: Date) -> DayStats {
         var stats = DayStats()
 
@@ -427,9 +439,11 @@ class DayLogger {
         return out
     }
 
-    /// 9am, every day: the open tasks, once. Missed (asleep, off) -> the first
-    /// launch or wake after it, the same day.
-    private static let morningHour = 9
+    /// The open tasks, once a day: the first launch, wake or unlock from 5am
+    /// on, whenever the day actually starts. 5, not midnight, so a late-night
+    /// unlock doesn't use up the next day's reminder. A Mac that never sleeps
+    /// gets it at 5 and finds it waiting.
+    private static let morningHour = 5
     private var morningGeneration = 0
     private static let morningShownKey = "nikxel.openTasksShownDay"
 
@@ -445,7 +459,7 @@ class DayLogger {
         }
     }
 
-    private func morningBackfill() {
+    func morningBackfill() {
         let now = Date(), today = Self.dayKey(now)
         guard Calendar.current.component(.hour, from: now) >= Self.morningHour,
               UserDefaults.standard.string(forKey: Self.morningShownKey) != today else { return }
@@ -516,13 +530,7 @@ class DayLogger {
                 DispatchQueue.main.async { NikxelView.tell(icon: "☀️", title: "No week to sum up yet", lines: ["The week in review is written from the daily summaries, and there are none for the last seven days."]) }
                 return
             }
-            var stats = DayStats()
-            for offset in 1...7 {
-                guard let d = Calendar.current.date(byAdding: .day, value: -offset, to: end) else { continue }
-                let s = self.dayStats(for: d)
-                stats.codingSeconds += s.codingSeconds; stats.activeSeconds += s.activeSeconds
-                stats.meetings += s.meetings; stats.messages += s.messages
-            }
+            let stats = self.weekStats(end: end)
             do {
                 let report = days.map { "### \($0.day)\n\($0.text)" }.joined(separator: "\n\n")
                 let output = try self.momGenerator.runPrompt(self.weekPrompt(report: report, sunday: end), kind: "weekly-summary")

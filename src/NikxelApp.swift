@@ -144,6 +144,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         calendarWatcher.start()
         reminderWatcher.start()
         dayLogger.start()
+        PageShare.start()
         meetingDetector.start()
         chatbotEngine.start(with: meetingCoordinator.momGen)
         whatsAppActivityLogger.start()
@@ -158,6 +159,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+        // Lifting the lid doesn't always wake the Mac (it may never have
+        // slept), but the unlock after it always comes: the open-tasks bubble.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { [weak self] _ in self?.dayLogger.morningBackfill() }
         // Trigger TCC prompt on launch so it's granted before user hits record
         meetingCoordinator.recorder.warmUpPermission()
 
@@ -217,6 +223,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         let menu = NSMenu()
+        #if NIKXEL_PRIVATE
+        menu.addItem(NSMenuItem(title: "Nikxel (private)", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        #endif
         let toggle = NSMenuItem(title: "Show/Hide Nikxel", action: #selector(toggleVisibility), keyEquivalent: "")
         toggle.target = self; menu.addItem(toggle)
 

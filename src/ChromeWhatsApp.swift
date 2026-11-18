@@ -283,6 +283,106 @@ enum ChromeWhatsApp {
         }
     }
 
+    // MARK: - Sharing a file
+
+    /// Types `q` into WhatsApp's own search box and returns what it finds
+    /// (chats, then contacts), the box cleared again. Empty `q`: the chat
+    /// list as it stands, most recent first.
+    static func searchChats(_ q: String) -> [String] {
+        guard let c = ensureCDP() else { return [] }
+        let js = """
+        (async function(){
+            var q = \(jsString(q));
+            var s = document.querySelector('#side input[aria-label]');
+            if (q && s) { s.focus(); s.select(); document.execCommand('insertText', false, q);
+                          await new Promise(function(r){ setTimeout(r, 1500); }); }
+            var seen = {}, out = [];
+            document.querySelectorAll('#pane-side [role="row"], #side [role="listitem"]').forEach(function(r){
+                var t = r.querySelector('span[title]'); var n = t ? t.getAttribute('title').trim() : '';
+                if (n && !seen[n] && out.length < 25) { seen[n] = 1; out.push(n); }
+            });
+            if (q && s) { s.select(); document.execCommand('delete'); }
+            return JSON.stringify(out);
+        })()
+        """
+        guard let json = c.eval(js), let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+    }
+
+    /// Opens `name`'s chat through the search box, so it works for anyone,
+    /// not only the chats the list has rendered. True once it's open.
+    static func openChatBySearch(_ name: String) -> Bool {
+        guard let c = ensureCDP() else { return false }
+        let find = """
+        (async function(){
+            var q = \(jsString(name));
+            var s = document.querySelector('#side input[aria-label]');
+            if (!s) return '';
+            s.focus(); s.select(); document.execCommand('insertText', false, q);
+            await new Promise(function(r){ setTimeout(r, 1500); });
+            var rows = document.querySelectorAll('#pane-side [role="row"], #side [role="listitem"]');
+            for (var i = 0; i < rows.length; i++) {
+                var t = rows[i].querySelector('span[title]');
+                if (t && t.getAttribute('title').trim() === q) {
+                    var r = rows[i].getBoundingClientRect();
+                    return JSON.stringify({x: r.x + r.width/2, y: r.y + r.height/2});
+                }
+            }
+            return '';
+        })()
+        """
+        let clear = "(function(){ var s = document.querySelector('#side input[aria-label]'); if (s) { s.select(); document.execCommand('delete'); } return 'ok'; })()"
+        guard let json = c.eval(find), let data = json.data(using: .utf8),
+              let pt = try? JSONDecoder().decode([String: Double].self, from: data),
+              let x = pt["x"], let y = pt["y"] else {
+            _ = c.eval(clear)
+            cblog("CDP: openChatBySearch found no chat named '\(name)'")
+            return false
+        }
+        c.clickAt(x: x, y: y)
+        Thread.sleep(forTimeInterval: 0.8)
+        _ = c.eval(clear)
+        let open = conversationHeader()?.lowercased() ?? ""
+        return open == name.lowercased() || open.contains(name.lowercased())
+    }
+
+    /// Attaches `data` as a document to the open chat and sends it: a paste
+    /// of the file, which opens WhatsApp's own preview, then its Send.
+    static func sendFile(named fileName: String, data: Data, type: String) -> Bool {
+        guard let c = ensureCDP() else { return false }
+        let js = """
+        (async function(){
+            var input = document.querySelector('footer [contenteditable="true"]');
+            if (!input) return '';
+            input.focus();
+            var bin = atob(\(jsString(data.base64EncodedString())));
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            var dt = new DataTransfer();
+            dt.items.add(new File([bytes], \(jsString(fileName)), {type: \(jsString(type))}));
+            input.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+            for (var t = 0; t < 15; t++) {
+                await new Promise(function(r){ setTimeout(r, 200); });
+                var b = document.querySelector('[aria-label^="Send"][role="button"]');
+                if (b) { var r = b.getBoundingClientRect(); return JSON.stringify({x: r.x + r.width/2, y: r.y + r.height/2}); }
+            }
+            return '';
+        })()
+        """
+        guard let json = c.eval(js), let d = json.data(using: .utf8),
+              let pt = try? JSONDecoder().decode([String: Double].self, from: d),
+              let x = pt["x"], let y = pt["y"] else {
+            cblog("CDP: sendFile — WhatsApp's file preview never opened")
+            return false
+        }
+        c.clickAt(x: x, y: y)
+        Thread.sleep(forTimeInterval: 1.0)
+        // A window that's minimised can miss a coordinate click; press it from the page.
+        _ = c.eval("(function(){ var b = document.querySelector('[aria-label^=\"Send\"][role=\"button\"]'); if (b) b.click(); return 'ok'; })()")
+        cblog("CDP: sent file \(fileName)")
+        return true
+    }
+
     // MARK: - High-level API
 
     /// True once WhatsApp Web has a logged-in chat list visible (as opposed

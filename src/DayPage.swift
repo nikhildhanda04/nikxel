@@ -77,7 +77,7 @@ enum DayPage {
         \(body)
         <footer>Written by Nikxel from \(morning ? "this week's daily summaries" : "today's activity") on this computer. Nothing here left it.</footer>
         </main>
-        </body></html>
+        \(PageShare.widget(editable: PageEdit.daysEditable))</body></html>
         """
     }
 

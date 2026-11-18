@@ -1,3 +1,4 @@
+import * as PageShare from "../system/pageShare";
 import { randomUUID } from "crypto";
 import { escapeHtml as esc, favicon, fmt, inline as inl, isNone, parseLocalDate, splitFields } from "./markdown";
 
@@ -113,7 +114,7 @@ ${body}
 <footer>Written by Nikxel from the recording's transcript. Tick tasks off here; the ticks stay in this browser only.</footer>
 </main>
 <script>${js}</script>
-</body></html>
+${PageShare.widget(true)}</body></html>
 `;
 }
 

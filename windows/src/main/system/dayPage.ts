@@ -1,3 +1,4 @@
+import * as PageShare from "./pageShare";
 import { escapeHtml as esc, favicon, fmt, inline as inl, isNone, parseLocalDate } from "../recording/markdown";
 import { anchor, count, generic, isEmpty, lead, parse, Section } from "../recording/notePage";
 import type { DayStats } from "./dayLogger";
@@ -74,7 +75,7 @@ ${stats ? tiles(stats) : ""}
 ${body}
 <footer>Written by Nikxel from ${morning ? "this week's daily summaries" : "today's activity"} on this computer. Nothing here left it.</footer>
 </main>
-</body></html>`;
+${PageShare.widget(false)}</body></html>`;
 }
 
 function section(s: Section, n: number, inner: string): string {

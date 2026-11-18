@@ -34,8 +34,9 @@ const SAMPLE_INTERVAL = 15;
 const DURATION_CAP = 5 * 60;
 // Fire EOD summary at this hour (24h). 22 = 10pm.
 const SUMMARY_HOUR = 22;
-/// Sunday (0), 9am: the week in review. 9am every day: the open tasks.
-const WEEK_DAY = 0, MORNING_HOUR = 9;
+/// Sunday (0), 9am: the week in review. The open tasks: the first launch,
+/// wake or unlock of the day from 5am on.
+const WEEK_DAY = 0, WEEK_HOUR = 9, MORNING_HOUR = 5;
 /// `aggregateGit` shells out to git once per repo under the projects root,
 /// and a busy chat can ask for this several times a minute. Ten minutes is
 /// still "what are you working on right now".
@@ -491,7 +492,9 @@ export class DayLogger {
     return out;
   }
 
-  /// 9am, every day: the open tasks, once. Missed (asleep, off) -> the first
+  /// The open tasks, once a day: the first launch, wake or unlock from 5am
+  /// on, whenever the day actually starts. 5, not midnight, so a late-night
+  /// unlock doesn't use up the next day's reminder. Missed (asleep, off) -> the first
   /// launch or wake after it, the same day.
   private scheduleMorning(): void {
     if (this.morningTimer) clearTimeout(this.morningTimer);
@@ -522,14 +525,14 @@ export class DayLogger {
   }
 
   private static lastWeekFire(now: Date): Date {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() - WEEK_DAY + 7) % 7), MORNING_HOUR, 0, 0);
-    return d > now ? new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7, MORNING_HOUR, 0, 0) : d;
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() - WEEK_DAY + 7) % 7), WEEK_HOUR, 0, 0);
+    return d > now ? new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7, WEEK_HOUR, 0, 0) : d;
   }
 
   private scheduleWeek(): void {
     if (this.weekTimer) clearTimeout(this.weekTimer);
     const last = DayLogger.lastWeekFire(new Date());
-    const fire = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 7, MORNING_HOUR, 0, 0);
+    const fire = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 7, WEEK_HOUR, 0, 0);
     // setTimeout tops out at ~24.8 days; a week is well inside it.
     this.weekTimer = setTimeout(() => { this.generateWeek(fire); this.scheduleWeek(); }, Math.max(1000, fire.getTime() - Date.now()));
   }

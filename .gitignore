@@ -26,3 +26,7 @@ Nikxel.app/Contents/_CodeSignature/
 windows/node_modules/
 windows/dist/
 windows/release/
+
+# The owner's private features (build.sh compiles them when present). Never
+# published: anyone else's clone builds without them.
+/private/

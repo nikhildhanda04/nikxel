@@ -46,6 +46,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         switching = true
         stateMachine.startRecording()
         nikxelView?.recordingStartedAt = CACurrentMediaTime()
+        MeetSpeakers.shared.start()
         recorder.captureMode = CaptureMode.current
         recorder.start()
     }
@@ -61,6 +62,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
     func recorderDidStop(artifacts: RecordingArtifacts?, error: Error?) {
         switching = false
+        let meet = MeetSpeakers.shared.stop()
         stateMachine.stopRecording()
         nikxelView?.recordingStartedAt = nil
 
@@ -93,7 +95,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         case .merged(let audioURL):
             runNotesPipeline(audioURL: audioURL, startedAt: startedAt, durationSec: durationSec)
         case .split(let mic, let sys):
-            runMeetingPipeline(micURL: mic, sysURL: sys, startedAt: startedAt, durationSec: durationSec)
+            runMeetingPipeline(micURL: mic, sysURL: sys, startedAt: startedAt, durationSec: durationSec, meet: meet)
         }
     }
 
@@ -118,7 +120,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
     // MARK: - Meeting pipeline
 
-    private func runMeetingPipeline(micURL: URL?, sysURL: URL, startedAt: Date, durationSec: Int) {
+    private func runMeetingPipeline(micURL: URL?, sysURL: URL, startedAt: Date, durationSec: Int, meet: MeetSpeakers.Result) {
         let group = DispatchGroup()
         var micSRT: URL?
         var sysSRT: URL?
@@ -149,13 +151,33 @@ class MeetingCoordinator: AudioRecorderDelegate {
                 self.reportTranscribeFailure(err)
                 return
             }
-            let merged = TranscriptMerger.merge(micSRT: micSRT, sysSRT: sysSRT)
+            let merged = Self.meetHeader(meet, at: startedAt)
+                + TranscriptMerger.merge(micSRT: micSRT, sysSRT: sysSRT, speakers: meet.spans.filter { !Self.isMe($0.name) })
             self.generate(transcript: merged, mode: .meeting, startedAt: startedAt, durationSec: durationSec, cleanup: {
                 let fm = FileManager.default
                 if let url = micURL { try? fm.removeItem(at: url) }
                 try? fm.removeItem(at: sysURL)
             })
         }
+    }
+
+    /// "[Google Meet]" lines listing who joined, with emails from the invite.
+    /// The summary prompt treats them as fact. Empty when no Meet was read.
+    static func meetHeader(_ meet: MeetSpeakers.Result, at date: Date) -> String {
+        guard let code = meet.code, !meet.names.isEmpty else { return "" }
+        let emails = MeetSpeakers.emails(code: code, around: date)
+        let people = meet.names.map { name -> String in
+            if isMe(name) { return "\(name) (Me)" }
+            return MeetSpeakers.email(for: name, in: emails).map { "\(name) <\($0)>" } ?? name
+        }
+        return "[Google Meet] Joined: \(people.joined(separator: ", "))\n"
+            + "[Google Meet] \"Others\" lines are labelled with whoever Meet showed talking at that moment.\n\n"
+    }
+
+    /// The tile that is the user's own: same first name as Nikxel's setting.
+    static func isMe(_ name: String) -> Bool {
+        let mine = NikxelSettings.userName.split(separator: " ").first?.lowercased() ?? ""
+        return !mine.isEmpty && name.split(separator: " ").first?.lowercased() == mine
     }
 
     // MARK: - Shared generate step

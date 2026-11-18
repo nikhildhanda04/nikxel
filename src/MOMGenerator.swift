@@ -522,7 +522,7 @@ class MOMGenerator {
     /// Bumped whenever the shipped prompts change in a way existing installs
     /// need. Every default prompt carries it as `promptVersionTag`, so an
     /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-    static let promptVersion = 6
+    static let promptVersion = 7
 
     private static let versionTagPrefix = "<!-- nikxel-prompt v"
     static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
@@ -678,6 +678,18 @@ Use the evidence actually present in the transcript:
   "Others — multiple participants, could not be separated reliably" and
   attribute those lines to "Others". An honest "Others" beats a confident
   wrong name.
+
+### When Google Meet named the people
+
+If the transcript starts with "[Google Meet]" lines, Nikxel read the meeting
+itself. "Joined:" lists everyone who was in the call, with their email when
+the calendar invite had it. Lines labelled with a name instead of "Others"
+were spoken while Meet showed that person talking. Treat all of this as fact:
+use those exact names as the speaker labels, put each email in Speakers
+("**Name** — email"), and never replace a Meet name with "Speaker N". Lines
+still labelled "Others" are ones Meet couldn't attribute; use the rules above
+for them. Someone who joined but never spoke still goes in Speakers, noted as
+not having spoken.
 
 ### Who "Me" is
 

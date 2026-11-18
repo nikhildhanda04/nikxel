@@ -11,7 +11,9 @@ enum TranscriptMerger {
     /// Parse SRT, interleave by start time, render labeled transcript:
     ///   [00:00:05] Me: ...
     ///   [00:00:12] Others: ...
-    static func merge(micSRT: URL?, sysSRT: URL?) -> String {
+    /// `speakers` (from MeetSpeakers) names the "Others" lines: each takes
+    /// whoever Meet showed talking for most of it.
+    static func merge(micSRT: URL?, sysSRT: URL?, speakers: [(start: Double, end: Double, name: String)] = []) -> String {
         var segments: [TranscriptSegment] = []
         if let url = micSRT {
             segments.append(contentsOf: parse(url: url, speaker: "Me"))
@@ -25,9 +27,18 @@ enum TranscriptMerger {
         for s in segments {
             let text = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
-            lines.append("[\(formatTimestamp(s.start))] \(s.speaker): \(text)")
+            let who = s.speaker == "Others" ? (named(s, speakers) ?? "Others") : s.speaker
+            lines.append("[\(formatTimestamp(s.start))] \(who): \(text)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Who Meet showed talking for at least a quarter of the line.
+    static func named(_ s: TranscriptSegment, _ speakers: [(start: Double, end: Double, name: String)]) -> String? {
+        var overlap: [String: Double] = [:]
+        for sp in speakers { overlap[sp.name, default: 0] += max(0, min(s.end, sp.end) - max(s.start, sp.start)) }
+        guard let best = overlap.max(by: { $0.value < $1.value }), best.value >= max(0.5, (s.end - s.start) / 4) else { return nil }
+        return best.key
     }
 
     static func parse(url: URL, speaker: String) -> [TranscriptSegment] {

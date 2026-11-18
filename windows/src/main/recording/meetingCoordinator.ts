@@ -11,6 +11,7 @@ import { AudioRecorder, AudioRecorderDelegate, RecorderError, RecordingArtifacts
 import { Transcriber, TranscriberError } from "./transcriber";
 import { TranscriptMerger } from "./transcriptMerger";
 import { MOMGenerator } from "./momGenerator";
+import { MeetResult, MeetSpeakers } from "./meetSpeakers";
 import { GoogleSync } from "../google/googleSync";
 
 /// Port of MeetingCoordinator.swift.
@@ -67,6 +68,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     this.switching = true;
     this.stateMachine.startRecording();
     ui.setRecordingStartedAt(Date.now());
+    MeetSpeakers.shared.start();
     this.recorder.captureMode = Settings.captureMode;
     this.recorder.start();
   }
@@ -93,6 +95,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
 
   recorderDidStop(artifacts: RecordingArtifacts | null, error: Error | null): void {
     this.switching = false;
+    const meet = MeetSpeakers.shared.stop();
     this.stateMachine.stopRecording();
     ui.setRecordingStartedAt(null);
     bus.emit("menuChanged");
@@ -116,7 +119,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     if (artifacts.kind === "merged") {
       void this.runNotesPipeline(artifacts.path, startedAt, durationSec);
     } else {
-      void this.runMeetingPipeline(artifacts.mic, artifacts.sys, startedAt, durationSec);
+      void this.runMeetingPipeline(artifacts.mic, artifacts.sys, startedAt, durationSec, meet);
     }
   }
 
@@ -159,7 +162,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
 
   // MARK: - Meeting pipeline
 
-  private async runMeetingPipeline(micPath: string | null, sysPath: string, startedAt: Date, durationSec: number): Promise<void> {
+  private async runMeetingPipeline(micPath: string | null, sysPath: string, startedAt: Date, durationSec: number, meet: MeetResult): Promise<void> {
     // Both tracks transcribe at once; one failing still leaves the other.
     const [sys, mic] = await Promise.allSettled([
       this.transcriber.transcribe(sysPath, "srt"),
@@ -172,11 +175,33 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
       this.reportTranscribeFailure(firstError);
       return;
     }
-    const merged = TranscriptMerger.merge(micSRT, sysSRT);
+    const merged = await MeetingCoordinator.meetHeader(meet, startedAt)
+      + TranscriptMerger.merge(micSRT, sysSRT, meet.spans.filter(s => !MeetingCoordinator.isMe(s.name)));
     await this.generate(merged, "meeting", startedAt, durationSec, () => {
       if (micPath) fs.promises.rm(micPath, { force: true }).catch(() => {});
       fs.promises.rm(sysPath, { force: true }).catch(() => {});
     });
+  }
+
+  /// "[Google Meet]" lines listing who joined, with emails from the invite.
+  /// The summary prompt treats them as fact. Empty when no Meet was read.
+  static async meetHeader(meet: MeetResult, date: Date): Promise<string> {
+    if (meet.code === null || meet.names.length === 0) return "";
+    const emails = await MeetSpeakers.emails(meet.code, date);
+    const people = meet.names.map(name => {
+      if (MeetingCoordinator.isMe(name)) return `${name} (Me)`;
+      const email = MeetSpeakers.email(name, emails);
+      return email ? `${name} <${email}>` : name;
+    });
+    return `[Google Meet] Joined: ${people.join(", ")}\n`
+      + `[Google Meet] "Others" lines are labelled with whoever Meet showed talking at that moment.\n\n`;
+  }
+
+  /// The tile that is the user's own: same first name as Nikxel's setting.
+  static isMe(name: string): boolean {
+    const first = (s: string) => (s.trim().split(/\s+/)[0] ?? "").toLowerCase();
+    const mine = first(Settings.userName);
+    return mine !== "" && first(name) === mine;
   }
 
   // MARK: - Shared generate step

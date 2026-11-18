@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import type { Span } from "./meetSpeakers";
 
 /// Port of TranscriptMerger.swift.
 
@@ -31,7 +32,9 @@ export const TranscriptMerger = {
   /// Parse SRT, interleave by start time, render labeled transcript:
   ///   [00:00:05] Me: ...
   ///   [00:00:12] Others: ...
-  merge(micSRT: string | null, sysSRT: string | null): string {
+  /// `speakers` (from MeetSpeakers) names the "Others" lines: each takes
+  /// whoever Meet showed talking for most of it.
+  merge(micSRT: string | null, sysSRT: string | null, speakers: Span[] = []): string {
     const segments: TranscriptSegment[] = [];
     if (micSRT) segments.push(...TranscriptMerger.parse(micSRT, "Me"));
     if (sysSRT) segments.push(...TranscriptMerger.parse(sysSRT, "Others"));
@@ -41,9 +44,21 @@ export const TranscriptMerger = {
     for (const s of segments) {
       const text = s.text.trim();
       if (!text) continue;
-      lines.push(`[${formatTimestamp(s.start)}] ${s.speaker}: ${text}`);
+      const who = s.speaker === "Others" ? (TranscriptMerger.named(s, speakers) ?? "Others") : s.speaker;
+      lines.push(`[${formatTimestamp(s.start)}] ${who}: ${text}`);
     }
     return lines.join("\n");
+  },
+
+  /// Who Meet showed talking for at least a quarter of the line.
+  named(s: { start: number; end: number }, speakers: Span[]): string | null {
+    const overlap = new Map<string, number>();
+    for (const sp of speakers) {
+      overlap.set(sp.name, (overlap.get(sp.name) ?? 0) + Math.max(0, Math.min(s.end, sp.end) - Math.max(s.start, sp.start)));
+    }
+    let best: [string, number] | null = null;
+    for (const e of overlap) if (!best || e[1] > best[1]) best = e;
+    return best && best[1] >= Math.max(0.5, (s.end - s.start) / 4) ? best[0] : null;
   },
 
   parse(file: string, speaker: string): TranscriptSegment[] {

@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { documentsDir, ensureDir, HOME, isWin, nikxelPath, readText, writeAtomic } from "../core/paths";
 import { run, RunResult, which } from "../core/proc";
-import { CaptureMode, CodingAgent, Settings } from "../core/settings";
+import { CaptureMode, CODING_AGENTS, CodingAgent, Settings } from "../core/settings";
 import { diag } from "../core/diag";
 import { UsageLog } from "./usageLog";
 import { NoteExporter } from "./noteExporter";
@@ -197,11 +197,9 @@ export class MOMGenerator {
     const stem = timestampStem(startedAt);
     this.writeMarker(stem, mode, startedAt, durationSec, transcriptPath);
 
-    const agent = Settings.connectedAgent;
-    const bin = this.findBinary(agent);
-    if (!bin) throw new MOMError("agentNotFound");
     const runDir = path.join(this.workspace, stem);
-    const output = await this.runTemplate(bin, agent, mode, trimmed, startedAt, durationSec, runDir);
+    const output = await this.withFallback((bin, agent) =>
+      this.runTemplate(bin, agent, mode, trimmed, startedAt, durationSec, runDir));
     const outPath = await this.saveOutput(output, mode, startedAt);
     this.clearMarker(stem);
     return outPath;
@@ -275,10 +273,22 @@ export class MOMGenerator {
   /// `kind` labels the run in UsageLog. `claudeModel` overrides the model
   /// when the agent is Claude Code; other agents ignore it.
   async runPrompt(prompt: string, kind: string, claudeModel?: string): Promise<string> {
-    const agent = Settings.connectedAgent;
-    const bin = this.findBinary(agent);
-    if (!bin) throw new MOMError("agentNotFound");
-    return this.executeAgent(bin, agent, prompt, { kind, claudeModel });
+    return this.withFallback((bin, agent) => this.executeAgent(bin, agent, prompt, { kind, claudeModel }));
+  }
+
+  /// Runs `body` on the connected agent, then on each other installed one
+  /// until one succeeds -- so a Claude that hit its weekly limit hands the
+  /// job to Codex/OpenCode. If all fail, the connected agent's error is the
+  /// one shown: it's the one the user set up and can act on.
+  private async withFallback(body: (bin: string, agent: CodingAgent) => Promise<string>): Promise<string> {
+    const primary = Settings.connectedAgent;
+    let firstError: unknown;
+    for (const agent of [primary, ...CODING_AGENTS.filter(a => a !== primary)]) {
+      const bin = this.findBinary(agent);
+      if (!bin) continue;
+      try { return await body(bin, agent); } catch (e) { firstError ??= e; }
+    }
+    throw firstError ?? new MOMError("agentNotFound");
   }
 
   private async executeAgent(binary: string, agent: CodingAgent, prompt: string,

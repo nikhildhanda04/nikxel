@@ -173,10 +173,10 @@ class MOMGenerator {
                 self.writeMarker(stem: stem, mode: mode, startedAt: startedAt,
                                  durationSec: durationSec, transcript: transcriptURL)
 
-                let agent = NikxelSettings.connectedAgent
-                guard let bin = self.findBinary(for: agent) else { throw MOMError.agentNotFound }
                 let runDir = self.workspace.appendingPathComponent(stem, isDirectory: true)
-                let output = try self.runTemplate(binary: bin, agent: agent, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec, runDir: runDir)
+                let output = try self.withFallback { bin, agent in
+                    try self.runTemplate(binary: bin, agent: agent, mode: mode, transcript: trimmed, startedAt: startedAt, durationSec: durationSec, runDir: runDir)
+                }
                 let outURL = try self.saveOutput(content: output, mode: mode, startedAt: startedAt)
                 self.clearMarker(stem: stem)
                 completion(.success(outURL))
@@ -298,9 +298,23 @@ class MOMGenerator {
     /// `kind` labels the run in UsageLog. `claudeModel` overrides the model
     /// when the agent is Claude Code; other agents ignore it.
     func runPrompt(_ prompt: String, kind: String, claudeModel: String? = nil) throws -> String {
-        let agent = NikxelSettings.connectedAgent
-        guard let bin = findBinary(for: agent) else { throw MOMError.agentNotFound }
-        return try executeAgent(binary: bin, agent: agent, prompt: prompt, kind: kind, claudeModel: claudeModel)
+        try withFallback { bin, agent in
+            try executeAgent(binary: bin, agent: agent, prompt: prompt, kind: kind, claudeModel: claudeModel)
+        }
+    }
+
+    /// Runs `body` on the connected agent, then on each other installed one
+    /// until one succeeds -- so a Claude that hit its weekly limit hands the
+    /// job to Codex/OpenCode. If all fail, the connected agent's error is the
+    /// one shown: it's the one the user set up and can act on.
+    private func withFallback(_ body: (String, CodingAgent) throws -> String) throws -> String {
+        let primary = NikxelSettings.connectedAgent
+        var firstError: Error?
+        for agent in [primary] + CodingAgent.allCases.filter({ $0 != primary }) {
+            guard let bin = findBinary(for: agent) else { continue }
+            do { return try body(bin, agent) } catch { firstError = firstError ?? error }
+        }
+        throw firstError ?? MOMError.agentNotFound
     }
 
     private func executeAgent(binary: String, agent: CodingAgent, prompt: String, runDir: URL? = nil,

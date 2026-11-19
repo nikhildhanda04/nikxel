@@ -244,6 +244,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    @objc func openAboutMe() { AboutMe.show() }
+
     func showOnboarding() {
         if onboardingWindowController == nil {
             onboardingWindowController = OnboardingWindowController(momGenerator: meetingCoordinator.momGen)
@@ -364,6 +366,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         erpItem.target = self; menu.addItem(erpItem)
         self.erpConnectItem = erpItem
         refreshERPMenu()
+
+        let aboutMe = NSMenuItem(title: "Tell Nikxel About You…", action: #selector(openAboutMe), keyEquivalent: "")
+        aboutMe.target = self; menu.addItem(aboutMe)
 
         let modeItem = NSMenuItem(title: "Capture Mode", action: nil, keyEquivalent: "")
         let modeSubmenu = NSMenu()

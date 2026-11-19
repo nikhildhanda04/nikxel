@@ -25,6 +25,7 @@ import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
 import * as PageShare from "./system/pageShare";
 import * as ERP from "./system/erp";
+import { showAboutMe } from "./system/aboutMe";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
 import { SupportLogs } from "./system/supportLogs";
@@ -323,6 +324,7 @@ class NikxelApp {
       Settings.erpConnected
         ? item("Forklyft ERP connected ✓", () => void this.connectERP())
         : item("Connect Forklyft ERP…", () => void this.connectERP()),
+      item("Tell Nikxel About You…", () => showAboutMe()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
         () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
       // Apple Reminders on the Mac. Windows has none, so new Google Tasks

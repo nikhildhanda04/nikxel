@@ -288,7 +288,9 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{transcript}}", with: transcript)
             .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
-            .replacingOccurrences(of: "{{custom_instructions}}", with: NikxelSettings.summaryStyleInstruction)
+            .replacingOccurrences(of: "{{custom_instructions}}",
+                with: [NikxelSettings.summaryStyleInstruction, NikxelSettings.userContextBlock]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n"))
 
         return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir, kind: mode.rawValue)
     }

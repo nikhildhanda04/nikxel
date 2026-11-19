@@ -553,7 +553,7 @@ class DayLogger {
 You are writing the user's week in review, read on Sunday morning. Below are the end-of-day summaries Nikxel wrote for each day of the past week (some days may be missing -- the Mac was off). They are your only source.
 
 \(NikxelSettings.languageInstruction)
-\(roleGuidance().isEmpty ? "" : "\n\(roleGuidance())\n")
+\(roleGuidance().isEmpty ? "" : "\n\(roleGuidance())\n")\(NikxelSettings.userContextBlock.isEmpty ? "" : "\n\(NikxelSettings.userContextBlock)\n")
 Write it warm, specific and short enough to read over coffee. Not "worked on several projects" but "shipped the Datacap certification fixes for Produce POS and got the car-wash invoice bug to prod".
 
 Output this exact Markdown structure:
@@ -1155,7 +1155,7 @@ The session prompts are the most informative signal: they tell you LITERALLY wha
 For WhatsApp chats and Slack messages: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
 
 \(NikxelSettings.languageInstruction)
-\(roleGuidance().isEmpty ? "" : "\n\(roleGuidance())\n")
+\(roleGuidance().isEmpty ? "" : "\n\(roleGuidance())\n")\(NikxelSettings.userContextBlock.isEmpty ? "" : "\n\(NikxelSettings.userContextBlock)\n")
 Write a friendly, personal, specific narrative. Not generic ("worked on coding") but specific ("fixed the typing-animation lag bug in Nikxel — diagnosed it as a missing CGEventTap re-enable, then added day-of-week logging").
 
 Date: \(day)

@@ -264,7 +264,8 @@ export class MOMGenerator {
     prompt = sub(prompt, "{{transcript}}", transcript);
     prompt = sub(prompt, "{{language_instruction}}", Settings.languageInstruction);
     prompt = sub(prompt, "{{user_name}}", Settings.userName);
-    prompt = sub(prompt, "{{custom_instructions}}", SummaryTemplates.summaryStyleInstruction);
+    prompt = sub(prompt, "{{custom_instructions}}",
+      [SummaryTemplates.summaryStyleInstruction, Settings.userContextBlock].filter(x => x).join("\n\n"));
     return this.executeAgent(binary, agent, prompt, { runDir, kind: mode });
   }
 

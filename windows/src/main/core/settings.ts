@@ -60,6 +60,7 @@ interface Stored {
   erpConnected?: boolean;
   onboardingCompleted?: boolean;
   roleAsked?: boolean;
+  userContext?: string;
   botMemoryDays?: number;
   googleSyncEnabled?: boolean;
   summaryTemplate?: string;
@@ -237,6 +238,17 @@ export const Settings = {
 
   get roleAsked(): boolean { return load().roleAsked ?? false; },
   set roleAsked(v: boolean) { save(s => { s.roleAsked = v; }); },
+
+  /// Free-form context the user gave Nikxel about themselves. See AboutMe.
+  get userContext(): string { return load().userContext ?? ""; },
+  set userContext(v: string) { save(s => { s.userContext = v; }); },
+
+  /// The user context as a prompt block, or "" when unset — one shape, used
+  /// in every prompt. Mirrors NikxelSettings.userContextBlock.
+  get userContextBlock(): string {
+    const c = trimmed(load().userContext);
+    return c ? `About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n${c}` : "";
+  },
 
   get captureMode(): CaptureMode { return load().captureMode === "meeting" ? "meeting" : "notes"; },
   set captureMode(v: CaptureMode) { save(s => { s.captureMode = v; }); },

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:">
+<title>About Me</title>
+<style>
+:root{--bg:#f7f7f9;--fg:#1d1d1f;--muted:#6e6e73;--line:#e3e3e8;--accent:#5e5ce6;--field:#fff;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--fg:#f5f5f7;--muted:#98989d;--line:#38383a;--field:#2c2c2e}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;padding:16px;gap:12px}
+h1{font-size:17px;margin:0}
+p.hint{margin:0;color:var(--muted);font-size:12.5px}
+textarea{flex:1;min-height:200px;width:100%;resize:none;border:1px solid var(--line);border-radius:12px;background:var(--field);color:var(--fg);font:inherit;padding:12px}
+textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.row{display:flex;gap:8px;align-items:center}
+button{font:inherit;font-weight:600;border:0;border-radius:999px;padding:9px 16px;cursor:pointer}
+.mic{background:var(--field);color:var(--fg);border:1px solid var(--line)}
+.mic.rec{background:#ff3b30;color:#fff;border-color:#ff3b30}
+.save{background:#1d1d1f;color:#fff;margin-left:auto}
+@media (prefers-color-scheme:dark){.save{background:#f5f5f7;color:#1d1d1f}}
+button:disabled{opacity:.5;cursor:default}
+.msg{color:var(--muted);font-size:12px;min-height:1em}
+</style>
+</head>
+<body>
+<h1>About me</h1>
+<p class="hint">Tell Nikxel who you are — your work, your company, what you're aiming for. It keeps this in mind across your summaries, meeting notes and replies. Type it, or tap the mic and talk.</p>
+<textarea id="t" placeholder="e.g. I'm a developer at Forklyft, building the Produce POS and Nikxel. I care about shipping fast and keeping things simple…"></textarea>
+<div class="row">
+  <button class="mic" id="mic" type="button">🎤 Talk</button>
+  <span class="msg" id="msg"></span>
+  <button class="save" id="save" type="button">Save</button>
+</div>
+<script type="module" src="./aboutMe.js"></script>
+</body>
+</html>

@@ -367,6 +367,37 @@ ${body}</main></body></html>
 `;
 }
 
+/// A Markdown fragment as the plain HTML an Odoo description field renders:
+/// headings, bold, nested bullet/numbered lists, inline code. No page chrome
+/// or document classes — the ERP styles the bare tags itself. Mirrors the Mac
+/// app's NoteExporter.richHTML.
+export function richHtml(markdown: string): string {
+  let out = "";
+  for (const b of parseMarkdown(markdown)) {
+    switch (b.t) {
+      case "h": { const l = Math.min(b.level + 1, 6); out += `<h${l}>${inlineHtml(b.inl)}</h${l}>\n`; break; }
+      case "list": out += listHtml(b.items); break;
+      case "code": out += `<pre>${escapeHtml(b.text)}</pre>\n`; break;
+      case "quote": out += `<blockquote>${inlineHtml(b.inl)}</blockquote>\n`; break;
+      case "hr": out += "<hr/>\n"; break;
+      case "table":
+        out += "<table>\n<thead><tr>" + b.header.map(c => `<th>${inlineHtml(c)}</th>`).join("") + "</tr></thead>\n<tbody>\n";
+        for (const r of b.rows) out += "<tr>" + r.map(c => `<td>${inlineHtml(c)}</td>`).join("") + "</tr>\n";
+        out += "</tbody></table>\n";
+        break;
+      default: {
+        // A short line ending in ":" is a run-in label ("Changes required:")
+        // introducing what follows — bold it so sections stand out even when
+        // the source didn't mark them up.
+        const t = b.text.trim();
+        const label = t.endsWith(":") && t.length <= 80 && !t.includes(". ");
+        out += label ? `<p><strong>${inlineHtml(b.inl)}</strong></p>\n` : `<p>${inlineHtml(b.inl)}</p>\n`;
+      }
+    }
+  }
+  return out;
+}
+
 /// A heading's plain text (markers dropped), for the title and section key.
 function headingText(inl: Inline[]): string {
   return inl.map(n => n.t === "text" || n.t === "code" ? n.s : headingText(n.c)).join("");

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, session } from "electron";
 import { cblog } from "../core/diag";
 import { readText } from "../core/paths";
+import { richHtml } from "../recording/markdown";
 import { Settings } from "../core/settings";
 import { CDPClient } from "../whatsapp/cdpClient";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
@@ -188,11 +189,20 @@ export function shortTitle(s: string): string {
   return head || t.slice(0, 70);
 }
 
-/// Task body: the full action-item text, then the meeting context line.
+/// Task body for a plain (non-code) item: the action split into points under a
+/// bold heading, then the meeting context — the structured HTML the ERP shows,
+/// instead of two flat paragraphs.
 export function taskDescription(item: string, context: string): string {
-  let html = `<p>${htmlEscape(item)}</p>`;
-  if (context) html += `<p>${htmlEscape(context)}</p>`;
-  return html;
+  let md = "**What to do**\n\n" + bulletize(item);
+  if (context) md += `\n**Context**\n\n${context}\n`;
+  return richHtml(md);
+}
+
+/// A run-on action item as bullet lines, split on clause breaks ("; ") and
+/// newlines so the body reads as points. A single clause stays one bullet.
+function bulletize(s: string): string {
+  const parts = s.split(/\r?\n/).flatMap(l => l.split("; ")).map(p => p.trim()).filter(Boolean);
+  return (parts.length ? parts : [s]).map(p => `- ${p}`).join("\n") + "\n";
 }
 
 /// If the meeting's markdown has an "## Agent Prompts" brief whose task matches
@@ -231,15 +241,11 @@ export function briefFromAgentPrompts(item: string, mdPath: string): string | nu
     if (!best || score > best.score) best = { score, body: p.body };
   }
   if (!best || best.score < 0.35) return null;
-  return best.body.split("\n\n").map(b => `<p>${htmlEscape(b).replace(/\n/g, "<br>")}</p>`).join("");
+  return richHtml(best.body);
 }
 
 function significantWords(s: string): Set<string> {
   return new Set(s.toLowerCase().split(/[^a-z0-9]+/i).filter(w => w.length >= 4));
-}
-
-function htmlEscape(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // MARK: - Sign-in (the one window the user sees)

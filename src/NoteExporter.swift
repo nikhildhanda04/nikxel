@@ -221,6 +221,52 @@ enum NoteExporter {
         """
     }
 
+    /// A Markdown fragment as the plain HTML an Odoo description field renders:
+    /// headings, bold, nested bullet/numbered lists, inline code. No page chrome
+    /// or document classes — the ERP styles the bare tags itself. Mirrors the
+    /// Windows markdown.richHtml.
+    static func richHTML(from markdown: String) -> String {
+        var out = ""
+        var stack: [(tag: String, level: Int)] = []   // open <ul>/<ol> by indent depth
+        var inCode = false
+        func closeAll() { while let t = stack.popLast() { out += "</\(t.tag)>\n" } }
+        func openList(_ kind: String, _ level: Int) {
+            while let top = stack.last, top.level > level { out += "</\(top.tag)>\n"; stack.removeLast() }
+            if let top = stack.last, top.level == level, top.tag != kind { out += "</\(top.tag)>\n"; stack.removeLast() }
+            if (stack.last?.level ?? -1) < level { out += "<\(kind)>\n"; stack.append((kind, level)) }
+        }
+        for raw in markdown.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") { closeAll(); out += inCode ? "</pre>\n" : "<pre>"; inCode.toggle(); continue }
+            if inCode { out += escape(raw) + "\n"; continue }
+            if line.isEmpty { closeAll(); continue }
+            if line.hasPrefix("#") {
+                closeAll()
+                let n = min(line.prefix(while: { $0 == "#" }).count, 5)
+                let text = line.dropFirst(n).trimmingCharacters(in: .whitespaces)
+                out += "<h\(n + 1)>\(inline(text))</h\(n + 1)>\n"      // # -> h2, ## -> h3 …
+                continue
+            }
+            let indent = raw.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+            let level = min(3, indent / 2)
+            if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
+                openList("ul", level); out += "<li>\(inline(String(line.dropFirst(2))))</li>\n"
+            } else if let item = numberedItem(line) {
+                openList("ol", level); out += "<li>\(inline(item))</li>\n"
+            } else {
+                closeAll()
+                // A short line ending in ":" is a run-in label ("Changes required:")
+                // introducing what follows — bold it so sections stand out even when
+                // the source didn't mark them up.
+                let label = line.hasSuffix(":") && line.count <= 80 && !line.contains(". ")
+                out += label ? "<p><strong>\(inline(line))</strong></p>\n" : "<p>\(inline(line))</p>\n"
+            }
+        }
+        closeAll()
+        if inCode { out += "</pre>\n" }
+        return out
+    }
+
     /// Website palette: paper, ink, the green accent, and the pastel chips.
     private static let css = """
     body { margin: 0; background: #f6faf5; color: #25302a; font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.55; }

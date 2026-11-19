@@ -77,7 +77,10 @@ enum NikxelSettings {
         var noteFormat: String?
         var connectedAgent: String?
         var whatsappConnected: Bool?
+        var erpConnected: Bool?
         var onboardingCompleted: Bool?
+        var roleAsked: Bool?
+        var userContext: String?
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
         var summaryTemplate: String?
@@ -427,10 +430,39 @@ enum NikxelSettings {
         set { save { $0.whatsappConnected = newValue } }
     }
 
+    /// Whether Nikxel's ERP browser profile has a live Odoo login.
+    static var erpConnected: Bool {
+        get { load().erpConnected ?? false }
+        set { save { $0.erpConnected = newValue } }
+    }
+
     /// Gates auto-showing the onboarding wizard on launch.
     static var onboardingCompleted: Bool {
         get { load().onboardingCompleted ?? false }
         set { save { $0.onboardingCompleted = newValue } }
+    }
+
+    /// Whether we've asked the user their role once (which sets summaryTemplate,
+    /// so daily/weekly summaries are shaped for a developer / PM / founder).
+    static var roleAsked: Bool {
+        get { load().roleAsked ?? false }
+        set { save { $0.roleAsked = newValue } }
+    }
+
+    /// Free-form context the user gave Nikxel about themselves — who they are,
+    /// their work, their company, what they're aiming for. Injected into the
+    /// summary, meeting and reply prompts so everything stays in line with it.
+    static var userContext: String {
+        get { load().userContext ?? "" }
+        set { save { $0.userContext = newValue } }
+    }
+
+    /// The user context as a prompt block, or "" when unset. One shape, used
+    /// everywhere, so the model is told the same thing in every prompt.
+    static var userContextBlock: String {
+        let c = userContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !c.isEmpty else { return "" }
+        return "About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n\(c)"
     }
 }
 

@@ -24,6 +24,8 @@ import { AgentMonitor } from "./system/agentMonitor";
 import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
 import * as PageShare from "./system/pageShare";
+import * as ERP from "./system/erp";
+import { showAboutMe } from "./system/aboutMe";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
 import { SupportLogs } from "./system/supportLogs";
@@ -133,6 +135,7 @@ class NikxelApp {
     this.reminderWatcher.start();
     this.dayLogger.start();
     PageShare.start();
+    ERP.startIfConnected();
     this.meetingDetector.start();
     this.chatbotEngine.start(this.meetingCoordinator.momGen);
     this.whatsAppActivityLogger.start();
@@ -154,6 +157,7 @@ class NikxelApp {
     } else {
       // After the avatar's puff, so the bubble has somewhere to land.
       setTimeout(() => Permissions.offer(), 4000);
+      this.maybeAskRole();
     }
 
     // Start at login, once: a user who restarts shouldn't have to hunt for
@@ -179,6 +183,27 @@ class NikxelApp {
 
   showAvatar(): void {
     if (!this.avatar.isVisible()) { this.avatar.triggerPuff(); this.avatar.show(); }
+  }
+
+  /// Ask the user's role once. It sets the summary template, so daily, weekly
+  /// and meeting summaries are shaped for how they actually work. Mirrors
+  /// NikxelApp.maybeAskRole in src/NikxelApp.swift.
+  private maybeAskRole(): void {
+    if (Settings.roleAsked) return;
+    setTimeout(() => {
+      void dialog.showMessageBox({
+        type: "question", title: "Nikxel", noLink: true,
+        message: "What do you do most?",
+        detail: "Nikxel shapes your daily and weekly summaries — and your meeting notes — for your role. You can change this any time under Summary Style.",
+        buttons: ["I write code", "I run product / projects", "I'm a founder / leader", "Something else"],
+        defaultId: 0, cancelId: 3,
+      }).then(r => {
+        const slugs = ["developer", "project-manager", "co-founder", "default"];
+        Settings.summaryTemplate = slugs[r.response] ?? "default";
+        Settings.roleAsked = true;
+        cblog(`NikxelApp: role set to ${Settings.summaryTemplate}`);
+      });
+    }, 6000);
   }
 
   private showOnboarding(): void {
@@ -296,6 +321,10 @@ class NikxelApp {
       item("Summarize This Week Now", () => this.dayLogger.generateWeekNow()),
       { label: "AI Usage", submenu: this.usageMenu() },
       item("Connect Google Account…", () => this.calendarWatcher.reauthenticate()),
+      Settings.erpConnected
+        ? item("Forklyft ERP connected ✓", () => void this.connectERP())
+        : item("Connect Forklyft ERP…", () => void this.connectERP()),
+      item("Tell Nikxel About You…", () => showAboutMe()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
         () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
       // Apple Reminders on the Mac. Windows has none, so new Google Tasks
@@ -355,6 +384,27 @@ class NikxelApp {
       { label: "Open Templates Folder", click: () => openFolder(SummaryTemplates.templatesDir) },
     );
     return items;
+  }
+
+  private async connectERP(): Promise<void> {
+    if (Settings.erpConnected) {
+      await dialog.showMessageBox({
+        type: "info", title: "Nikxel", noLink: true,
+        message: "Forklyft ERP is connected",
+        detail: "Nikxel reads your team and files tasks through your logged-in ERP session. Use the Assign button on a meeting's action items.",
+        buttons: ["OK"],
+      });
+      return;
+    }
+    const ok = await ERP.signIn();
+    await dialog.showMessageBox({
+      type: ok ? "info" : "warning", title: "Nikxel", noLink: true,
+      message: ok ? "Forklyft ERP connected" : "ERP not connected",
+      detail: ok
+        ? "You can now Assign action items to the ERP from any meeting summary."
+        : "Sign-in didn't complete. Open the menu and try “Connect Forklyft ERP…” again.",
+      buttons: ["OK"],
+    });
   }
 
   private async editActiveTemplate(): Promise<void> {

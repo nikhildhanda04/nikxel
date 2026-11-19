@@ -91,11 +91,11 @@ export class CDPClient {
   /// Evaluate JS in the page. Returns the result's string value, or null on
   /// error. `returnByValue:true` ensures we get a serializable JSON-able
   /// primitive back (string / number / object) rather than a remote handle.
-  async eval(expression: string): Promise<string | null> {
+  async eval(expression: string, timeoutMs = 5000): Promise<string | null> {
     if (this.wc.isDestroyed()) return null;
     let value: unknown;
     if (this.attach()) {
-      const result = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+      const result = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, timeoutMs);
       if (!result || typeof result !== "object") return null;
       const obj = (result as any).result;
       if (!obj || typeof obj !== "object" || !("value" in obj)) return null;
@@ -105,7 +105,7 @@ export class CDPClient {
       try {
         value = await Promise.race([
           this.wc.executeJavaScript(expression, true),
-          new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 5000); }),
+          new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), timeoutMs); }),
         ]);
       } catch {
         return null;

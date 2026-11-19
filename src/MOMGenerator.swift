@@ -288,9 +288,49 @@ class MOMGenerator {
             .replacingOccurrences(of: "{{transcript}}", with: transcript)
             .replacingOccurrences(of: "{{language_instruction}}", with: NikxelSettings.languageInstruction)
             .replacingOccurrences(of: "{{user_name}}", with: NikxelSettings.userName)
-            .replacingOccurrences(of: "{{custom_instructions}}", with: NikxelSettings.summaryStyleInstruction)
+            .replacingOccurrences(of: "{{custom_instructions}}",
+                with: [NikxelSettings.summaryStyleInstruction, NikxelSettings.userContextBlock]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n"))
+            .replacingOccurrences(of: "{{client_summary}}", with: Self.clientSummarySpec)
 
         return try executeAgent(binary: binary, agent: agent, prompt: prompt, runDir: runDir, kind: mode.rawValue)
+    }
+
+    /// The "## Client Summary" section spec, injected into the meeting prompt
+    /// only for the roles whose meetings have a client on the other side
+    /// (project manager, co-founder). Everyone else gets "" — no such section,
+    /// so no client-summary button appears on their pages.
+    private static var clientSummarySpec: String {
+        guard ["project-manager", "co-founder"].contains(NikxelSettings.summaryTemplate) else { return "" }
+        return """
+        ## Client Summary
+        A client-facing recap the user can share OUTSIDE the company, with the
+        client this meeting was for. It must stand on its own and must NOT leak
+        anything internal: no speaker labels, no blockers or risks, no internal
+        action items or agent prompts, no candid remarks, and no cost/margin
+        talk unless it is the client's own agreed price. Warm, professional,
+        concrete — written to the client ("you"), not about them.
+
+        Write it exactly like this:
+        **<one-line headline: where things stand for the client, under 20 words>**
+
+        <2-3 plain-language sentences the client will understand, no jargon.>
+
+        ### What we discussed
+        - The points from the meeting that concern the client, in their terms.
+
+        ### What you'll get
+        - The concrete deliverables or outcomes the client will receive, with a
+          date where one was given. If nothing concrete was promised yet, write
+          "- To be confirmed."
+
+        ### Where this is headed
+        - The end goal that was discussed and the next step for the client.
+
+        If this was plainly an internal-only meeting with no client involved,
+        still produce the section but keep it to the headline, the overview, and
+        "- To be confirmed." under each subheading.
+        """
     }
 
     // Run an arbitrary prompt through the agent. Used by DayLogger for EOD
@@ -536,7 +576,7 @@ class MOMGenerator {
     /// Bumped whenever the shipped prompts change in a way existing installs
     /// need. Every default prompt carries it as `promptVersionTag`, so an
     /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-    static let promptVersion = 7
+    static let promptVersion = 8
 
     private static let versionTagPrefix = "<!-- nikxel-prompt v"
     static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
@@ -860,6 +900,8 @@ Rules for these prompts, which matter more than the formatting:
   document. It will be pasted somewhere else, with no surrounding context.
 - Length follows the task: a one-line config change needs a short prompt, a
   migration discussed for twenty minutes needs a thorough one.
+
+{{client_summary}}
 
 Rules:
 - Never invent attendees, decisions, owners, blockers, or commitments that

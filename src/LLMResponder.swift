@@ -166,6 +166,7 @@ class LLMResponder {
 
             """
         }
+        if !NikxelSettings.userContextBlock.isEmpty { p += "\n" + NikxelSettings.userContextBlock + "\n\n" }
         p += NikxelSettings.languageInstruction
         if NikxelSettings.language.lowercased() == "auto" {
             p += " Match the contact's own language/tone — if they write in Hindi or Hinglish, reply the same way; if they write in English, reply in English."

@@ -7,7 +7,7 @@ import { diag } from "../core/diag";
 import { UsageLog } from "./usageLog";
 import { NoteExporter } from "./noteExporter";
 import { SummaryTemplates } from "./summaryTemplates";
-import { meetingPrompt, notesPrompt } from "./momPrompts";
+import { clientSummarySpec, meetingPrompt, notesPrompt } from "./momPrompts";
 
 /// Port of MOMGenerator.swift.
 
@@ -153,7 +153,7 @@ export class MOMGenerator {
   /// Bumped whenever the shipped prompts change in a way existing installs
   /// need. Every default prompt carries it as `promptVersionTag`, so an
   /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-  static readonly promptVersion = 7;
+  static readonly promptVersion = 8;
   private static readonly versionTagPrefix = "<!-- nikxel-prompt v";
   static get promptVersionTag(): string { return `${MOMGenerator.versionTagPrefix}${MOMGenerator.promptVersion} -->`; }
 
@@ -264,7 +264,9 @@ export class MOMGenerator {
     prompt = sub(prompt, "{{transcript}}", transcript);
     prompt = sub(prompt, "{{language_instruction}}", Settings.languageInstruction);
     prompt = sub(prompt, "{{user_name}}", Settings.userName);
-    prompt = sub(prompt, "{{custom_instructions}}", SummaryTemplates.summaryStyleInstruction);
+    prompt = sub(prompt, "{{custom_instructions}}",
+      [SummaryTemplates.summaryStyleInstruction, Settings.userContextBlock].filter(x => x).join("\n\n"));
+    prompt = sub(prompt, "{{client_summary}}", clientSummarySpec());
     return this.executeAgent(binary, agent, prompt, { runDir, kind: mode });
   }
 

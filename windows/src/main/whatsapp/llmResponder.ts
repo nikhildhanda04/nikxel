@@ -145,6 +145,7 @@ If they propose a call or meeting with ${name} at a time or after a ` +
         `link at that time. The line is stripped before sending.
 `;
     }
+    if (Settings.userContextBlock) p += `\n${Settings.userContextBlock}\n\n`;
     p += Settings.languageInstruction;
     if (Settings.language.toLowerCase() === "auto") {
       p += " Match the contact's own language/tone — if they write in Hindi or Hinglish, reply the same way; if they write in English, reply in English.";

@@ -32,6 +32,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var waQuietItem: NSMenuItem?
     private var waChatTasksItem: NSMenuItem?
     private var waConnectItem: NSMenuItem?
+    private var erpConnectItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var checkingForUpdates = false
     private var googleSyncMenuItem: NSMenuItem?
@@ -145,6 +146,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         reminderWatcher.start()
         dayLogger.start()
         PageShare.start()
+        ERP.startIfConnected()
         meetingDetector.start()
         chatbotEngine.start(with: meetingCoordinator.momGen)
         whatsAppActivityLogger.start()
@@ -172,6 +174,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             // After the avatar's puff, so the bubble has somewhere to land.
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() }
+            maybeAskRole()
         }
 
         // Start at login, once: a user who restarts the Mac shouldn't have to
@@ -191,6 +194,57 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             )
         }
     }
+
+    func refreshERPMenu() {
+        erpConnectItem?.title = NikxelSettings.erpConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
+    }
+
+    @objc func connectERP() {
+        if NikxelSettings.erpConnected {
+            NikxelView.tell(icon: "🔗", title: "Forklyft ERP is connected",
+                            lines: ["Nikxel reads employees and tasks in the background. Summaries use real names and roles."])
+            return
+        }
+        NikxelView.tell(icon: "🔗", title: "Opening Forklyft ERP…",
+                        lines: ["A window opens once for your sign-in. After that it runs in the background with no window."])
+        DispatchQueue.global(qos: .userInitiated).async {
+            ERP.signIn { ok in
+                DispatchQueue.main.async {
+                    self.refreshERPMenu()
+                    if ok {
+                        NikxelView.tell(icon: "✅", title: "Forklyft ERP connected",
+                                        lines: ["Nikxel now knows who's who. Meeting summaries will name people and let you assign tasks."])
+                    } else {
+                        NikxelView.tell(icon: "⚠️", title: "ERP not connected",
+                                        lines: ["Sign-in didn't finish. Try again from the menu."])
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ask the user's role once. It sets the summary template, so daily,
+    /// weekly and meeting summaries are shaped for how they actually work.
+    private func maybeAskRole() {
+        guard !NikxelSettings.roleAsked else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            let alert = NSAlert()
+            alert.messageText = "What do you do most?"
+            alert.informativeText = "Nikxel shapes your daily and weekly summaries — and your meeting notes — for your role. You can change this any time under Summary Style."
+            alert.addButton(withTitle: "I write code")
+            alert.addButton(withTitle: "I run product / projects")
+            alert.addButton(withTitle: "I'm a founder / leader")
+            alert.addButton(withTitle: "Something else")
+            let slugs = ["developer", "project-manager", "co-founder", "default"]
+            let idx = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let slug = (0..<slugs.count).contains(idx) ? slugs[idx] : "default"
+            NikxelSettings.summaryTemplate = slug
+            NikxelSettings.roleAsked = true
+            cblog("NikxelApp: role set to \(slug)")
+        }
+    }
+
+    @objc func openAboutMe() { AboutMe.show() }
 
     func showOnboarding() {
         if onboardingWindowController == nil {
@@ -307,6 +361,14 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         waItem.submenu = waMenu
         menu.addItem(waItem)
         refreshWAMenu()
+
+        let erpItem = NSMenuItem(title: "Connect Forklyft ERP…", action: #selector(connectERP), keyEquivalent: "")
+        erpItem.target = self; menu.addItem(erpItem)
+        self.erpConnectItem = erpItem
+        refreshERPMenu()
+
+        let aboutMe = NSMenuItem(title: "Tell Nikxel About You…", action: #selector(openAboutMe), keyEquivalent: "")
+        aboutMe.target = self; menu.addItem(aboutMe)
 
         let modeItem = NSMenuItem(title: "Capture Mode", action: nil, keyEquivalent: "")
         let modeSubmenu = NSMenu()

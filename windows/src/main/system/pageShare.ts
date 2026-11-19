@@ -3,12 +3,15 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
+import { pathToFileURL } from "url";
 import { cblog } from "../core/diag";
 import { documentsRoot, nikxelPath, readText, writeAtomic } from "../core/paths";
 import { Settings } from "../core/settings";
 import { ChatbotEngine } from "../whatsapp/chatbotEngine";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import * as PageEdit from "./pageEdit";
+import * as ERP from "./erp";
+import { NotePage } from "../recording/notePage";
 
 /// The Share button on summary pages. The page is a local file, so it can't
 /// reach WhatsApp itself: it asks Nikxel over localhost, and Nikxel sends the
@@ -55,6 +58,7 @@ export function start(): void {
   });
   s.on("error", () => cblog(`PageShare: port ${port} is busy — Share buttons won't work`));
   s.listen(port, "127.0.0.1");
+  setImmediate(migrateWidgets); // give existing pages the Assign button
 }
 
 // One send at a time: two would fight over the open chat.
@@ -101,9 +105,84 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       await run;
       return result;
     }
+    case "/client": {
+      // Render the client-facing page from the meeting's "## Client Summary"
+      // section and hand back its file URL. The page carries its own Share
+      // buttons, so the user previews it, then sends it.
+      const mdPath = file.replace(/\.html$/i, ".md");
+      const md = readText(mdPath);
+      const clientMd = md ? NotePage.clientMarkdown(md) : null;
+      if (!clientMd) return { error: "This summary has no client version." };
+      const clientFile = file.replace(/\.html$/i, ".client.html");
+      try { writeAtomic(clientFile, NotePage.html(clientMd)); }
+      catch { return { error: "Couldn't build the client summary." }; }
+      return { url: pathToFileURL(clientFile).href };
+    }
+    case "/erp":
+      // Just whether Assign buttons should show. Matching + create happen
+      // server-side on /assign, so the page needs no roster.
+      return { connected: ERP.isConnected() };
+    case "/assign": {
+      if (!ERP.isConnected()) return { error: "Connect Forklyft ERP in Nikxel first." };
+      // The page sends the full action-item text; we make a short title and a
+      // context-rich description, since the assignee may not have been in the
+      // meeting. Only the title is required in Odoo.
+      const item = q("title");
+      if (!item) return { error: "No task text." };
+      const who = q("who") ?? "";
+      const uid = who ? (ERP.matchUser(who, await ERP.assignableUsers())?.id ?? null) : null;
+      const due = q("due");
+      const deadline = due ? `${due} 17:00:00` : null; // date → datetime
+      const title = ERP.shortTitle(item);
+      const mdPath = file.replace(/\.html$/i, ".md");
+      // Prefer the rich brief Nikxel already wrote for software tasks; fall
+      // back to the plain task + meeting origin for the rest.
+      const desc = ERP.briefFromAgentPrompts(item, mdPath) ?? ERP.taskDescription(item, meetingContext(file));
+      const tid = await ERP.createTask(title, desc, uid, deadline);
+      if (tid == null) return { error: "ERP didn't create the task." };
+      cblog(`ERP: created task ${tid} — ${title.slice(0, 60)}`);
+      return { url: ERP.taskURL(tid) };
+    }
     default:
       return { error: "Unknown request." };
   }
+}
+
+/// A one-line meeting context for a task description: the summary headline and
+/// the meeting date. Mirrors PageShare.meetingContext in src/PageShare.swift.
+function meetingContext(file: string): string {
+  const stem = path.basename(file).replace(/\.[^.]+$/, ""); // 2026-11-12-103105
+  const date = stem.slice(0, 10);
+  let headline = "";
+  const html = readText(file);
+  if (html) {
+    const m = html.match(/<h1[^>]*>[\s\S]*?<\/h1>/);
+    if (m) headline = m[0].replace(/<[^>]+>/g, "").trim();
+  }
+  if (!headline) return `Came out of a team meeting on ${date}.`;
+  return `Came out of a team meeting on ${date}: ${headline}`;
+}
+
+/// Re-inject the current widget into pages Nikxel already wrote, so old
+/// summaries gain new buttons (Assign). Idempotent via the version marker.
+function migrateWidgets(): void {
+  const root = path.join(documentsRoot(), "nikxel");
+  const walk = (d: string) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!e.name.toLowerCase().endsWith(".html")) continue;
+      const html = readText(full);
+      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw4-->")) continue;
+      const block = widget(html.includes("nx-edit"));
+      // Replacer function so "$1" inside the block isn't treated specially.
+      const out = html.replace(/<!--nikxel-share-->[\s\S]*?<!--\/nikxel-share-->/, () => block);
+      try { writeAtomic(full, out); } catch { /* leave the page as it was */ }
+    }
+  };
+  walk(root);
 }
 
 /// The page's own path, if it's an .html file Nikxel writes.
@@ -119,7 +198,7 @@ function allowedFile(p: string | null): string | null {
 // MARK: - The button
 
 /// Same markup as src/PageShare.swift.
-const widgetTemplate = String.raw`<!--nikxel-share--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw4--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -137,6 +216,11 @@ const widgetTemplate = String.raw`<!--nikxel-share--><div id="nx-share">__NIKXEL
 #nx-share .nx-msg{margin-top:8px;font-size:12px;color:#6e6e73}
 #nx-share .nx-msg:empty{display:none}
 @media print{#nx-share{display:none}}
+li.task .nx-assign{margin-left:8px;vertical-align:middle;background:#1d1d1f;color:#fff;border:0;border-radius:999px;padding:3px 11px;font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;opacity:.85}
+li.task .nx-assign:hover{opacity:1}
+li.task .nx-assign:disabled{opacity:.6;cursor:default}
+li.task .nx-assign.done{background:#34c759;opacity:1}
+@media print{li.task .nx-assign{display:none}}
 </style>
 <script>(function(){
   var T = "__NIKXEL_TOKEN__", P = "http://127.0.0.1:47120/";
@@ -194,4 +278,52 @@ const widgetTemplate = String.raw`<!--nikxel-share--><div id="nx-share">__NIKXEL
     call("copy").then(function (r) { say(r.error || "Copied. Paste it into any WhatsApp chat or group."); });
   };
   document.addEventListener("click", function (e) { if (!root.contains(e.target)) pop.hidden = true; });
+
+  // --- "Preview & share client summary": build the client-facing page from
+  // this meeting's Client Summary section and open it (it has its own Share).
+  var clientBtn = document.querySelector(".nx-client");
+  if (clientBtn) clientBtn.onclick = function () {
+    var old = clientBtn.textContent; clientBtn.disabled = true; clientBtn.textContent = "Preparing…";
+    call("client").then(function (r) {
+      clientBtn.disabled = false; clientBtn.textContent = old;
+      if (r && r.url) window.open(r.url, "_blank");
+      else alert((r && r.error) || "Couldn't build the client summary.");
+    });
+  };
+
+  // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
+  // connected. Creates the task (title + matched assignee + due) and opens it
+  // in this browser; the user sets the project and the rest in Odoo.
+  call("erp").then(function (r) {
+    if (!r || !r.connected) return;
+    var mon = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+    function pad(n){ return (n<10?"0":"")+n; }
+    function parseDue(t){
+      var m=(t||"").match(/(\d{1,2})\s+([A-Za-z]{3})/); if(!m) return "";
+      var mo=mon[m[2].toLowerCase()]; if(mo==null) return "";
+      var d=new Date(), dt=new Date(d.getFullYear(),mo,parseInt(m[1],10));
+      if(dt.getTime()<d.getTime()-30*864e5) dt.setFullYear(d.getFullYear()+1); // roll to next year if clearly past
+      return dt.getFullYear()+"-"+pad(dt.getMonth()+1)+"-"+pad(dt.getDate());
+    }
+    document.querySelectorAll("li.task").forEach(function(li){
+      var tEl=li.querySelector(".t"); if(!tEl) return;
+      var title=tEl.textContent.trim();
+      var whoEl=li.querySelector(".chip.who"), who="";
+      if(whoEl){ var cl=whoEl.cloneNode(true), av=cl.querySelector(".av"); if(av)av.remove(); who=cl.textContent.trim(); }
+      var dueEl=li.querySelector(".chip.due"), dueText=dueEl?dueEl.textContent.replace(/^Due\s*/,"").trim():"";
+      var btn=document.createElement("button"); btn.type="button"; btn.className="nx-assign"; btn.textContent="Assign in ERP";
+      btn.onclick=function(e){
+        e.preventDefault(); e.stopPropagation();
+        if(btn.classList.contains("done")){ if(btn._url) window.open(btn._url,"_blank"); return; }
+        if(btn.disabled) return;
+        btn.textContent="Creating…"; btn.disabled=true;
+        call("assign",{ title:title, who:who, due:parseDue(dueText) }).then(function(r){
+          btn.disabled=false;
+          if(r && r.url){ btn._url=r.url; btn.classList.add("done"); btn.textContent="Open in ERP ✓"; window.open(r.url,"_blank"); }
+          else { btn.textContent="Assign in ERP"; alert((r&&r.error)||"Couldn't create the task in ERP."); }
+        });
+      };
+      (li.querySelector("label")||li).appendChild(btn);
+    });
+  });
 })();</script><!--/nikxel-share-->`;

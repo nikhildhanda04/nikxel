@@ -83,7 +83,12 @@ enum NotePage {
             ? ["action items", "decisions", "blockers & risks", "open questions", "follow-up meetings", "speakers", "agent prompts"]
             : ["key points", "notable quotes / examples", "open questions"]
         var ordered = order.compactMap(find)
-        ordered += sections.filter { !order.contains($0.key) && $0.key != "summary" && $0.key != "per-speaker highlights" }
+        // "client summary" is deliberately left off the internal page — it's
+        // the shareable client-facing version, rendered on its own page via the
+        // "Preview & share client summary" button (PageShare /client route).
+        ordered += sections.filter { !order.contains($0.key) && $0.key != "summary"
+            && $0.key != "per-speaker highlights" && $0.key != "client summary" }
+        let hasClient = isMeeting && (find("client summary").map { !$0.isEmpty } ?? false)
 
         var body = "", empty: [String] = [], nav: [String] = []
         for s in ordered {
@@ -123,6 +128,7 @@ enum NotePage {
         <style>\(css)</style></head><body>
         <main>
         \(hero(title: title, summary: find("summary"), isMeeting: isMeeting))
+        \(hasClient ? clientCTA : "")
         \(nav.count > 1 ? "<nav class=\"glance\">\(nav.joined())</nav>" : "")
         \(body)
         <footer>Written by Nikxel from the recording's transcript. Tick tasks off here; the ticks stay in this browser only.</footer>
@@ -130,6 +136,36 @@ enum NotePage {
         <script>\(js)</script>
         \(PageShare.widget(editable: true))</body></html>
         """
+    }
+
+    /// Shown on a PM's / co-founder's meeting page when the agent wrote a
+    /// "## Client Summary". Wired by the PageShare widget: it calls /client,
+    /// which renders the client-facing page and opens it (that page carries its
+    /// own Share buttons). Plain DOM here so the widget script can find it.
+    private static let clientCTA = """
+    <div class="client-cta"><button type="button" class="nx-client">Preview &amp; share client summary →</button>
+    <p>A clean, client-facing recap on its own page — leaves out the internal detail. Preview it, then send it to the client.</p></div>
+    """
+
+    /// A client-facing markdown derived from a meeting's "## Client Summary":
+    /// its intro becomes the Summary (so the headline leads the client page),
+    /// and each "### subsection" becomes a "## section". nil when the meeting
+    /// has no such section. Rendered to a sibling page by PageShare /client.
+    static func clientMarkdown(from meetingMarkdown: String) -> String? {
+        let (title, sections) = parse(meetingMarkdown)
+        guard let client = sections.first(where: { $0.key == "client summary" }), !client.isEmpty else { return nil }
+        let when = title.components(separatedBy: " — ").dropFirst().joined(separator: " — ")
+        var lines = ["# Client Update\(when.isEmpty ? "" : " — \(when)")", "", "## Summary"]
+        for b in client.blocks {
+            switch b {
+            case .sub(let t): lines.append(""); lines.append("## \(t)")
+            case .para(let t): lines.append(t)
+            case .bullet(let t): lines.append("- \(t)")
+            case .task(_, let t): lines.append("- \(t)")
+            case .code(let c): lines.append("```"); lines.append(c); lines.append("```")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Components
@@ -484,6 +520,13 @@ enum NotePage {
     .scribble { font: 600 26px/1 var(--hand); color: var(--accent); transform: rotate(-3deg); transform-origin: left; margin: 18px 0 -6px; }
     h1 { margin: 0; font: 750 clamp(27px, 4.4vw, 38px)/1.16 var(--sans); letter-spacing: -.02em; text-wrap: balance; }
     .summary { display: grid; gap: 10px; max-width: 64ch; color: var(--muted); font-size: 16.5px; }
+
+    .client-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px; padding: 16px 18px; background: var(--sky); border: 1px solid var(--line); border-radius: 14px; }
+    .client-cta .nx-client { font: 600 14px/1 var(--sans); color: var(--surface); background: var(--accent); border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
+    .client-cta .nx-client:hover { transform: translateY(-1px); }
+    .client-cta .nx-client:disabled { opacity: .6; cursor: default; }
+    .client-cta p { min-width: 0; flex: 1; color: var(--muted); font-size: 13.5px; }
+    @media print { .client-cta { display: none; } }
 
     .glance { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 0; border-block: 1px solid var(--line); }
     .glance a { font: 400 13px/1 var(--mono); color: var(--muted); text-decoration: none; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 8px 12px; }

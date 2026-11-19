@@ -334,7 +334,8 @@ final class GoogleAuth {
         for pair in queryPart.split(separator: "&") {
             let kv = pair.split(separator: "=", maxSplits: 1)
             if kv.count == 2 && kv[0] == Substring(key) {
-                return String(kv[1]).removingPercentEncoding
+                // Query values are form-encoded (URLSearchParams): "+" is a space.
+                return String(kv[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding
             }
         }
         return nil

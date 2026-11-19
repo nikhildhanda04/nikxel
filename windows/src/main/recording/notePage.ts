@@ -69,8 +69,14 @@ function html(markdown: string): string {
   const order = isMeeting
     ? ["action items", "decisions", "blockers & risks", "open questions", "follow-up meetings", "speakers", "agent prompts"]
     : ["key points", "notable quotes / examples", "open questions"];
+  // "client summary" is deliberately left off the internal page — it's the
+  // shareable client-facing version, rendered on its own page via the
+  // "Preview & share client summary" button (PageShare /client route).
   const ordered = order.map(find).filter((s): s is Section => !!s)
-    .concat(sections.filter(s => !order.includes(s.key) && s.key !== "summary" && s.key !== "per-speaker highlights"));
+    .concat(sections.filter(s => !order.includes(s.key) && s.key !== "summary"
+      && s.key !== "per-speaker highlights" && s.key !== "client summary"));
+  const client = find("client summary");
+  const hasClient = isMeeting && !!client && !isEmpty(client);
 
   let body = "";
   const empty: string[] = [], nav: string[] = [];
@@ -109,6 +115,7 @@ function html(markdown: string): string {
 <style>${css}</style></head><body>
 <main>
 ${hero(title, find("summary"), isMeeting)}
+${hasClient ? clientCTA : ""}
 ${nav.length > 1 ? `<nav class="glance">${nav.join("")}</nav>` : ""}
 ${body}
 <footer>Written by Nikxel from the recording's transcript. Tick tasks off here; the ticks stay in this browser only.</footer>
@@ -116,6 +123,32 @@ ${body}
 <script>${js}</script>
 ${PageShare.widget(true)}</body></html>
 `;
+}
+
+/// Shown on a PM's / co-founder's meeting page when the agent wrote a
+/// "## Client Summary". Wired by the PageShare widget: it calls /client, which
+/// renders the client-facing page and opens it (that page carries its own
+/// Share buttons). Plain DOM here so the widget script can find it.
+const clientCTA = `<div class="client-cta"><button type="button" class="nx-client">Preview &amp; share client summary →</button>
+<p>A clean, client-facing recap on its own page — leaves out the internal detail. Preview it, then send it to the client.</p></div>`;
+
+/// A client-facing markdown derived from a meeting's "## Client Summary": its
+/// intro becomes the Summary (so the headline leads the client page), and each
+/// "### subsection" becomes a "## section". null when the meeting has no such
+/// section. Rendered to a sibling page by PageShare /client.
+export function clientMarkdown(meetingMarkdown: string): string | null {
+  const { title, sections } = parse(meetingMarkdown);
+  const client = sections.find(s => s.key === "client summary");
+  if (!client || isEmpty(client)) return null;
+  const when = title.split(" — ").slice(1).join(" — ");
+  const lines = [`# Client Update${when ? ` — ${when}` : ""}`, "", "## Summary"];
+  for (const b of client.blocks) {
+    if (b.t === "sub") { lines.push(""); lines.push(`## ${b.s}`); }
+    else if (b.t === "para") lines.push(b.s);
+    else if (b.t === "bullet" || b.t === "task") lines.push(`- ${b.s}`);
+    else if (b.t === "code") { lines.push("```"); lines.push(b.s); lines.push("```"); }
+  }
+  return lines.join("\n");
 }
 
 // MARK: - Components
@@ -359,7 +392,7 @@ function shortDate(v: string): string {
 
 export const anchor = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
 
-export const NotePage = { html, calendarLinks };
+export const NotePage = { html, calendarLinks, clientMarkdown };
 
 // MARK: - Style
 
@@ -397,6 +430,13 @@ code { font-family: var(--mono); font-size: .86em; background: var(--mint); padd
 .scribble { font: 600 26px/1 var(--hand); color: var(--accent); transform: rotate(-3deg); transform-origin: left; margin: 18px 0 -6px; }
 h1 { margin: 0; font: 750 clamp(27px, 4.4vw, 38px)/1.16 var(--sans); letter-spacing: -.02em; text-wrap: balance; }
 .summary { display: grid; gap: 10px; max-width: 64ch; color: var(--muted); font-size: 16.5px; }
+
+.client-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px; padding: 16px 18px; background: var(--sky); border: 1px solid var(--line); border-radius: 14px; }
+.client-cta .nx-client { font: 600 14px/1 var(--sans); color: var(--surface); background: var(--accent); border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
+.client-cta .nx-client:hover { transform: translateY(-1px); }
+.client-cta .nx-client:disabled { opacity: .6; cursor: default; }
+.client-cta p { min-width: 0; flex: 1; color: var(--muted); font-size: 13.5px; }
+@media print { .client-cta { display: none; } }
 
 .glance { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 0; border-block: 1px solid var(--line); }
 .glance a { font: 400 13px/1 var(--mono); color: var(--muted); text-decoration: none; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 8px 12px; }

@@ -34,6 +34,23 @@ enum PageShare {
         html.replacingOccurrences(of: #"<!--nikxel-share-->[\s\S]*?<!--/nikxel-share-->"#, with: "", options: .regularExpression)
     }
 
+    /// Re-inject the current widget into pages Nikxel already wrote, so old
+    /// summaries gain new buttons (Assign) without being regenerated. Keeps
+    /// each page's existing Edit affordance, and skips pages already upgraded.
+    static func migrateWidgets() {
+        let root = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/nikxel")
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
+              let re = try? NSRegularExpression(pattern: "<!--nikxel-share-->[\\s\\S]*?<!--/nikxel-share-->") else { return }
+        for case let url as URL in en where url.pathExtension == "html" {
+            guard let html = try? String(contentsOf: url, encoding: .utf8),
+                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw3-->") else { continue }
+            let block = widget(editable: html.contains("nx-edit"))
+            let out = re.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html),
+                                                  withTemplate: NSRegularExpression.escapedTemplate(for: block))
+            try? out.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: - Server
 
     static func start() {
@@ -45,6 +62,7 @@ enum PageShare {
             cblog("PageShare: port \(port) is busy — Share buttons won't work"); return
         }
         listener = l
+        queue.async { migrateWidgets() }   // give existing pages the Assign button
         l.newConnectionHandler = { conn in
             conn.start(queue: queue)
             conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
@@ -107,9 +125,51 @@ enum PageShare {
             }
             cblog("PageShare: \(file.lastPathComponent) → '\(to)': \(result["ok"] != nil ? "sent" : "\(result["error"] ?? "")")")
             return result
+        case "/erp":
+            // Just whether Assign buttons should show. Matching + create happen
+            // server-side on /assign, so the page needs no roster.
+            return ["connected": ERP.isConnected]
+        case "/assign":
+            guard ERP.isConnected else { return ["error": "Connect Forklyft ERP in Nikxel first."] }
+            // The page sends the full action-item text; we make a short title
+            // and a context-rich description, since the assignee may not have
+            // been in the meeting. Only the title is required in Odoo.
+            guard let item = q("title"), !item.isEmpty else { return ["error": "No task text."] }
+            let who = q("who") ?? ""
+            let uid = who.isEmpty ? nil : ERP.matchUser(who, in: ERP.assignableUsers())?.id
+            let deadline = (q("due")).flatMap { $0.isEmpty ? nil : $0 + " 17:00:00" }  // date → datetime
+            let title = ERP.shortTitle(item)
+            // Prefer the rich brief Nikxel already wrote for software tasks;
+            // fall back to the plain task + meeting origin for the rest.
+            let mdURL = file.deletingPathExtension().appendingPathExtension("md")
+            let desc = ERP.briefFromAgentPrompts(item: item, mdURL: mdURL)
+                ?? ERP.taskDescription(item: item, context: meetingContext(file))
+            guard let tid = ERP.createTask(title: title, descriptionHTML: desc,
+                                           assigneeUserID: uid, projectID: nil, deadline: deadline) else {
+                return ["error": "ERP didn't create the task."]
+            }
+            cblog("ERP: created task \(tid) — \(title.prefix(60))")
+            return ["url": ERP.taskURL(id: tid)]
         default:
             return ["error": "Unknown request."]
         }
+    }
+
+    /// A one-line meeting context for a task description: the summary's
+    /// headline and the meeting date, so an assignee who wasn't there has a
+    /// pointer to what it was about.
+    private static func meetingContext(_ file: URL) -> String {
+        let stem = file.deletingPathExtension().lastPathComponent        // 2026-11-12-103105
+        let date = stem.prefix(10)
+        var headline = ""
+        if let html = try? String(contentsOf: file, encoding: .utf8),
+           let r = html.range(of: #"<h1[^>]*>[\s\S]*?</h1>"#, options: .regularExpression) {
+            headline = String(html[r])
+                .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if headline.isEmpty { return "Came out of a team meeting on \(date)." }
+        return "Came out of a team meeting on \(date): \(headline)"
     }
 
     /// The page's own path, if it's an .html file Nikxel writes.
@@ -126,7 +186,7 @@ enum PageShare {
 
     /// Same markup in windows/src/main/system/pageShare.ts.
     private static let widgetTemplate = #"""
-<!--nikxel-share--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+<!--nikxel-share--><!--nxw3--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -144,6 +204,11 @@ enum PageShare {
 #nx-share .nx-msg{margin-top:8px;font-size:12px;color:#6e6e73}
 #nx-share .nx-msg:empty{display:none}
 @media print{#nx-share{display:none}}
+li.task .nx-assign{margin-left:8px;vertical-align:middle;background:#1d1d1f;color:#fff;border:0;border-radius:999px;padding:3px 11px;font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;opacity:.85}
+li.task .nx-assign:hover{opacity:1}
+li.task .nx-assign:disabled{opacity:.6;cursor:default}
+li.task .nx-assign.done{background:#34c759;opacity:1}
+@media print{li.task .nx-assign{display:none}}
 </style>
 <script>(function(){
   var T = "__NIKXEL_TOKEN__", P = "http://127.0.0.1:47120/";
@@ -201,6 +266,42 @@ enum PageShare {
     call("copy").then(function (r) { say(r.error || "Copied. Paste it into any WhatsApp chat or group."); });
   };
   document.addEventListener("click", function (e) { if (!root.contains(e.target)) pop.hidden = true; });
+
+  // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
+  // connected. Creates the task (title + matched assignee + due) and opens it
+  // in this browser; the user sets the project and the rest in Odoo.
+  call("erp").then(function (r) {
+    if (!r || !r.connected) return;
+    var mon = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+    function pad(n){ return (n<10?"0":"")+n; }
+    function parseDue(t){
+      var m=(t||"").match(/(\d{1,2})\s+([A-Za-z]{3})/); if(!m) return "";
+      var mo=mon[m[2].toLowerCase()]; if(mo==null) return "";
+      var d=new Date(), dt=new Date(d.getFullYear(),mo,parseInt(m[1],10));
+      if(dt.getTime()<d.getTime()-30*864e5) dt.setFullYear(d.getFullYear()+1); // roll to next year if clearly past
+      return dt.getFullYear()+"-"+pad(dt.getMonth()+1)+"-"+pad(dt.getDate());
+    }
+    document.querySelectorAll("li.task").forEach(function(li){
+      var tEl=li.querySelector(".t"); if(!tEl) return;
+      var title=tEl.textContent.trim();
+      var whoEl=li.querySelector(".chip.who"), who="";
+      if(whoEl){ var c=whoEl.cloneNode(true), av=c.querySelector(".av"); if(av)av.remove(); who=c.textContent.trim(); }
+      var dueEl=li.querySelector(".chip.due"), dueText=dueEl?dueEl.textContent.replace(/^Due\s*/,"").trim():"";
+      var btn=document.createElement("button"); btn.type="button"; btn.className="nx-assign"; btn.textContent="Assign in ERP";
+      btn.onclick=function(e){
+        e.preventDefault(); e.stopPropagation();
+        if(btn.classList.contains("done")){ if(btn._url) window.open(btn._url,"_blank"); return; }
+        if(btn.disabled) return;
+        btn.textContent="Creating…"; btn.disabled=true;
+        call("assign",{ title:title, who:who, due:parseDue(dueText) }).then(function(r){
+          btn.disabled=false;
+          if(r && r.url){ btn._url=r.url; btn.classList.add("done"); btn.textContent="Open in ERP ✓"; window.open(r.url,"_blank"); }
+          else { btn.textContent="Assign in ERP"; alert((r&&r.error)||"Couldn't create the task in ERP."); }
+        });
+      };
+      (li.querySelector("label")||li).appendChild(btn);
+    });
+  });
 })();</script><!--/nikxel-share-->
 """#
 }

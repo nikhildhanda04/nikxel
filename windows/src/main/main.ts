@@ -24,6 +24,7 @@ import { AgentMonitor } from "./system/agentMonitor";
 import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
 import * as PageShare from "./system/pageShare";
+import * as ERP from "./system/erp";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
 import { SupportLogs } from "./system/supportLogs";
@@ -133,6 +134,7 @@ class NikxelApp {
     this.reminderWatcher.start();
     this.dayLogger.start();
     PageShare.start();
+    ERP.startIfConnected();
     this.meetingDetector.start();
     this.chatbotEngine.start(this.meetingCoordinator.momGen);
     this.whatsAppActivityLogger.start();
@@ -296,6 +298,9 @@ class NikxelApp {
       item("Summarize This Week Now", () => this.dayLogger.generateWeekNow()),
       { label: "AI Usage", submenu: this.usageMenu() },
       item("Connect Google Account…", () => this.calendarWatcher.reauthenticate()),
+      Settings.erpConnected
+        ? item("Forklyft ERP connected ✓", () => void this.connectERP())
+        : item("Connect Forklyft ERP…", () => void this.connectERP()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
         () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
       // Apple Reminders on the Mac. Windows has none, so new Google Tasks
@@ -355,6 +360,27 @@ class NikxelApp {
       { label: "Open Templates Folder", click: () => openFolder(SummaryTemplates.templatesDir) },
     );
     return items;
+  }
+
+  private async connectERP(): Promise<void> {
+    if (Settings.erpConnected) {
+      await dialog.showMessageBox({
+        type: "info", title: "Nikxel", noLink: true,
+        message: "Forklyft ERP is connected",
+        detail: "Nikxel reads your team and files tasks through your logged-in ERP session. Use the Assign button on a meeting's action items.",
+        buttons: ["OK"],
+      });
+      return;
+    }
+    const ok = await ERP.signIn();
+    await dialog.showMessageBox({
+      type: ok ? "info" : "warning", title: "Nikxel", noLink: true,
+      message: ok ? "Forklyft ERP connected" : "ERP not connected",
+      detail: ok
+        ? "You can now Assign action items to the ERP from any meeting summary."
+        : "Sign-in didn't complete. Open the menu and try “Connect Forklyft ERP…” again.",
+      buttons: ["OK"],
+    });
   }
 
   private async editActiveTemplate(): Promise<void> {

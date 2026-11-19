@@ -57,6 +57,7 @@ interface Stored {
   noteFormat?: string;
   connectedAgent?: string;
   whatsappConnected?: boolean;
+  erpConnected?: boolean;
   onboardingCompleted?: boolean;
   botMemoryDays?: number;
   googleSyncEnabled?: boolean;
@@ -226,6 +227,9 @@ export const Settings = {
 
   get whatsappConnected(): boolean { return load().whatsappConnected ?? false; },
   set whatsappConnected(v: boolean) { save(s => { s.whatsappConnected = v; }); },
+
+  get erpConnected(): boolean { return load().erpConnected ?? false; },
+  set erpConnected(v: boolean) { save(s => { s.erpConnected = v; }); },
 
   get onboardingCompleted(): boolean { return load().onboardingCompleted ?? false; },
   set onboardingCompleted(v: boolean) { save(s => { s.onboardingCompleted = v; }); },

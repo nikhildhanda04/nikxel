@@ -26,11 +26,13 @@ final class CDPClient {
     private let lock = NSLock()
     private let session = URLSession(configuration: .ephemeral)
     private(set) var targetURL: String?
+    /// DevTools port. 9222 is the WhatsApp bot Chrome; the ERP browser uses its own.
+    var port = 9222
 
     /// Connect to the first tab matching `urlContains`. Returns false if the
     /// debug port is unreachable or no matching tab exists.
     func connect(urlContains needle: String) -> Bool {
-        guard let listURL = URL(string: "http://localhost:9222/json") else { return false }
+        guard let listURL = URL(string: "http://localhost:\(port)/json") else { return false }
         let req = URLRequest(url: listURL, timeoutInterval: 1.0)
         let sema = DispatchSemaphore(value: 0)
         var data: Data?
@@ -132,13 +134,13 @@ final class CDPClient {
     /// nil on error. `returnByValue:true` ensures we get a serializable
     /// JSON-able primitive back (string / number / object) rather than a
     /// remote handle.
-    func eval(_ expression: String) -> String? {
+    func eval(_ expression: String, timeout: TimeInterval = 5.0) -> String? {
         let params: [String: Any] = [
             "expression": expression,
             "returnByValue": true,
             "awaitPromise": true
         ]
-        guard let result = sendSync("Runtime.evaluate", params: params) as? [String: Any] else {
+        guard let result = sendSync("Runtime.evaluate", params: params, timeout: timeout) as? [String: Any] else {
             return nil
         }
         if let obj = result["result"] as? [String: Any] {

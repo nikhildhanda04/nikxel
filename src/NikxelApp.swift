@@ -32,6 +32,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var waQuietItem: NSMenuItem?
     private var waChatTasksItem: NSMenuItem?
     private var waConnectItem: NSMenuItem?
+    private var erpConnectItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var checkingForUpdates = false
     private var googleSyncMenuItem: NSMenuItem?
@@ -145,6 +146,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         reminderWatcher.start()
         dayLogger.start()
         PageShare.start()
+        ERP.startIfConnected()
         meetingDetector.start()
         chatbotEngine.start(with: meetingCoordinator.momGen)
         whatsAppActivityLogger.start()
@@ -189,6 +191,34 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 id: "nikxel.unfinished",
                 title: "\(unfinished.count) summary\(unfinished.count == 1 ? "" : "s") unfinished — see the menu bar"
             )
+        }
+    }
+
+    func refreshERPMenu() {
+        erpConnectItem?.title = NikxelSettings.erpConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
+    }
+
+    @objc func connectERP() {
+        if NikxelSettings.erpConnected {
+            NikxelView.tell(icon: "🔗", title: "Forklyft ERP is connected",
+                            lines: ["Nikxel reads employees and tasks in the background. Summaries use real names and roles."])
+            return
+        }
+        NikxelView.tell(icon: "🔗", title: "Opening Forklyft ERP…",
+                        lines: ["A window opens once for your sign-in. After that it runs in the background with no window."])
+        DispatchQueue.global(qos: .userInitiated).async {
+            ERP.signIn { ok in
+                DispatchQueue.main.async {
+                    self.refreshERPMenu()
+                    if ok {
+                        NikxelView.tell(icon: "✅", title: "Forklyft ERP connected",
+                                        lines: ["Nikxel now knows who's who. Meeting summaries will name people and let you assign tasks."])
+                    } else {
+                        NikxelView.tell(icon: "⚠️", title: "ERP not connected",
+                                        lines: ["Sign-in didn't finish. Try again from the menu."])
+                    }
+                }
+            }
         }
     }
 
@@ -307,6 +337,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         waItem.submenu = waMenu
         menu.addItem(waItem)
         refreshWAMenu()
+
+        let erpItem = NSMenuItem(title: "Connect Forklyft ERP…", action: #selector(connectERP), keyEquivalent: "")
+        erpItem.target = self; menu.addItem(erpItem)
+        self.erpConnectItem = erpItem
+        refreshERPMenu()
 
         let modeItem = NSMenuItem(title: "Capture Mode", action: nil, keyEquivalent: "")
         let modeSubmenu = NSMenu()

@@ -77,6 +77,7 @@ enum NikxelSettings {
         var noteFormat: String?
         var connectedAgent: String?
         var whatsappConnected: Bool?
+        var erpConnected: Bool?
         var onboardingCompleted: Bool?
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
@@ -425,6 +426,12 @@ enum NikxelSettings {
         get { load().whatsappConnected ?? FileManager.default.fileExists(
             atPath: NSHomeDirectory() + "/.nikxel/chrome-profile/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb") }
         set { save { $0.whatsappConnected = newValue } }
+    }
+
+    /// Whether Nikxel's ERP browser profile has a live Odoo login.
+    static var erpConnected: Bool {
+        get { load().erpConnected ?? false }
+        set { save { $0.erpConnected = newValue } }
     }
 
     /// Gates auto-showing the onboarding wizard on launch.

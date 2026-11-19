@@ -77,6 +77,47 @@ test("field and None helpers", () => {
   assert.ok(isNone("None.") && isNone(" none — nothing came up") && !isNone("Nonetheless"));
 });
 
+test("client summary: off the internal page, derives a shareable client page", () => {
+  const withClient = note + `
+
+## Client Summary
+**Your billing moves to Stripe this week, no action needed from you.**
+
+We've mapped out the switch and will handle it end to end.
+
+### What we discussed
+- Moving your invoices onto Stripe.
+
+### What you'll get
+- Uninterrupted billing, live by 14 Nov.
+
+### Where this is headed
+- You're set for automated monthly invoices from December.
+`;
+  // The internal meeting page must not render the client section inline, but
+  // must offer the button that builds the client page.
+  const page = NotePage.html(withClient);
+  assert.doesNotMatch(page, /Your billing moves to Stripe this week/, "client content stays off the internal page");
+  assert.match(page, /class="nx-client"/, "the Preview & share client summary button shows");
+
+  // The derive: intro becomes the Summary (so the headline leads), and each
+  // ### subsection becomes its own ## section on the client page.
+  const md = NotePage.clientMarkdown(withClient)!;
+  assert.match(md, /^# Client Update — 2026-11-12 13:21/);
+  assert.match(md, /## Summary\n\*\*Your billing moves to Stripe this week[^\n]*\*\*/);
+  assert.match(md, /## What you'll get\n- Uninterrupted billing, live by 14 Nov\./);
+  assert.doesNotMatch(md, /###/, "subsections are promoted to ## headings");
+
+  // No client section -> no button, no derive.
+  assert.equal(NotePage.clientMarkdown(note), null);
+  assert.doesNotMatch(NotePage.html(note), /class="nx-client"/);
+
+  // The derived client page renders and carries its own Share widget.
+  const clientPage = NotePage.html(md);
+  assert.match(clientPage, /<h1>Your billing moves to Stripe this week[^<]*<\/h1>/);
+  assert.match(clientPage, /<!--nikxel-share-->/);
+});
+
 test("HTML in the Markdown is escaped", () => {
   const evil = `# Meeting — <script>alert(1)</script>
 

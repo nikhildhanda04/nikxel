@@ -3,6 +3,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
+import { pathToFileURL } from "url";
 import { cblog } from "../core/diag";
 import { documentsRoot, nikxelPath, readText, writeAtomic } from "../core/paths";
 import { Settings } from "../core/settings";
@@ -10,6 +11,7 @@ import { ChatbotEngine } from "../whatsapp/chatbotEngine";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import * as PageEdit from "./pageEdit";
 import * as ERP from "./erp";
+import { NotePage } from "../recording/notePage";
 
 /// The Share button on summary pages. The page is a local file, so it can't
 /// reach WhatsApp itself: it asks Nikxel over localhost, and Nikxel sends the
@@ -103,6 +105,19 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       await run;
       return result;
     }
+    case "/client": {
+      // Render the client-facing page from the meeting's "## Client Summary"
+      // section and hand back its file URL. The page carries its own Share
+      // buttons, so the user previews it, then sends it.
+      const mdPath = file.replace(/\.html$/i, ".md");
+      const md = readText(mdPath);
+      const clientMd = md ? NotePage.clientMarkdown(md) : null;
+      if (!clientMd) return { error: "This summary has no client version." };
+      const clientFile = file.replace(/\.html$/i, ".client.html");
+      try { writeAtomic(clientFile, NotePage.html(clientMd)); }
+      catch { return { error: "Couldn't build the client summary." }; }
+      return { url: pathToFileURL(clientFile).href };
+    }
     case "/erp":
       // Just whether Assign buttons should show. Matching + create happen
       // server-side on /assign, so the page needs no roster.
@@ -160,7 +175,7 @@ function migrateWidgets(): void {
       if (e.isDirectory()) { walk(full); continue; }
       if (!e.name.toLowerCase().endsWith(".html")) continue;
       const html = readText(full);
-      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw3-->")) continue;
+      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw4-->")) continue;
       const block = widget(html.includes("nx-edit"));
       // Replacer function so "$1" inside the block isn't treated specially.
       const out = html.replace(/<!--nikxel-share-->[\s\S]*?<!--\/nikxel-share-->/, () => block);
@@ -183,7 +198,7 @@ function allowedFile(p: string | null): string | null {
 // MARK: - The button
 
 /// Same markup as src/PageShare.swift.
-const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw3--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw4--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -263,6 +278,18 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     call("copy").then(function (r) { say(r.error || "Copied. Paste it into any WhatsApp chat or group."); });
   };
   document.addEventListener("click", function (e) { if (!root.contains(e.target)) pop.hidden = true; });
+
+  // --- "Preview & share client summary": build the client-facing page from
+  // this meeting's Client Summary section and open it (it has its own Share).
+  var clientBtn = document.querySelector(".nx-client");
+  if (clientBtn) clientBtn.onclick = function () {
+    var old = clientBtn.textContent; clientBtn.disabled = true; clientBtn.textContent = "Preparing…";
+    call("client").then(function (r) {
+      clientBtn.disabled = false; clientBtn.textContent = old;
+      if (r && r.url) window.open(r.url, "_blank");
+      else alert((r && r.error) || "Couldn't build the client summary.");
+    });
+  };
 
   // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
   // connected. Creates the task (title + matched assignee + due) and opens it

@@ -43,7 +43,7 @@ enum PageShare {
               let re = try? NSRegularExpression(pattern: "<!--nikxel-share-->[\\s\\S]*?<!--/nikxel-share-->") else { return }
         for case let url as URL in en where url.pathExtension == "html" {
             guard let html = try? String(contentsOf: url, encoding: .utf8),
-                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw3-->") else { continue }
+                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw4-->") else { continue }
             let block = widget(editable: html.contains("nx-edit"))
             let out = re.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html),
                                                   withTemplate: NSRegularExpression.escapedTemplate(for: block))
@@ -125,6 +125,20 @@ enum PageShare {
             }
             cblog("PageShare: \(file.lastPathComponent) → '\(to)': \(result["ok"] != nil ? "sent" : "\(result["error"] ?? "")")")
             return result
+        case "/client":
+            // Render the client-facing page from the meeting's "## Client
+            // Summary" section and hand back its file URL. The page carries its
+            // own Share buttons, so the user previews it, then sends it.
+            let mdURL = file.deletingPathExtension().appendingPathExtension("md")
+            guard let md = try? String(contentsOf: mdURL, encoding: .utf8),
+                  let clientMd = NotePage.clientMarkdown(from: md) else {
+                return ["error": "This summary has no client version."]
+            }
+            let clientFile = file.deletingPathExtension().appendingPathExtension("client").appendingPathExtension("html")
+            guard (try? NotePage.html(from: clientMd).write(to: clientFile, atomically: true, encoding: .utf8)) != nil else {
+                return ["error": "Couldn't build the client summary."]
+            }
+            return ["url": clientFile.absoluteString]
         case "/erp":
             // Just whether Assign buttons should show. Matching + create happen
             // server-side on /assign, so the page needs no roster.
@@ -186,7 +200,7 @@ enum PageShare {
 
     /// Same markup in windows/src/main/system/pageShare.ts.
     private static let widgetTemplate = #"""
-<!--nikxel-share--><!--nxw3--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+<!--nikxel-share--><!--nxw4--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -266,6 +280,18 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     call("copy").then(function (r) { say(r.error || "Copied. Paste it into any WhatsApp chat or group."); });
   };
   document.addEventListener("click", function (e) { if (!root.contains(e.target)) pop.hidden = true; });
+
+  // --- "Preview & share client summary": build the client-facing page from
+  // this meeting's Client Summary section and open it (it has its own Share).
+  var clientBtn = document.querySelector(".nx-client");
+  if (clientBtn) clientBtn.onclick = function () {
+    var old = clientBtn.textContent; clientBtn.disabled = true; clientBtn.textContent = "Preparing…";
+    call("client").then(function (r) {
+      clientBtn.disabled = false; clientBtn.textContent = old;
+      if (r && r.url) window.open(r.url, "_blank");
+      else alert((r && r.error) || "Couldn't build the client summary.");
+    });
+  };
 
   // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
   // connected. Creates the task (title + matched assignee + due) and opens it

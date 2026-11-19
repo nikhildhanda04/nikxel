@@ -79,6 +79,7 @@ enum NikxelSettings {
         var whatsappConnected: Bool?
         var erpConnected: Bool?
         var onboardingCompleted: Bool?
+        var roleAsked: Bool?
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
         var summaryTemplate: String?
@@ -438,6 +439,13 @@ enum NikxelSettings {
     static var onboardingCompleted: Bool {
         get { load().onboardingCompleted ?? false }
         set { save { $0.onboardingCompleted = newValue } }
+    }
+
+    /// Whether we've asked the user their role once (which sets summaryTemplate,
+    /// so daily/weekly summaries are shaped for a developer / PM / founder).
+    static var roleAsked: Bool {
+        get { load().roleAsked ?? false }
+        set { save { $0.roleAsked = newValue } }
     }
 }
 

@@ -174,6 +174,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             // After the avatar's puff, so the bubble has somewhere to land.
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() }
+            maybeAskRole()
         }
 
         // Start at login, once: a user who restarts the Mac shouldn't have to
@@ -219,6 +220,27 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+        }
+    }
+
+    /// Ask the user's role once. It sets the summary template, so daily,
+    /// weekly and meeting summaries are shaped for how they actually work.
+    private func maybeAskRole() {
+        guard !NikxelSettings.roleAsked else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            let alert = NSAlert()
+            alert.messageText = "What do you do most?"
+            alert.informativeText = "Nikxel shapes your daily and weekly summaries — and your meeting notes — for your role. You can change this any time under Summary Style."
+            alert.addButton(withTitle: "I write code")
+            alert.addButton(withTitle: "I run product / projects")
+            alert.addButton(withTitle: "I'm a founder / leader")
+            alert.addButton(withTitle: "Something else")
+            let slugs = ["developer", "project-manager", "co-founder", "default"]
+            let idx = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let slug = (0..<slugs.count).contains(idx) ? slugs[idx] : "default"
+            NikxelSettings.summaryTemplate = slug
+            NikxelSettings.roleAsked = true
+            cblog("NikxelApp: role set to \(slug)")
         }
     }
 

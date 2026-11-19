@@ -156,6 +156,7 @@ class NikxelApp {
     } else {
       // After the avatar's puff, so the bubble has somewhere to land.
       setTimeout(() => Permissions.offer(), 4000);
+      this.maybeAskRole();
     }
 
     // Start at login, once: a user who restarts shouldn't have to hunt for
@@ -181,6 +182,27 @@ class NikxelApp {
 
   showAvatar(): void {
     if (!this.avatar.isVisible()) { this.avatar.triggerPuff(); this.avatar.show(); }
+  }
+
+  /// Ask the user's role once. It sets the summary template, so daily, weekly
+  /// and meeting summaries are shaped for how they actually work. Mirrors
+  /// NikxelApp.maybeAskRole in src/NikxelApp.swift.
+  private maybeAskRole(): void {
+    if (Settings.roleAsked) return;
+    setTimeout(() => {
+      void dialog.showMessageBox({
+        type: "question", title: "Nikxel", noLink: true,
+        message: "What do you do most?",
+        detail: "Nikxel shapes your daily and weekly summaries — and your meeting notes — for your role. You can change this any time under Summary Style.",
+        buttons: ["I write code", "I run product / projects", "I'm a founder / leader", "Something else"],
+        defaultId: 0, cancelId: 3,
+      }).then(r => {
+        const slugs = ["developer", "project-manager", "co-founder", "default"];
+        Settings.summaryTemplate = slugs[r.response] ?? "default";
+        Settings.roleAsked = true;
+        cblog(`NikxelApp: role set to ${Settings.summaryTemplate}`);
+      });
+    }, 6000);
   }
 
   private showOnboarding(): void {

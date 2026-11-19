@@ -595,7 +595,7 @@ export class DayLogger {
     return `You are writing the user's week in review, read on Sunday morning. Below are the end-of-day summaries Nikxel wrote for each day of the past week (some days may be missing -- the Mac was off). They are your only source.
 
 ${Settings.languageInstruction}
-
+${this.roleGuidance() ? `\n${this.roleGuidance()}\n` : ""}
 Write it warm, specific and short enough to read over coffee. Not "worked on several projects" but "shipped the Datacap certification fixes for Produce POS and got the car-wash invoice bug to prod".
 
 Output this exact Markdown structure:
@@ -1056,6 +1056,24 @@ ${report}`;
     return r.code === 0 ? r.stdout.trim() : "";
   }
 
+  /// Role-specific emphasis for the daily/weekly summary, from the chosen
+  /// summary-template slug (the user's role, asked once). Empty for "default".
+  /// Mirrors DayLogger.roleGuidance in src/DayLogger.swift.
+  private roleGuidance(): string {
+    switch (Settings.summaryTemplate) {
+      case "developer":
+        return "Shape this for a DEVELOPER. Make code the spine: lead with what was built, fixed or shipped, tied to the session prompts and Git (commits, files/lines changed, which repos and branches). Keep the technical specifics — bug causes, modules, endpoints. Meetings and chats are secondary.";
+      case "project-manager":
+        return "Shape this for a PRODUCT / PROJECT MANAGER. Make people and progress the spine: lead with meetings — who was met, what was discussed, decisions and updates taken — and what moved or slipped on each project. Emphasize asks, owners and dates across WhatsApp/Slack/meetings. Keep code to a one-line \"shipped X\".";
+      case "co-founder":
+        return "Shape this for a CO-FOUNDER. Keep it high-level and decision-first: lead with the decisions, numbers and commitments that mattered, surface anything waiting on them, and record money figures exactly as stated. Be concise — skip routine app-usage and browsing detail unless it changed something.";
+      case "hr":
+        return "Shape this for an HR / PEOPLE lead. Centre it on people: who was spoken with, hiring and people conversations, commitments made to candidates or staff, and follow-ups owed to people. Keep code and technical detail minimal.";
+      default:
+        return "";
+    }
+  }
+
   private summaryPrompt(report: string, date: Date): string {
     const day = dayStamp(date);
     return `You are generating an end-of-day journal entry for the user, based on raw activity data captured throughout the day:
@@ -1075,7 +1093,7 @@ The session prompts are the most informative signal: they tell you LITERALLY wha
 For WhatsApp chats and Slack messages: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
 
 ${Settings.languageInstruction}
-
+${this.roleGuidance() ? `\n${this.roleGuidance()}\n` : ""}
 Write a friendly, personal, specific narrative. Not generic ("worked on coding") but specific ("fixed the typing-animation lag bug in Nikxel — diagnosed it as a missing CGEventTap re-enable, then added day-of-week logging").
 
 Date: ${day}

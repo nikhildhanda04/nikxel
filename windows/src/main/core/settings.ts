@@ -59,6 +59,7 @@ interface Stored {
   whatsappConnected?: boolean;
   erpConnected?: boolean;
   onboardingCompleted?: boolean;
+  roleAsked?: boolean;
   botMemoryDays?: number;
   googleSyncEnabled?: boolean;
   summaryTemplate?: string;
@@ -233,6 +234,9 @@ export const Settings = {
 
   get onboardingCompleted(): boolean { return load().onboardingCompleted ?? false; },
   set onboardingCompleted(v: boolean) { save(s => { s.onboardingCompleted = v; }); },
+
+  get roleAsked(): boolean { return load().roleAsked ?? false; },
+  set roleAsked(v: boolean) { save(s => { s.roleAsked = v; }); },
 
   get captureMode(): CaptureMode { return load().captureMode === "meeting" ? "meeting" : "notes"; },
   set captureMode(v: CaptureMode) { save(s => { s.captureMode = v; }); },

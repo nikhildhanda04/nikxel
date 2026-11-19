@@ -226,11 +226,23 @@ enum ERP {
         return head.isEmpty ? String(t.prefix(70)) : head
     }
 
-    /// Task body: the full action-item text, then the meeting context line.
+    /// Task body for a plain (non-code) item: the action split into points under
+    /// a bold heading, then the meeting context — rendered as the structured HTML
+    /// the ERP shows, instead of two flat paragraphs.
     static func taskDescription(item: String, context: String) -> String {
-        var html = "<p>\(htmlEscape(item))</p>"
-        if !context.isEmpty { html += "<p>\(htmlEscape(context))</p>" }
-        return html
+        var md = "**What to do**\n\n" + bulletize(item)
+        if !context.isEmpty { md += "\n**Context**\n\n\(context)\n" }
+        return NoteExporter.richHTML(from: md)
+    }
+
+    /// A run-on action item as bullet lines, split on clause breaks ("; ") and
+    /// newlines so the body reads as points. A single clause stays one bullet.
+    private static func bulletize(_ s: String) -> String {
+        let parts = s.components(separatedBy: .newlines)
+            .flatMap { $0.components(separatedBy: "; ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return (parts.isEmpty ? [s] : parts).map { "- \($0)" }.joined(separator: "\n") + "\n"
     }
 
     /// If the meeting's markdown has an "## Agent Prompts" brief whose task
@@ -262,19 +274,12 @@ enum ERP {
             if best == nil || score > best!.score { best = (score, p.body) }
         }
         guard let b = best, b.score >= 0.35 else { return nil }
-        return b.body.components(separatedBy: "\n\n")
-            .map { "<p>\(htmlEscape($0).replacingOccurrences(of: "\n", with: "<br>"))</p>" }.joined()
+        return NoteExporter.richHTML(from: b.body)
     }
 
     private static func significantWords(_ s: String) -> Set<String> {
         Set(s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init).filter { $0.count >= 4 })
-    }
-
-    private static func htmlEscape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     /// Web URL for a task's form — opens the record in whatever browser the

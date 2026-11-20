@@ -44,11 +44,17 @@ export function readSession(req, secret) {
   return p && { userId: p.userId, orgId: p.orgId, role: p.role };
 }
 
-export const requireRole = (...roles) => (req, res, next) => {
+// Role lives in the DB, not the cookie: promotions/demotions apply immediately.
+export const liveSession = (db, s) => {
+  const m = db.prepare('SELECT org_id, role FROM memberships WHERE user_id = ?').get(s.userId);
+  return { ...s, orgId: s.orgId ?? m?.org_id ?? null, role: m && m.org_id === (s.orgId ?? m.org_id) ? m.role : null };
+};
+
+export const requireRole = (db, ...roles) => (req, res, next) => {
   const s = readSession(req, process.env.SESSION_SECRET);
   if (!s) return res.status(401).json({ error: 'unauthenticated' });
-  if (!roles.includes(s.role)) return res.status(403).json({ error: 'forbidden' });
-  req.session = s;
+  req.session = liveSession(db, s);
+  if (!roles.includes(req.session.role)) return res.status(403).json({ error: 'forbidden' });
   next();
 };
 

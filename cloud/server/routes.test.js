@@ -112,7 +112,7 @@ test('orgs, invites, join, pairing', async () => {
   assert.equal((await c.api('POST', '/api/invites', { headers: A(c) , body: {} })).status, 403);
   const inv = await c.api('POST', '/api/invites', { headers: A(c, 'owA', 'owner'), body: { role: 'member' } });
   assert.equal(inv.status, 200); assert.equal(inv.json.role, 'member');
-  assert.equal((await c.api('POST', '/api/invites', { headers: A(c, 'admA', 'admin'), body: { role: 'admin' } })).status, 403);
+  assert.equal((await c.api('POST', '/api/invites', { headers: A(c, 'admA', 'admin'), body: { role: 'admin' } })).status, 200);
   const j = await c.api('POST', '/api/orgs/join', { headers: none, body: { token: inv.json.token } });
   assert.equal(j.status, 200);
   assert.equal(c.db.prepare("SELECT role FROM memberships WHERE user_id='newU'").get().role, 'member');
@@ -194,5 +194,35 @@ test('push with real client shape (no visibility) is stored; visibility derived 
   assert.equal((await post('meeting')).status, 200);
   const v = (k) => c.db.prepare('SELECT visibility FROM summaries WHERE kind=?').get(k).visibility;
   assert.equal(v('work'), 'admin'); assert.equal(v('meeting'), 'org');
+  c.close();
+});
+
+test('admin can invite an admin; member cannot', async () => {
+  const c = await boot();
+  const r = await c.api('POST', '/api/invites', { headers: A(c, 'admA', 'admin'), body: { role: 'admin' } });
+  assert.equal(r.status, 200); assert.equal(r.json.role, 'admin');
+  assert.equal((await c.api('POST', '/api/invites', { headers: A(c), body: { role: 'admin' } })).status, 403);
+  c.close();
+});
+
+test('role changes apply live, owner is fixed, orgs isolated', async () => {
+  const c = await boot();
+  const adm = A(c, 'admA', 'admin');
+  assert.equal((await c.api('PATCH', '/api/members/memA', { headers: adm, body: { role: 'admin' } })).status, 200);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c) })).status, 200); // old member cookie
+  assert.equal((await c.api('PATCH', '/api/members/admA', { headers: A(c, 'owA', 'owner'), body: { role: 'member' } })).status, 200);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: adm })).status, 403); // old admin cookie
+  assert.equal((await c.api('GET', '/api/me', { headers: adm })).json.role, 'member');
+  assert.equal((await c.api('PATCH', '/api/members/owA', { headers: A(c, 'memA', 'admin'), body: { role: 'member' } })).status, 403);
+  assert.equal((await c.api('PATCH', '/api/members/memA', { headers: c.cookie('owB', 'B', 'owner'), body: { role: 'admin' } })).status, 404);
+  assert.equal((await c.api('PATCH', '/api/members/memA2', { headers: A(c, 'owA', 'owner'), body: { role: 'owner' } })).status, 400);
+  c.close();
+});
+
+test('logout clears cookie', async () => {
+  const c = await boot();
+  const r = await c.api('POST', '/api/auth/logout');
+  assert.equal(r.status, 200);
+  assert.match(r.res.headers.get('set-cookie'), /nikxel_session=;/);
   c.close();
 });

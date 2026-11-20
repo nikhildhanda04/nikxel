@@ -37,16 +37,17 @@ test('issueSession sets secure httpOnly lax cookie; readSession reads it', () =>
   assert.deepEqual(readSession(fakeReqWithSession({role:'admin'}), S), {userId:'u1',orgId:'o1',role:'admin'});
   assert.equal(readSession({headers:{}}, S), null);
 });
+const fakeDb = (role) => ({ prepare: () => ({ get: () => ({ org_id: 'o1', role }) }) });
 test('requireRole denies wrong role', () => {
   process.env.SESSION_SECRET = S;
-  const mw = requireRole('owner','admin');
+  const mw = requireRole(fakeDb('member'), 'owner','admin');
   const res = fakeRes(); let nexted=false;
   mw(fakeReqWithSession({role:'member'}), res, ()=>{nexted=true});
   assert.equal(res.statusCode, 403); assert.equal(nexted, false);
 });
 test('requireRole 401 without session, passes allowed role', () => {
   process.env.SESSION_SECRET = S;
-  const mw = requireRole('owner');
+  const mw = requireRole(fakeDb('owner'), 'owner');
   const res = fakeRes(); let nexted=false;
   mw({headers:{}}, res, ()=>{nexted=true});
   assert.equal(res.statusCode, 401); assert.equal(nexted, false);

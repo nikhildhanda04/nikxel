@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import express from 'express';
-import { readSession, issueSession, requireRole, verifyGoogle } from './auth.js';
+import { readSession, issueSession, liveSession, requireRole, verifyGoogle } from './auth.js';
 import { redeemPairingCode, createPairingCode, deviceAuth } from './pairing.js';
 import { mergeItems, adminView, redact, ownerEdit, release, ForbiddenError } from './summaries.js';
 
@@ -35,7 +35,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   const session = (req, res, next) => {
     const s = readSession(req, secret());
     if (!s) return res.status(401).json({ error: 'unauthenticated' });
-    req.session = s; next();
+    req.session = liveSession(db, s); next();
   };
   const membership = (userId) => db.prepare('SELECT org_id, role FROM memberships WHERE user_id = ?').get(userId);
   // Own row only; a missing row and someone else's row look identical (404).
@@ -115,16 +115,30 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json({ orgId: inv.org_id, role: inv.role });
   });
 
-  r.post('/invites', requireRole('owner', 'admin'), (req, res) => {
+  r.post('/invites', requireRole(db, 'owner', 'admin'), (req, res) => {
     const role = req.body?.role ?? 'member';
     if (!['member', 'admin'].includes(role)) throw bad('bad role');
-    if (role === 'admin' && req.session.role !== 'owner') throw new ForbiddenError('only owner invites admins');
     const token = crypto.randomBytes(24).toString('hex');
     db.prepare('INSERT INTO invites (id, org_id, token, role, created_at) VALUES (?,?,?,?,?)').run(uid(), req.session.orgId, token, role, Date.now());
     res.json({ token, role });
   });
 
-  r.get('/members', requireRole('owner', 'admin'), (req, res) => {
+  r.patch('/members/:userId', requireRole(db, 'owner', 'admin'), (req, res) => {
+    const role = req.body?.role;
+    if (!['admin', 'member'].includes(role)) throw bad('bad role');
+    const t = db.prepare('SELECT role FROM memberships WHERE user_id = ? AND org_id = ?').get(req.params.userId, req.session.orgId);
+    if (!t) throw notFound();
+    if (t.role === 'owner') throw new ForbiddenError('owner role is fixed');
+    db.prepare('UPDATE memberships SET role = ? WHERE user_id = ? AND org_id = ?').run(role, req.params.userId, req.session.orgId);
+    res.json({ user_id: req.params.userId, role });
+  });
+
+  r.post('/auth/logout', (req, res) => {
+    res.clearCookie('nikxel_session', { httpOnly: true, sameSite: 'lax', secure: true, path: '/' });
+    res.json({ ok: true });
+  });
+
+  r.get('/members', requireRole(db, 'owner', 'admin'), (req, res) => {
     res.json(db.prepare(`SELECT m.user_id, m.role, u.email, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = ?`).all(req.session.orgId));
   });
 
@@ -187,7 +201,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json(row);
   });
 
-  r.patch('/summaries/:id/items/:itemId', requireRole('owner'), (req, res) => {
+  r.patch('/summaries/:id/items/:itemId', requireRole(db, 'owner'), (req, res) => {
     validItem(req.body, true);
     const { what, minutes } = req.body;
     const row = ownRow(req);
@@ -195,7 +209,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json(row);
   });
 
-  r.get('/rollup', requireRole('owner', 'admin'), (req, res) => {
+  r.get('/rollup', requireRole(db, 'owner', 'admin'), (req, res) => {
     const rows = db.prepare("SELECT * FROM summaries WHERE org_id = ? AND kind = 'work'").all(req.session.orgId);
     res.json(rows.map((x) => adminView(parse(x))).filter(Boolean).map((v) => ({
       date: v.date, user_id: v.user_id, items: v.items.map(({ id, what, minutes }) => ({ id, what, minutes })),

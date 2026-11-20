@@ -53,8 +53,10 @@ enum CloudSync {
     static let types: Set<String> = ["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]
 
     /// First 12 hex of SHA-256(section + "\n" + what.lowercased()). The daily page uses it for data-id.
+    /// A trailing "— open/done/unclear" is left out, so ticking a task doesn't change its id.
     static func itemID(section: String, what: String) -> String {
-        SHA256.hash(data: Data((section + "\n" + what.lowercased()).utf8)).map { String(format: "%02x", $0) }.joined().prefix(12).description
+        let what = what.replacingOccurrences(of: #"\s+[—–-]\s*\**(done|open|unclear)\**\.?\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        return SHA256.hash(data: Data((section + "\n" + what.lowercased()).utf8)).map { String(format: "%02x", $0) }.joined().prefix(12).description
     }
 
     /// Sends the day (minus `skip` ids) as kind "day". False on no token, no items or failed POST.

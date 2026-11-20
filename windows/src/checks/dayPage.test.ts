@@ -103,3 +103,12 @@ test("not daily: no ids, no send bar, tags still hidden", () => {
   assert.doesNotMatch(html, /\[coding\]/);
   assert.match(html, /class="nx-todo"/);
 });
+
+test("ticking an open task keeps its data-id (and itemID ignores the status)", () => {
+  const id = CloudSync.itemID("open tasks", "Send deck — for Ravi — open");
+  assert.equal(id, CloudSync.itemID("open tasks", "Send deck — for Ravi — done"));
+  const ticked = DayPage.markTask(tagged, 0, true) ?? "";
+  assert.match(ticked, /Ravi — done/);
+  assert.match(DayPage.html(tagged, null, false, true), new RegExp(`data-id="${id}"`));
+  assert.match(DayPage.html(ticked, null, false, true), new RegExp(`data-id="${id}"`));
+});

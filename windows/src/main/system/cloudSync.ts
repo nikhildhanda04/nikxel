@@ -49,7 +49,9 @@ export class CloudSync {
   static readonly types = new Set(["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]);
 
   /// First 12 hex of SHA-256(section + "\n" + what.toLowerCase()). The daily page uses it for data-id.
+  /// A trailing "— open/done/unclear" is left out, so ticking a task doesn't change its id.
   static itemID(section: string, what: string): string {
+    what = what.replace(/\s+[—–-]\s*\**(done|open|unclear)\**\.?\s*$/i, "");
     return crypto.createHash("sha256").update(section + "\n" + what.toLowerCase()).digest("hex").slice(0, 12);
   }
 

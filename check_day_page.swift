@@ -19,6 +19,10 @@ import Foundation
         check(html.contains("class=\"nx-send\""), "send bar")
         check(html.contains("class=\"nx-todo\""), "open-task checkbox")
 
+        let task = CloudSync.itemID(section: "open tasks", what: "Send deck — for Ravi — open")
+        let ticked = DayPage.markTask(in: md, index: 0, done: true) ?? ""
+        check(ticked.contains("Ravi — done") && html.contains("data-id=\"\(task)\"") && DayPage.html(from: ticked, daily: true).contains("data-id=\"\(task)\""), "ticking keeps the task's data-id")
+
         let plain = DayPage.html(from: md)
         check(!plain.contains("data-id=") && !plain.contains("class=\"nx-send\"") && !plain.contains("[coding]"), "not daily: no ids, no bar, no tags")
         check(plain.contains("class=\"nx-todo\""), "not daily: checkbox")

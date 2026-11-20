@@ -515,7 +515,7 @@ class NikxelApp {
     }
     ui.tell({ icon: "🏢", title: "Reading ERP…", lines: ["Gathering people, projects and who works on what. This can take a minute."] });
     const snap = await ERP.orgSnapshot();
-    if (!snap.people.length && !snap.projects.length) {
+    if (!snap?.projects.length) {
       ui.tell({ icon: "⚠️", title: "Couldn't read the ERP", kind: "warning", lines: ["Check your ERP connection and try again."] });
       return;
     }
@@ -527,10 +527,11 @@ class NikxelApp {
       buttons: ["Send", "Cancel"], defaultId: 0, cancelId: 1, noLink: true,
     });
     if (r.response !== 0) return;
-    const ok = await CloudSync.importOrg(body);
+    const status = await CloudSync.importOrg(body);
+    const ok = status != null && status >= 200 && status < 300;
     ui.tell({
       icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send", kind: ok ? "info" : "warning",
-      lines: [ok ? "Refine it in the dashboard's Org tab." : "Only the owner or an admin can do this, or the dashboard is unreachable."],
+      lines: [ok ? "Refine it in the dashboard's Org tab." : status === 403 ? "Only the owner or an admin can build the org." : "Couldn't reach the dashboard."],
     });
   }
 

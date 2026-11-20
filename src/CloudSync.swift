@@ -17,8 +17,10 @@ enum CloudSync {
 
     /// Blocking POST (callers are off the main thread). Returns the 2xx body, nil on any failure.
     typealias Poster = (_ path: String, _ body: [String: Any], _ bearer: String?) -> Data?
+    /// Blocking POST: the HTTP status and body, nil when the server can't be reached.
+    typealias StatusPoster = (_ path: String, _ body: [String: Any], _ bearer: String?) -> (status: Int, data: Data?)?
 
-    static let httpPost: Poster = { path, body, bearer in
+    static let httpSend: StatusPoster = { path, body, bearer in
         guard let url = URL(string: backendBase + path),
               let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 20)
@@ -26,17 +28,20 @@ enum CloudSync {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let b = bearer { req.setValue("Bearer \(b)", forHTTPHeaderField: "Authorization") }
         req.httpBody = data
-        var out: Data?
+        var out: (status: Int, data: Data?)?
         let sem = DispatchSemaphore(value: 0)
         URLSession.shared.dataTask(with: req) { d, r, _ in
-            if let h = r as? HTTPURLResponse, (200..<300).contains(h.statusCode) { out = d }
+            if let h = r as? HTTPURLResponse { out = (h.statusCode, d) }
             sem.signal()
         }.resume()
         sem.wait()
         return out
     }
 
-    @discardableResult
+    static let httpPost: Poster = { path, body, bearer in
+        httpSend(path, body, bearer).flatMap { (200..<300).contains($0.status) ? $0.data : nil }
+    }
+
     static func pair(_ code: String, post: Poster = httpPost) -> Bool {
         let c = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !c.isEmpty, let data = post("/api/pair", ["code": c], nil),
@@ -73,10 +78,11 @@ enum CloudSync {
         return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
     }
 
-    /// Sends OrgImport's body (after the user confirmed it). False on no token or a failed POST (403 for non owner/admin).
-    static func importOrg(_ body: [String: Any], post: Poster = httpPost) -> Bool {
-        guard let tok = token else { return false }
-        return post("/api/org/import", body, tok) != nil
+    /// Sends OrgImport's body (after the user confirmed it). The HTTP status (403 for non owner/admin);
+    /// nil on no token or when the dashboard can't be reached.
+    static func importOrg(_ body: [String: Any], post: StatusPoster = httpSend) -> Int? {
+        guard let tok = token else { return nil }
+        return post("/api/org/import", body, tok)?.status
     }
 
     struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String]; var project = "" }

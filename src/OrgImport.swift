@@ -46,9 +46,38 @@ enum OrgImport {
         let projects = body["projects"] as? [[String: Any]] ?? []
         let active = projects.filter { $0["active"] as? Bool == true }.count
         return "\(people) people and \(projects.count) projects (\(active) active) — names, work emails, job titles, managers, "
-            + "project members and leads, and short AI-written notes. Task names stay on this Mac."
+            + "project members and leads, plus project descriptions and people notes that AI wrote from task names "
+            + "(the task names themselves are not sent)."
     }
 
+    /// Odoo search_read rows -> snapshot. Employees unreadable -> no people (projects still go);
+    /// projects or tasks unreadable -> nil (nothing to send). Keeps up to 15 task names per project.
+    static func snapshot(employees: [[String: Any]]?, projects: [[String: Any]]?, tasks: [[String: Any]]?) -> OrgSnapshot? {
+        guard let projects, let tasks else { return nil }
+        // Many2one fields come back as [id, "Name"] or false.
+        func m2o(_ v: Any?) -> Int? { (v as? [Any])?.first as? Int }
+        func str(_ v: Any?) -> String { v as? String ?? "" }
+        var users: [Int: Set<Int>] = [:], names: [Int: [String]] = [:]
+        for t in tasks {
+            guard let p = m2o(t["project_id"]) else { continue }
+            users[p, default: []].formUnion(t["user_ids"] as? [Int] ?? [])
+            if names[p, default: []].count < 15 { names[p, default: []].append(str(t["name"])) }
+        }
+        return OrgSnapshot(
+            people: (employees ?? []).compactMap { r in
+                guard let id = r["id"] as? Int else { return nil }
+                return .init(id: id, name: str(r["name"]), email: str(r["work_email"]), title: str(r["job_title"]),
+                             managerID: m2o(r["parent_id"]), userID: m2o(r["user_id"]))
+            },
+            projects: projects.compactMap { r in
+                guard let id = r["id"] as? Int else { return nil }
+                return .init(id: id, name: str(r["name"]), managerUserID: m2o(r["user_id"]), active: r["active"] as? Bool ?? true,
+                             userIDs: Array(users[id] ?? []).sorted(), taskNames: names[id] ?? [])
+            })
+    }
+
+    /// Bounded: active projects only (at most 200), task names cut to 80 chars, people only when on
+    /// one of those projects, and the whole prompt at most 60k chars (lines past that are dropped).
     static func prompt(_ s: OrgSnapshot) -> String {
         var out = """
         You are mapping a company's ERP into an org chart. For each project, write a one-line description \
@@ -60,15 +89,17 @@ enum OrgImport {
         PROJECTS
 
         """
+        var size = out.count
+        func add(_ line: String) { if size + line.count <= 60_000 { out += line; size += line.count } }
         var onProjects: [Int: [String]] = [:]
-        for p in s.projects {
-            out += "- [\(p.id)] \(p.name)" + (p.taskNames.isEmpty ? "" : " — recent tasks: " + p.taskNames.joined(separator: "; ")) + "\n"
+        for p in s.projects.filter({ $0.active && !$0.taskNames.isEmpty }).prefix(200) {
+            add("- [\(p.id)] \(p.name) — recent tasks: " + p.taskNames.map { String($0.prefix(80)) }.joined(separator: "; ") + "\n")
             for m in members(p, s.people) { onProjects[m.person.id, default: []].append(p.name) }
         }
-        out += "\nPEOPLE\n"
+        add("\nPEOPLE\n")
         for e in s.people {
-            out += "- [\(e.id)] \(e.name)" + (e.title.isEmpty ? "" : " — \(e.title)")
-                + (onProjects[e.id].map { " — on: " + $0.joined(separator: ", ") } ?? "") + "\n"
+            guard let on = onProjects[e.id] else { continue }
+            add("- [\(e.id)] \(e.name)" + (e.title.isEmpty ? "" : " — \(e.title)") + " — on: " + on.joined(separator: ", ") + "\n")
         }
         return out
     }

@@ -228,8 +228,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NikxelView.tell(icon: "🏢", title: "Reading ERP…", lines: ["Gathering people, projects and who works on what. This can take a minute."])
         let momGen = meetingCoordinator.momGen
         DispatchQueue.global(qos: .userInitiated).async {
-            let snap = ERP.orgSnapshot()
-            guard !snap.people.isEmpty || !snap.projects.isEmpty else {
+            guard let snap = ERP.orgSnapshot(), !snap.projects.isEmpty else {
                 DispatchQueue.main.async {
                     NikxelView.tell(icon: "⚠️", title: "Couldn't read the ERP", lines: ["Check your ERP connection and try again."], kind: .warning)
                 }
@@ -245,10 +244,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 alert.addButton(withTitle: "Cancel")
                 guard alert.runOnTop() == .alertFirstButtonReturn else { return }
                 DispatchQueue.global(qos: .utility).async {
-                    let ok = CloudSync.importOrg(body)
+                    let status = CloudSync.importOrg(body)
+                    let ok = status.map { (200..<300).contains($0) } ?? false
                     DispatchQueue.main.async {
                         NikxelView.tell(icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send",
-                                        lines: [ok ? "Refine it in the dashboard's Org tab." : "Only the owner or an admin can do this, or the dashboard is unreachable."],
+                                        lines: [ok ? "Refine it in the dashboard's Org tab."
+                                                : status == 403 ? "Only the owner or an admin can build the org." : "Couldn't reach the dashboard."],
                                         kind: ok ? .info : .warning)
                     }
                 }

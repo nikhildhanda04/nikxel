@@ -10,6 +10,8 @@ import { nikxelPath, writeAtomic, readText } from "../core/paths";
 export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[]; project: string }
 /// Resolves the parsed JSON body on 2xx, null on any failure.
 export type Poster = (path: string, body: unknown, bearer: string | null) => Promise<any | null>;
+/// Resolves the HTTP status, null when the server can't be reached.
+export type StatusPoster = (path: string, body: unknown, bearer: string | null) => Promise<number | null>;
 
 /// The sections that are sent (work and meetings; never chats or open tasks),
 /// and the type an untagged bullet in each gets.
@@ -25,17 +27,22 @@ export class CloudSync {
     return t === "" ? null : t;
   }
 
-  static httpPost: Poster = async (p, body, bearer) => {
+  /// The raw response, null when the server can't be reached.
+  static async send(p: string, body: unknown, bearer: string | null): Promise<Response | null> {
     try {
-      const res = await fetch(CloudSync.backendBase() + p, {
+      return await fetch(CloudSync.backendBase() + p, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(20000),
       });
-      if (!res.ok) return null;
-      return await res.json().catch(() => ({}));
     } catch { return null; }
+  }
+
+  static httpPost: Poster = async (p, body, bearer) => {
+    const res = await CloudSync.send(p, body, bearer);
+    if (!res?.ok) return null;
+    return await res.json().catch(() => ({}));
   };
 
   static async pair(code: string, post: Poster = CloudSync.httpPost): Promise<boolean> {
@@ -69,11 +76,12 @@ export class CloudSync {
     return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
   }
 
-  /// Sends orgImport's body (after the user confirmed it). False on no token or a failed POST (403 for non owner/admin).
-  static async importOrg(body: unknown, post: Poster = CloudSync.httpPost): Promise<boolean> {
+  /// Sends orgImport's body (after the user confirmed it). The HTTP status (403 for non owner/admin);
+  /// null on no token or when the dashboard can't be reached.
+  static async importOrg(body: unknown, post: StatusPoster = async (p, b, t) => (await CloudSync.send(p, b, t))?.status ?? null): Promise<number | null> {
     const tok = CloudSync.token();
-    if (!tok) return false;
-    return (await post("/api/org/import", body, tok)) !== null;
+    if (!tok) return null;
+    return post("/api/org/import", body, tok);
   }
 
   /// Top-level bullets of every "## " section but Summary; indented bullets become details.

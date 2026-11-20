@@ -1,4 +1,4 @@
-import { byProject, typeTotals, dayRange, pieSlices, lineSeries, NO_PROJECT, OTHERS } from '../stats.js';
+import { byProject, typeTotals, dayRange, pieSlices, lineSeries, seriesColor, NO_PROJECT, OTHERS } from '../stats.js';
 import { fmtMin, typeMeta } from './Day.jsx';
 import Pie from './Pie.jsx';
 import Line from './Line.jsx';
@@ -16,14 +16,14 @@ export default function Charts({ rows, byMember }) {
   const recent = rows.filter((r) => r.date >= range[0]);
   const projects = byProject(recent).filter((p) => p.minutes > 0);
   // Color follows the person: line-chart order assigns it, the member pie carries it over.
-  const series = lineSeries(rows, DAYS).map((s, i) => ({ ...s, color: s.id === OTHERS ? GRAY : `var(--s-${i + 1})`, dashed: s.id === OTHERS }));
+  const series = lineSeries(rows, DAYS).map((s, i) => ({ ...s, color: s.id === OTHERS ? GRAY : seriesColor(i), dashed: s.id === OTHERS }));
   // The "other" type folds into Others: one gray slice, not two.
   const types = pieSlices(typeTotals(recent).map((t) => ({ label: t.type === 'other' ? OTHERS : typeMeta(t.type).label, minutes: t.minutes, color: typeMeta(t.type).color })))
     .map((s) => (s.label === OTHERS ? { ...s, color: GRAY } : s));
   const split = byMember
-    ? pieSlices(series.map((s) => ({ label: s.name, minutes: s.total, color: s.color })))
-    : pieSlices(projects.map((p) => ({ label: p.project, minutes: p.minutes }))).map((s, i) => ({ ...s, color: s.label === OTHERS || s.label === NO_PROJECT ? GRAY : `var(--s-${i + 1})` }));
-  const col = 'mb-4 grid content-start gap-4 sm:grid-cols-2 xl:sticky xl:top-6 xl:row-start-1 xl:mb-0 xl:grid-cols-1';
+    ? pieSlices(series.map((s) => ({ id: s.id, label: s.name, minutes: s.total, color: s.color })))
+    : pieSlices(projects.map((p) => ({ label: p.project, minutes: p.minutes }))).map(((k) => (s) => ({ ...s, color: s.label === OTHERS || s.label === NO_PROJECT ? GRAY : seriesColor(k++) }))(0)); // gray slices don't use up a color slot
+  const col = 'mb-4 grid content-start gap-4 sm:grid-cols-2 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto xl:row-start-1 xl:mb-0 xl:grid-cols-1';
 
   return (
     <>

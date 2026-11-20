@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Muted, chipCls as pill } from '../ui.jsx';
 import Day, { fmtMin, fmtDate } from './Day.jsx';
@@ -15,10 +15,19 @@ export default function Team({ teams, admin }) {
   });
   const [rows, setRows] = useState(null), [err, setErr] = useState('');
   const [who, setWho] = useState(''), [date, setDate] = useState('');
+  const denied = useRef(new Set()); // teams that 403'd this visit (lead rights revoked since the page loaded)
   useEffect(() => {
     let live = true;
     setRows(null); setErr(''); setWho(''); setDate('');
-    api.rollup({ team }).then((r) => live && setRows(r), (e) => live && setErr(e.message));
+    api.rollup({ team }).then((r) => live && setRows(r), (e) => {
+      if (!live) return;
+      if (e.status === 403 && team) { // fall back to All (admin) or the next team not yet refused
+        denied.current.add(team);
+        const next = admin ? '' : teams.find((t) => !denied.current.has(t.id))?.id;
+        if (next !== undefined) return pick(next);
+      }
+      setErr(e.message);
+    });
     return () => { live = false; };
   }, [team]);
   const pick = (t) => { setTeam(t); try { localStorage.setItem(KEY, t); } catch {} };

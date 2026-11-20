@@ -14,7 +14,7 @@ export default function Pie({ name, slices }) {
             const len = (s.minutes / total) * C, off = at;
             at += len;
             return (
-              <circle key={s.label} cx="50" cy="50" r={R} fill="none" stroke={s.color} strokeWidth="14"
+              <circle key={s.id ?? s.label} cx="50" cy="50" r={R} fill="none" stroke={s.color} strokeWidth="14"
                 strokeDasharray={`${Math.max(0.5, len - gap)} ${C}`} strokeDashoffset={-off}>
                 <title>{`${s.label}: ${s.pct}% · ${fmtMin(s.minutes)}`}</title>
               </circle>
@@ -26,7 +26,7 @@ export default function Pie({ name, slices }) {
       </svg>
       <ul className="mt-4 space-y-1.5 text-sm">
         {slices.map((s) => (
-          <li key={s.label} className="flex items-center gap-2">
+          <li key={s.id ?? s.label} className="flex items-center gap-2">
             <span className="size-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
             <span className="min-w-0 flex-1 truncate">{s.label}</span>
             <span className="w-9 shrink-0 text-right text-muted tabular-nums">{s.pct}%</span>

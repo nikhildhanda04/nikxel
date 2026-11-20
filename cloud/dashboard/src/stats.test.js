@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { byPersonDay, byProject, typeTotals, dayRange, parseTask, pieSlices, lineSeries } from './stats.js';
+import { byPersonDay, byProject, typeTotals, dayRange, parseTask, pieSlices, lineSeries, seriesColor } from './stats.js';
 
 const rows = [
   { date: '2026-11-20', user_id: 'a', name: 'Asha', items: [
@@ -129,4 +129,12 @@ test('lineSeries: 7 people with topN 5 -> 6 series, last is Others', () => {
   assert.equal(s[5].name, 'Others');
   assert.equal(s[5].points[13], 30);
   assert.deepEqual(lineSeries([], 14), []);
+});
+
+test('seriesColor: 5 defined slots (--s-1..--s-5), gray past them, so a 6-slice pie never gets an undefined color', () => {
+  assert.deepEqual([0, 1, 2, 3, 4].map(seriesColor), ['var(--s-1)', 'var(--s-2)', 'var(--s-3)', 'var(--s-4)', 'var(--s-5)']);
+  assert.equal(seriesColor(5), 'var(--t-other)');
+  const six = pieSlices([60, 50, 40, 30, 20, 10].map((m, i) => ({ label: 'p' + i, minutes: m }))).map((s, i) => seriesColor(i));
+  assert.equal(six.length, 6);
+  assert.ok(six.every((c) => /--s-[1-5]\)|--t-other/.test(c)));
 });

@@ -65,6 +65,8 @@ export function typeTotals(rows) {
 }
 
 export const OTHERS = 'Others';
+// Chart series slot i -> color; index.css defines --s-1..--s-5, anything past them is gray like Others.
+export const seriesColor = (i) => (i < 5 ? `var(--s-${i + 1})` : 'var(--t-other)');
 
 // [{label, minutes}] -> top (max-1) + Others, each with a whole-number pct; pcts sum to 100 (largest remainder).
 // An entry already labelled Others always joins the fold, so Others is one slice, last.

@@ -8,8 +8,11 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const href = (p) => '#projects/' + encodeURIComponent(p);
 
 // Owner/admin see the whole org; a lead sees the merged days of the teams they lead (a person on two teams counted once).
-const load = (teams, admin) => admin ? api.rollup() : Promise.all(teams.map((t) => api.rollup({ team: t.id }))).then((all) =>
-  [...new Map(all.flat().map((r) => [r.date + '|' + r.user_id, r])).values()].sort((a, b) => b.date.localeCompare(a.date) || (a.name || '').localeCompare(b.name || '')));
+const load = (teams, admin) => admin ? api.rollup() : Promise.allSettled(teams.map((t) => api.rollup({ team: t.id }))).then((res) => {
+  const ok = res.filter((x) => x.status === 'fulfilled').map((x) => x.value);
+  if (!ok.length && res.length) throw res[0].reason; // every team failed: show why; one failing team doesn't blank the rest
+  return [...new Map(ok.flat().map((r) => [r.date + '|' + r.user_id, r])).values()].sort((a, b) => b.date.localeCompare(a.date) || (a.name || '').localeCompare(b.name || ''));
+});
 
 export default function Projects({ name, teams, admin }) {
   const [rows, setRows] = useState(null), [err, setErr] = useState('');

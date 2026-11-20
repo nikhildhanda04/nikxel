@@ -56,7 +56,7 @@ class DayLogger {
                 guard let date = Calendar.current.date(byAdding: .day, value: -back, to: Date()) else { continue }
                 let md = self.summaryFileURL(for: date), page = md.deletingPathExtension().appendingPathExtension("html")
                 guard let text = try? String(contentsOf: md, encoding: .utf8),
-                      let html = try? String(contentsOf: page, encoding: .utf8), !html.contains("nx-pv") else { continue }
+                      let html = try? String(contentsOf: page, encoding: .utf8), !html.contains("data-tick") else { continue }
                 try? DayPage.html(from: text, stats: self.dayStats(for: date), daily: true).write(to: page, atomically: true, encoding: .utf8)
             }
         }

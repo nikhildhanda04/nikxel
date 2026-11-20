@@ -100,11 +100,12 @@ enum DayPage {
     }
 
     /// Same markup and script in windows/src/main/system/dayPage.ts.
-    private static let previewDialog = #"<dialog class="nx-pv" aria-label="Preview"><div class="pv-head"><b>How your day will look on the dashboard</b><small>Only what's under “Going” is sent. Close this, click items on the page to cross them out, then preview again.</small><div class="pv-tabs"></div></div><div class="pv-body"></div><div class="pv-foot"><button type="button" class="pv-close">Keep editing</button><button type="button" class="pv-send">Send to dashboard</button></div></dialog>"#
+    private static let previewDialog = #"<dialog class="nx-pv" aria-label="Preview"><div class="pv-head"><b>How your day will look on the dashboard</b><small>Ticked items are sent; untick anything you don't want to share. You can also click items on the page to cross them out.</small><div class="pv-tabs"></div></div><div class="pv-body"></div><div class="pv-foot"><button type="button" class="pv-close">Keep editing</button><button type="button" class="pv-send">Send to dashboard</button></div></dialog>"#
 
     private static let previewJS = #"""
 (function () {
-  // Preview: the day as the dashboard will show it, from what isn't crossed out.
+  // Preview: the day as the dashboard will show it. Ticked = it goes; unticking
+  // crosses the item out on the page too, and the other way round.
   var bar = document.querySelector(".nx-send"), dlg = document.querySelector(".nx-pv"), src = document.getElementById("nx-day");
   if (!bar || !dlg || !src) return;
   var day = JSON.parse(src.textContent), show = "going";
@@ -112,21 +113,21 @@ enum DayPage {
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function dur(m) { var h = Math.floor(m / 60); return h && m % 60 ? h + "h " + (m % 60) + "m" : h ? h + "h" : m + "m"; }
   function type(t) { return T[t] ? t : "other"; }
-  function crossed() { var x = {}; document.querySelectorAll("[data-id].x").forEach(function (el) { x[el.getAttribute("data-id")] = 1; }); return x; }
-  function item(i) {
-    var m = /\s+[—–-]\s*\**(open|done|unclear)\**\.?\s*$/i.exec(i.what), what = m ? i.what.slice(0, m.index) : i.what, t = type(i.type);
-    return '<li><span class="pv-chip pv-' + t + '">' + T[t] + '</span><span class="pv-what">' + esc(what)
-      + (m ? ' <span class="st ' + m[1].toLowerCase() + '">' + m[1].toLowerCase() + '</span>' : '') + '</span>'
-      + (i.minutes ? '<span class="pv-min">' + dur(i.minutes) + '</span>' : '')
+  function crossed() { var x = {}; document.querySelectorAll("main [data-id].x").forEach(function (el) { x[el.getAttribute("data-id")] = 1; }); return x; }
+  function tick(id, going) { return '<input type="checkbox" class="pv-tick" data-tick="' + esc(id) + '"' + (going ? " checked" : "") + ' aria-label="Send this">'; }
+  function item(i, going) {
+    var t = type(i.type);
+    return '<li><label class="pv-row">' + tick(i.id, going) + '<span class="pv-chip pv-' + t + '">' + T[t] + '</span>'
+      + '<span class="pv-what">' + esc(i.what) + '</span>' + (i.minutes ? '<span class="pv-min">' + dur(i.minutes) + '</span>' : '') + '</label>'
       + (i.details.length ? '<details><summary>' + i.details.length + ' more</summary><ul>' + i.details.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join("") + '</ul></details>' : '')
       + '</li>';
   }
-  function groups(list) {
+  function groups(list, going) {
     var order = [];
     list.forEach(function (i) { if (order.indexOf(i.section) < 0) order.push(i.section); });
     return order.map(function (s) {
       return '<h3>' + esc(s.charAt(0).toUpperCase() + s.slice(1)) + '</h3><ul class="pv-items">'
-        + list.filter(function (i) { return i.section === s; }).map(item).join("") + '</ul>';
+        + list.filter(function (i) { return i.section === s; }).map(function (i) { return item(i, going); }).join("") + '</ul>';
     }).join("");
   }
   function render() {
@@ -141,17 +142,23 @@ enum DayPage {
     if (show === "going") {
       html = !nGoing ? '<p class="pv-empty">Nothing will be shared.</p>'
         : '<div class="pv-card"><p class="pv-date">' + esc(date ? date.textContent : "") + '</p>'
-          + (head ? '<p class="pv-hl">' + esc(day.headline) + '</p>' : '')
+          + (head ? '<label class="pv-row pv-hl">' + tick("headline", true) + '<span>' + esc(day.headline) + '</span></label>' : '')
           + (total ? '<div class="pv-bar" aria-hidden="true">' + Object.keys(mins).map(function (t) { return '<i class="pv-' + t + '" style="flex:' + mins[t] + '"></i>'; }).join("") + '</div>'
             + '<p class="pv-legend">' + Object.keys(mins).map(function (t) { return dur(mins[t]) + " " + T[t].toLowerCase(); }).join(" · ") + '</p>' : '')
-          + groups(going) + '</div>';
+          + groups(going, true) + '</div>';
     } else {
-      html = !nGone ? '<p class="pv-empty">Nothing is crossed out — everything on this page goes.</p>'
-        : '<div class="pv-gone">' + (day.headline && x.headline ? '<h3>Summary</h3><p class="pv-what">' + esc(day.headline) + '</p>' : '') + groups(gone) + '</div>';
+      html = !nGone ? '<p class="pv-empty">Nothing is unticked — everything goes.</p>'
+        : '<div class="pv-gone">' + (day.headline && x.headline ? '<h3>Summary</h3><label class="pv-row">' + tick("headline", false) + '<span class="pv-what">' + esc(day.headline) + '</span></label>' : '')
+          + groups(gone, false) + '</div>';
     }
     dlg.querySelector(".pv-body").innerHTML = html;
   }
   bar.querySelector(".nx-prev").onclick = function () { show = "going"; render(); dlg.showModal(); };
+  dlg.addEventListener("change", function (e) {
+    var id = e.target.getAttribute("data-tick"); if (!id) return;
+    document.querySelectorAll("main [data-id]").forEach(function (el) { if (el.getAttribute("data-id") === id) el.classList.toggle("x", !e.target.checked); });
+    render();
+  });
   dlg.addEventListener("click", function (e) {
     var b = e.target.closest("button"); if (!b) return;
     if (b.dataset.v) { show = b.dataset.v; render(); }
@@ -424,15 +431,18 @@ enum DayPage {
     .pv-card { display: grid; gap: 10px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
     .pv-date { font: 500 12px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
     .pv-hl { font: 500 18px/1.45 var(--serif); }
+    .pv-hl { flex-wrap: nowrap; } .pv-hl span { flex: 1; min-width: 0; }
     .pv-bar { display: flex; gap: 2px; height: 10px; border-radius: 99px; overflow: hidden; }
     .pv-bar i { background: var(--pv); }
     .pv-legend { color: var(--muted); font-size: 13px; }
     .nx-pv h3 { margin: 12px 0 2px; font: 600 15px/1.3 var(--serif); }
-    .pv-items > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+    .pv-items > li { padding: 9px 0; border-top: 1px solid var(--line); }
+    .pv-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; }
+    .pv-tick { flex: none; width: 17px; height: 17px; margin: 0; transform: translateY(3px); accent-color: var(--accent); cursor: pointer; }
     .pv-what { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
     .pv-min { font: 500 13px/1 var(--mono); color: var(--muted); }
     .pv-chip { flex: none; font: 600 10.5px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: #fff; background: var(--pv); border-radius: 6px; padding: 4px 7px; }
-    .pv-items details { flex-basis: 100%; color: var(--muted); font-size: 14px; }
+    .pv-items details { margin: 4px 0 0 27px; color: var(--muted); font-size: 14px; }
     .pv-items summary { cursor: pointer; }
     .pv-items details ul { display: grid; gap: 4px; margin-top: 4px; padding-left: 18px; list-style: disc; }
     .pv-gone .pv-what { text-decoration: line-through; color: var(--faint); }

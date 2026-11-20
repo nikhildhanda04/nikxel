@@ -50,8 +50,9 @@ enum CloudSync {
         return true
     }
 
-    /// The type an untagged bullet gets from its section.
-    static let sectionTypes = ["meetings": "meeting", "whatsapp": "comms", "slack": "comms", "browsing & reading": "research"]
+    /// The sections that are sent (work and meetings; never chats or open tasks),
+    /// and the type an untagged bullet in each gets.
+    static let sectionTypes = ["what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other"]
     static let types: Set<String> = ["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]
 
     /// First 12 hex of SHA-256(section + "\n" + what.lowercased()). The daily page uses it for data-id.
@@ -88,11 +89,11 @@ enum CloudSync {
                 if t.isEmpty { if !headline.isEmpty { headlineDone = true } } else if !headlineDone { headline += (headline.isEmpty ? "" : " ") + t }
                 continue
             }
-            guard !section.isEmpty else { continue }
+            guard let base = sectionTypes[section] else { continue }
             if line.hasPrefix("- ") || line.hasPrefix("* ") {
                 open = false
                 var text = String(line.dropFirst(2)).replacingOccurrences(of: "**", with: "")
-                var type = sectionTypes[section] ?? "other"
+                var type = base
                 // Any [word] tag is hidden on the daily page, so strip it here; unknown ones keep the default type.
                 if let r = text.range(of: #"^\[[a-z]+\]\s*"#, options: .regularExpression) {
                     let tag = String(text[r]).trimmingCharacters(in: CharacterSet(charactersIn: "[] "))

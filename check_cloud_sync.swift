@@ -14,11 +14,11 @@ import Foundation
         let md = "## Summary\nBig day on the dashboard.\n\n## What you worked on\n- [coding] **Fixed typing lag** — 1h 30m\n  - found the missing tap re-enable\n- Planning Q4 ~2h\n\n## Meetings\n- 10:30 — Standup 15m\n- None today.\n\n## WhatsApp\n- No calls today.\n- Ravi asked you to send the deck — open\n\n## Open tasks\n- Send deck — for Ravi — open"
         let (headline, items) = CloudSync.dayItems(fromDailySummary: md)
         check(headline == "Big day on the dashboard.", "headline")
-        check(items.count == 5, "five items: \(items.count)")
+        check(items.count == 3, "work + meetings only: \(items.count)")
         check(items.first == CloudSync.DayItem(id: items.first?.id ?? "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"]), "item 0")
         check(items.count > 1 && items[1].type == "other" && items[1].minutes == 120, "untagged -> other, 2h")
         check(items.contains { $0.section == "meetings" && $0.type == "meeting" }, "meeting type")
-        check(items.contains { $0.section == "whatsapp" && $0.type == "comms" }, "chats -> comms")
+        check(!items.contains { ["whatsapp", "open tasks"].contains($0.section) }, "chats and open tasks never sent")
         check(items.first?.id.count == 12 && items == CloudSync.dayItems(fromDailySummary: md).items, "stable 12-hex id")
         check(CloudSync.itemID(section: "a", what: "X") == CloudSync.itemID(section: "a", what: "x") && CloudSync.itemID(section: "a", what: "x") != CloudSync.itemID(section: "b", what: "x"), "id per section, case-insensitive")
 
@@ -44,7 +44,7 @@ import Foundation
         let sentItems = sent?["items"] as? [[String: Any]] ?? []
         check(r && bearer == "tok123" && (sent?["kind"] as? String) == "day" && (sent?["date"] as? String) == "2026-11-20", "push body kind/date, bearer")
         check(Set(sent?.keys.map { $0 } ?? []) == ["kind", "date", "headline", "items"], "push body keys")
-        check(sentItems.count == 4 && !sentItems.contains { ($0["id"] as? String) == id0 }, "skip drops item")
+        check(sentItems.count == 2 && !sentItems.contains { ($0["id"] as? String) == id0 }, "skip drops item")
         check(Set((sentItems.first ?? [:]).keys) == ["id", "section", "what", "type", "minutes", "details"], "item keys")
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in nil }), "failed POST -> false")
         let all = items.map(\.id)
@@ -52,7 +52,7 @@ import Foundation
         check(!CloudSync.pushDay(summary: md, day: "d", skip: Set(all), post: { _, _, _ in Data() }), "all skipped, never sent -> false")
         check(CloudSync.pushDay(summary: md, day: "d", skip: Set(all), allowEmpty: true, post: { _, b, _ in empty = b; return Data() }) && (empty?["items"] as? [[String: Any]])?.isEmpty == true, "allowEmpty retracts with items []")
         _ = CloudSync.pushDay(summary: md, day: "d", skip: ["headline"], post: { _, b, _ in hl = b; return Data() })
-        check((hl?["headline"] as? String) == "" && (hl?["items"] as? [[String: Any]])?.count == 5, "skip headline blanks it, keeps items")
+        check((hl?["headline"] as? String) == "" && (hl?["items"] as? [[String: Any]])?.count == 3, "skip headline blanks it, keeps items")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

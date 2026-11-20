@@ -89,7 +89,7 @@ test("daily page: tags hidden, every sent item carries its dayItems id, send bar
   assert.doesNotMatch(html, /\[coding\]|\[other\]/);
   assert.match(html, new RegExp(`data-id="${CloudSync.itemID("what you worked on", "Fixed typing lag")}"`));
   const ids = CloudSync.dayItems(tagged).items.map(i => i.id);
-  assert.equal(ids.length, 6);
+  assert.equal(ids.length, 4);
   for (const id of ids) assert.match(html, new RegExp(`data-id="${id}"`));
   assert.match(html, /<h1 data-id="headline">/);
   assert.equal((html.match(/data-id="/g) ?? []).length, ids.length + 1, "none-ish bullets get no id; headline is crossable");
@@ -115,11 +115,10 @@ test("not daily: no ids, no send bar, tags still hidden", () => {
   assert.match(html, /class="nx-todo"/);
 });
 
-test("ticking an open task keeps its data-id (and itemID ignores the status)", () => {
-  const id = CloudSync.itemID("open tasks", "Send deck — for Ravi — open");
-  assert.equal(id, CloudSync.itemID("open tasks", "Send deck — for Ravi — done"));
-  const ticked = DayPage.markTask(tagged, 0, true) ?? "";
-  assert.match(ticked, /Ravi — done/);
-  assert.match(DayPage.html(tagged, null, false, true), new RegExp(`data-id="${id}"`));
-  assert.match(DayPage.html(ticked, null, false, true), new RegExp(`data-id="${id}"`));
+test("open tasks and chats stay on the page but are never crossable or sent", () => {
+  const html = DayPage.html(tagged, null, false, true);
+  assert.doesNotMatch(html, new RegExp(`data-id="${CloudSync.itemID("open tasks", "Send deck — for Ravi — open")}"`));
+  assert.doesNotMatch(html, new RegExp(`data-id="${CloudSync.itemID("whatsapp", "Ravi asked you to send the deck — open")}"`));
+  assert.match(html, /class="nx-todo"/);
+  assert.match(DayPage.markTask(tagged, 0, true) ?? "", /Ravi — done/);
 });

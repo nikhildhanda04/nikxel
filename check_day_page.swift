@@ -14,14 +14,14 @@ import Foundation
         check(!html.contains("[coding]") && !html.contains("[other]"), "tags hidden")
         check(html.contains("data-id=\"\(CloudSync.itemID(section: "what you worked on", what: "Fixed typing lag"))\""), "bold + duration bullet id")
         let ids = CloudSync.dayItems(fromDailySummary: md).items.map(\.id)
-        check(ids.count == 6 && ids.allSatisfy { html.contains("data-id=\"\($0)\"") }, "every dayItems id on the page")
+        check(ids.count == 4 && ids.allSatisfy { html.contains("data-id=\"\($0)\"") }, "every dayItems id on the page")
         check(html.components(separatedBy: "data-id=\"").count - 1 == ids.count + 1 && html.contains("<h1 data-id=\"headline\">"), "none-ish bullets get no id; headline crossable")
         check(html.contains("class=\"nx-send\""), "send bar")
         check(html.contains("class=\"nx-todo\""), "open-task checkbox")
 
         let task = CloudSync.itemID(section: "open tasks", what: "Send deck — for Ravi — open")
         let ticked = DayPage.markTask(in: md, index: 0, done: true) ?? ""
-        check(ticked.contains("Ravi — done") && html.contains("data-id=\"\(task)\"") && DayPage.html(from: ticked, daily: true).contains("data-id=\"\(task)\""), "ticking keeps the task's data-id")
+        check(ticked.contains("Ravi — done") && !html.contains("data-id=\"\(task)\""), "open tasks tick but are never crossable or sent")
 
         if let r = html.range(of: #"(?<=id="nx-day">).*?(?=</script>)"#, options: .regularExpression),
            let day = try? JSONSerialization.jsonObject(with: Data(html[r].utf8)) as? [String: Any],

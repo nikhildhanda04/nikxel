@@ -47,7 +47,7 @@ enum OrgImport {
         let active = projects.filter { $0["active"] as? Bool == true }.count
         return "\(people) people and \(projects.count) projects (\(active) active) — names, work emails, job titles, managers, "
             + "project members and leads, plus project descriptions and people notes that AI wrote from task names "
-            + "(the task names themselves are not sent)."
+            + "(the task names themselves are not sent to the dashboard)."
     }
 
     /// Odoo search_read rows -> snapshot. Employees unreadable -> no people (projects still go);

@@ -35,6 +35,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var erpConnectItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var checkingForUpdates = false
+    private var buildingOrg = false
     private var googleSyncMenuItem: NSMenuItem?
     private var templateMenu: NSMenu?
 
@@ -225,11 +226,17 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             NikxelView.tell(icon: "🏢", title: "Can't build the org yet", lines: ["First \(missing.joined(separator: " and ")) from this menu."], kind: .warning)
             return
         }
+        guard !buildingOrg else {
+            NikxelView.tell(icon: "🏢", title: "Already building…", lines: ["The org is already being built. Finish or cancel that first."])
+            return
+        }
+        buildingOrg = true
         NikxelView.tell(icon: "🏢", title: "Reading ERP…", lines: ["Gathering people, projects and who works on what. This can take a minute."])
         let momGen = meetingCoordinator.momGen
         DispatchQueue.global(qos: .userInitiated).async {
             guard let snap = ERP.orgSnapshot(), !snap.projects.isEmpty else {
                 DispatchQueue.main.async {
+                    self.buildingOrg = false
                     NikxelView.tell(icon: "⚠️", title: "Couldn't read the ERP", lines: ["Check your ERP connection and try again."], kind: .warning)
                 }
                 return
@@ -242,14 +249,16 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 alert.informativeText = "Nikxel will send " + OrgImport.summary(body) + "\n\nYou can refine it in the dashboard's Org tab."
                 alert.addButton(withTitle: "Send")
                 alert.addButton(withTitle: "Cancel")
-                guard alert.runOnTop() == .alertFirstButtonReturn else { return }
+                guard alert.runOnTop() == .alertFirstButtonReturn else { self.buildingOrg = false; return }
                 DispatchQueue.global(qos: .utility).async {
                     let status = CloudSync.importOrg(body)
                     let ok = status.map { (200..<300).contains($0) } ?? false
                     DispatchQueue.main.async {
+                        self.buildingOrg = false
+                        let why = status == 403 ? "Only the owner or an admin can build the org."
+                            : status.map { "The dashboard rejected it (HTTP \($0))." } ?? "Couldn't reach the dashboard."
                         NikxelView.tell(icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send",
-                                        lines: [ok ? "Refine it in the dashboard's Org tab."
-                                                : status == 403 ? "Only the owner or an admin can build the org." : "Couldn't reach the dashboard."],
+                                        lines: [ok ? "Refine it in the dashboard's Org tab." : why],
                                         kind: ok ? .info : .warning)
                     }
                 }

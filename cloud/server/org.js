@@ -45,6 +45,7 @@ export function importOrg(db, orgId, body) {
       upPerson.run(crypto.randomUUID(), orgId, p.erp_id, p.name, p.email, p.title, p.manager_erp_id, p.note, userByEmail.get(orgId, p.email, p.email)?.id ?? null);
     for (const p of projects) {
       upProject.run(crypto.randomUUID(), orgId, p.erp_id, p.name, p.description, p.active);
+      if (!people.length) continue; // employee read failed: keep every existing member
       const pid = projectId.get(orgId, p.erp_id).id, kept = [];
       for (const m of p.members) {
         const person = personId.get(orgId, m.erp_id);
@@ -53,6 +54,9 @@ export function importOrg(db, orgId, body) {
       }
       prune.run(pid, JSON.stringify(kept));
     }
+    // Archived projects vanish from the ERP read: mark the ones not in this import inactive.
+    if (projects.length) db.prepare(`UPDATE org_projects SET active = 0 WHERE org_id = ? AND erp_id NOT IN (SELECT value FROM json_each(?))`)
+      .run(orgId, JSON.stringify(projects.map((p) => p.erp_id)));
   })();
 }
 

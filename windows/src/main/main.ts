@@ -507,7 +507,21 @@ class NikxelApp {
 
   /// Reads people and projects from the ERP, has the AI write short notes, and sends the draft
   /// to the dashboard's Org tab, only after the user confirms exactly what goes.
+  private buildingOrg = false;
   private async buildOrgFromERP(): Promise<void> {
+    if (this.buildingOrg) {
+      ui.tell({ icon: "🏢", title: "Already building…", lines: ["The org is already being built. Finish or cancel that first."] });
+      return;
+    }
+    this.buildingOrg = true;
+    try {
+      await this.buildOrgFromERPInner();
+    } finally {
+      this.buildingOrg = false;
+    }
+  }
+
+  private async buildOrgFromERPInner(): Promise<void> {
     const missing = [ERP.isConnected() ? null : "connect Forklyft ERP", CloudSync.token() ? null : "connect to the dashboard"].filter(Boolean);
     if (missing.length) {
       ui.tell({ icon: "🏢", title: "Can't build the org yet", kind: "warning", lines: [`First ${missing.join(" and ")} from this menu.`] });
@@ -531,7 +545,7 @@ class NikxelApp {
     const ok = status != null && status >= 200 && status < 300;
     ui.tell({
       icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send", kind: ok ? "info" : "warning",
-      lines: [ok ? "Refine it in the dashboard's Org tab." : status === 403 ? "Only the owner or an admin can build the org." : "Couldn't reach the dashboard."],
+      lines: [ok ? "Refine it in the dashboard's Org tab." : status === 403 ? "Only the owner or an admin can build the org." : status != null ? `The dashboard rejected it (HTTP ${status}).` : "Couldn't reach the dashboard."],
     });
   }
 

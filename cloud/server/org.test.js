@@ -96,3 +96,22 @@ test('import validates the body', () => {
   assert.equal(person(db, 1).name.length, 200);
   assert.equal(person(db, 1).note.length, 500);
 });
+
+test('re-import with no people (ERP read failed) keeps teams and leads', () => {
+  const db = setup();
+  importOrg(db, 'O', body());
+  importOrg(db, 'O', body({ people: [], projects: body().projects.map((p) => ({ ...p, members: [] })) }));
+  assert.equal(member(db, 10, 2).role, 'lead');
+  assert.ok(member(db, 11, 3));
+  assert.equal(project(db, 10).active, 1);
+});
+
+test('projects missing from a later import become inactive; empty project list changes nothing', () => {
+  const db = setup();
+  importOrg(db, 'O', body());
+  importOrg(db, 'O', body({ projects: [body().projects[0]] }));
+  assert.equal(project(db, 10).active, 1);
+  assert.equal(project(db, 11).active, 0);
+  importOrg(db, 'O', body({ projects: [] }));
+  assert.equal(project(db, 10).active, 1);
+});

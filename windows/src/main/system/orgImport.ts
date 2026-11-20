@@ -38,7 +38,7 @@ export function summary(body: ImportBody): string {
   const active = body.projects.filter(p => p.active).length;
   return `${body.people.length} people and ${body.projects.length} projects (${active} active) — names, work emails, job titles, managers, ` +
     "project members and leads, plus project descriptions and people notes that AI wrote from task names " +
-    "(the task names themselves are not sent).";
+    "(the task names themselves are not sent to the dashboard).";
 }
 
 /// Odoo search_read rows -> snapshot. Employees unreadable -> no people (projects still go);

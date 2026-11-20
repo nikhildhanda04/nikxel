@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { orgStats, sortTeams, teamCards, teamSummary } from '../orgView.js';
 import { Chips, H, Input, Muted, chipCls } from '../ui.jsx';
@@ -11,6 +11,7 @@ import TeamGrid from './TeamGrid.jsx';
 export default function Org({ route = 'org' }) {
   const [org, setOrg] = useState(null), [members, setMembers] = useState([]), [membersErr, setMembersErr] = useState(''), [err, setErr] = useState({});
   const [f, setF] = useState({ q: '', which: 'active', noLead: false, sort: 'size' }); // Teams toolbar; survives drawer open/close
+  const fromGrid = useRef(false); // drawer opened from the grid this session: close = Back (no extra history entry); deep link: replace
   const load = () => api.org().then(setOrg, (e) => setErr((x) => ({ ...x, load: e.message })));
   useEffect(() => { load(); api.members().then(setMembers, (e) => setMembersErr(e.message)); }, []);
   // Every mutation: run it, then refetch the org; errors show next to the thing that failed (keyed).
@@ -23,6 +24,7 @@ export default function Org({ route = 'org' }) {
   const [, sub, id] = route.split('/');
   const tab = sub === 'people' ? 'people' : 'teams';
   const open = sub === 'team' ? teamCards(org.projects, 'all').find((p) => encodeURIComponent(p.id) === id) : null; // any status; unknown id: just the grid
+  const closeDrawer = () => { if (fromGrid.current) { fromGrid.current = false; history.back(); } else location.replace('#org'); };
   const noLead = () => { setF((x) => ({ ...x, which: 'active', noLead: true })); location.hash = 'org'; };
 
   return (
@@ -36,15 +38,15 @@ export default function Org({ route = 'org' }) {
       </nav>
       {tab === 'people'
         ? <PeopleTable org={org} members={members} membersErr={membersErr} err={err} run={run} />
-        : <Teams org={org} f={f} setF={setF} />}
+        : <Teams org={org} f={f} setF={setF} fromGrid={fromGrid} />}
       {tab === 'teams' && open && (
-        <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { setErr((x) => ({ ...x, ['t' + open.id]: '' })); location.hash = 'org'; }} />
+        <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { setErr((x) => ({ ...x, ['t' + open.id]: '' })); closeDrawer(); }} />
       )}
     </div>
   );
 }
 
-function Teams({ org, f, setF }) {
+function Teams({ org, f, setF, fromGrid }) {
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   const s = f.q.trim().toLowerCase();
   const cards = sortTeams(teamCards(org.projects, f.which, { noLead: f.noLead }).filter((p) => !s || p.name.toLowerCase().includes(s)).map(teamSummary), f.sort);
@@ -61,7 +63,7 @@ function Teams({ org, f, setF }) {
       </div>
       {!cards.length
         ? <Muted>{s ? 'No teams match.' : `No ${f.which === 'all' ? '' : f.which + ' '}teams${f.noLead ? ' without a lead' : ''}.`}</Muted>
-        : <TeamGrid cards={cards} open={(id) => { location.hash = 'org/team/' + encodeURIComponent(id); }} />}
+        : <TeamGrid cards={cards} open={(id) => { fromGrid.current = true; location.hash = 'org/team/' + encodeURIComponent(id); }} />}
     </section>
   );
 }

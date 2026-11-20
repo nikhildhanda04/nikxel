@@ -34,7 +34,8 @@ export default function TeamDrawer({ p, people, err, run, close }) {
     return () => {
       removeEventListener('keydown', onKey);
       document.body.style.overflow = body;
-      document.querySelector(`[data-team="${CSS.escape(String(p.id))}"]`)?.focus(); // hand focus back to the card
+      // hand focus back to the card; if an edit hid it (archive, rename vs search), to the search box / Teams tab
+      (document.querySelector(`[data-team="${CSS.escape(String(p.id))}"]`) || document.querySelector('input[aria-label="Search teams"]') || document.querySelector('nav[aria-label="Org"] a'))?.focus();
     };
   }, [p.id]);
   // Esc while renaming cancels the rename only (React's stopPropagation keeps it from the window listener).

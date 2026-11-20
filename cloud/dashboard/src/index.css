@@ -1,33 +1,36 @@
 @import "tailwindcss";
 
-/* Same paper / indigo-ink palette as Nikxel's own day pages. */
+/* lafda.fun tokens (shadcn neutral). Theme follows the system; [data-theme] on <html> overrides it. */
 :root {
-  --bg: #f7f4ee; --surface: #fffdf8; --ink: #1f2140; --muted: #5d5f7a; --faint: #9496ad; --line: #e6e1ef;
-  --accent: #4b46b8; --indigo-soft: #e7e6fb; --sage: #e1f0e4; --rose: #fbe3e6; --lamp-soft: #fdeccb;
-  --t-coding: #4b46b8; --t-shipped: #2f8a57; --t-meeting: #c9821c; --t-research: #2b7fa8; --t-learning: #8a4fb8;
-  --t-writing: #b8513f; --t-review: #5f7d2a; --t-planning: #a8457a; --t-comms: #2f9a96; --t-other: #8a8aa0;
+  --bg: #fff; --card: #fff; --fg: #0a0a0a; --muted: #737373; --line: #e5e5e5; --accent: #f5f5f5; --hi: rgb(255 255 255 / .7);
+  --t-coding: #5b5bd6; --t-shipped: #3a9a64; --t-meeting: #c98a2b; --t-research: #3b8cb8; --t-learning: #8d62b8;
+  --t-writing: #c0624f; --t-review: #6f8a3c; --t-planning: #b25a89; --t-comms: #3a9a96; --t-other: #a3a3a3;
 }
-@media (prefers-color-scheme: dark) { :root {
-  --bg: #0f1024; --surface: #171936; --ink: #e9e8f6; --muted: #a4a6c4; --faint: #6f7194; --line: #262955;
-  --accent: #a9a5ff; --indigo-soft: #23255a; --sage: #1c3326; --rose: #3d2230; --lamp-soft: #3a2f1a;
-  --t-coding: #a9a5ff; --t-shipped: #6fd39a; --t-meeting: #f2b85a; --t-research: #6cc3ef; --t-learning: #c99bf0;
-  --t-writing: #f09a85; --t-review: #b5d77a; --t-planning: #f08cc0; --t-comms: #6fdcd6; --t-other: #a4a6c4;
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0a0a0a; --card: #171717; --fg: #fafafa; --muted: #a1a1a1; --line: #ffffff1a; --accent: #262626; --hi: rgb(255 255 255 / .08);
+  --t-coding: #9d9cf0; --t-shipped: #74c495; --t-meeting: #e0b26a; --t-research: #7fbcdc; --t-learning: #bc9ae0;
+  --t-writing: #e39a89; --t-review: #a9c47a; --t-planning: #df98bd; --t-comms: #7ccbc6; --t-other: #8a8a8a;
   color-scheme: dark;
 } }
+:root[data-theme="dark"] {
+  --bg: #0a0a0a; --card: #171717; --fg: #fafafa; --muted: #a1a1a1; --line: #ffffff1a; --accent: #262626; --hi: rgb(255 255 255 / .08);
+  --t-coding: #9d9cf0; --t-shipped: #74c495; --t-meeting: #e0b26a; --t-research: #7fbcdc; --t-learning: #bc9ae0;
+  --t-writing: #e39a89; --t-review: #a9c47a; --t-planning: #df98bd; --t-comms: #7ccbc6; --t-other: #8a8a8a;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
 
 @theme inline {
-  --color-bg: var(--bg); --color-surface: var(--surface); --color-ink: var(--ink); --color-muted: var(--muted);
-  --color-faint: var(--faint); --color-line: var(--line); --color-accent: var(--accent); --color-indigo-soft: var(--indigo-soft);
-  --color-sage: var(--sage); --color-rose: var(--rose); --color-lamp-soft: var(--lamp-soft);
-  --font-serif: "Fraunces", Georgia, serif;
-  --font-sans: "DM Sans", -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "DM Mono", ui-monospace, Menlo, monospace;
+  --color-bg: var(--bg); --color-card: var(--card); --color-fg: var(--fg); --color-muted: var(--muted);
+  --color-line: var(--line); --color-accent: var(--accent);
+  --font-heading: "Instrument Sans", -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Public Sans", -apple-system, "Segoe UI", sans-serif;
 }
 
 @layer base {
-  body { @apply bg-bg text-ink font-sans antialiased; }
+  body { @apply bg-bg text-fg font-sans antialiased; }
   button, input, select { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  :focus-visible { outline: 2px solid color-mix(in srgb, var(--fg) 30%, transparent); outline-offset: 2px; border-radius: 6px; }
   summary { list-style: none; cursor: pointer; }
   summary::-webkit-details-marker { display: none; }
   details[open] > summary .chev { transform: rotate(90deg); }

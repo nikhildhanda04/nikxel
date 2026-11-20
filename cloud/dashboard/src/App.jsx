@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { api } from './api.js';
+import { api, nextTheme } from './api.js';
+import { Icon, pillCls } from './ui.jsx';
 import Login from './screens/Login.jsx';
 import Onboarding from './screens/Onboarding.jsx';
 import Connect from './screens/Connect.jsx';
@@ -34,23 +35,54 @@ export default function App() {
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (
-    <Shell>
-      <header className="mb-10">
-        <div className="flex items-center gap-3 mb-4">
-          <span className="font-serif text-2xl font-extrabold tracking-tight mr-auto">Nikxel</span>
-          <span className="text-sm text-muted truncate">{me.name} · {me.role}</span>
-          <button onClick={logout} className="rounded-full border border-line px-3 py-1 text-sm hover:border-accent">Log out</button>
-        </div>
-        <nav className="flex gap-1 overflow-x-auto border-b border-line text-sm">
-          {tabs.map(([k, l]) => (
-            <a key={k} href={'#' + k} aria-current={tab === k ? 'page' : undefined}
-              className="-mb-px border-b-2 border-transparent px-3 py-2 text-muted hover:text-ink aria-[current=page]:border-accent aria-[current=page]:text-ink aria-[current=page]:font-medium">{l}</a>
-          ))}
-        </nav>
-      </header>
+    <Shell right={<>
+      <span className="min-w-0 truncate text-sm text-muted">{me.name}<span className="hidden sm:inline"> · {me.role}</span></span>
+      <button onClick={logout} className={pillCls}>Log out</button>
+    </>}>
+      <nav className="mb-8 flex gap-5 overflow-x-auto text-sm">
+        {tabs.map(([k, l]) => (
+          <a key={k} href={'#' + k} aria-current={tab === k ? 'page' : undefined}
+            className="whitespace-nowrap py-1 text-muted transition-colors hover:text-fg aria-[current=page]:text-fg aria-[current=page]:font-medium">{l}</a>
+        ))}
+      </nav>
       {screen}
     </Shell>
   );
 }
 
-const Shell = ({ children }) => <main className="max-w-3xl mx-auto px-4 py-8 sm:py-12">{children}</main>;
+// lafda's frame: h-14 header (wordmark left, theme toggle + pill right) over a ~640px column.
+const Shell = ({ right, children }) => (
+  <div className="max-w-2xl mx-auto px-4">
+    <header className="flex h-14 items-center gap-2">
+      <a href="#mine" className="mr-auto shrink-0 font-heading text-2xl font-bold tracking-tight">nikxel</a>
+      <ThemeToggle />
+      {right}
+    </header>
+    <main className="pt-6 pb-16">{children}</main>
+  </div>
+);
+
+// Follows the system until clicked; the choice is then remembered.
+const sysTheme = () => (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+function ThemeToggle() {
+  const cur = () => document.documentElement.dataset.theme || sysTheme();
+  const [t, setT] = useState(cur);
+  useEffect(() => { // keep the icon right if the system flips while no override is set
+    const m = matchMedia('(prefers-color-scheme: dark)'), f = () => setT(cur());
+    m.addEventListener('change', f);
+    return () => m.removeEventListener('change', f);
+  }, []);
+  const flip = () => {
+    const n = nextTheme(cur());
+    document.documentElement.dataset.theme = n;
+    try { localStorage.setItem('theme', n); } catch {}
+    setT(n);
+  };
+  return (
+    <button onClick={flip} aria-label={`Switch to ${nextTheme(t)} mode`} className="inline-flex size-9 items-center justify-center rounded-full text-fg/80 transition-colors hover:bg-accent hover:text-fg">
+      <Icon className="size-[18px]" d={t === 'dark'
+        ? 'M12 3v1M12 20v1M4.2 4.2l.7.7M19.1 19.1l.7.7M3 12h1M20 12h1M4.2 19.8l.7-.7M19.1 4.9l.7-.7M12 8a4 4 0 100 8 4 4 0 000-8z'
+        : 'M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z'} />
+    </button>
+  );
+}

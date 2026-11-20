@@ -41,3 +41,5 @@ export const typeMeta = (type) => {
   const k = TYPES[type] ? type : 'other';
   return { label: TYPES[k][0], color: `var(--t-${k})`, icon: TYPES[k][1] };
 };
+
+export const nextTheme = (t) => (t === 'dark' ? 'light' : 'dark');

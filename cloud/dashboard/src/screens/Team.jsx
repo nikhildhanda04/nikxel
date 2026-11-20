@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { Muted } from '../ui.jsx';
 import Day, { fmtMin, fmtDate } from './Day.jsx';
 
-const pill = (on) => `rounded-full border px-3 py-1 text-sm transition-colors ${on ? 'bg-ink text-bg border-ink' : 'border-line bg-surface hover:border-accent'}`;
+const pill = (on) => `inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors ${on ? 'bg-fg text-bg' : 'bg-accent text-muted hover:text-fg'}`;
 
 export default function Team() {
   const [rows, setRows] = useState(null), [err, setErr] = useState('');
@@ -26,13 +26,13 @@ export default function Team() {
         </div>
         <label className="flex items-center gap-2 text-sm text-muted">
           <span className="sr-only">Date</span>
-          <select value={date} onChange={(e) => setDate(e.target.value)} className="rounded-full border border-line bg-surface px-3 py-1 text-ink">
+          <select value={date} onChange={(e) => setDate(e.target.value)} className="h-7 rounded-md border border-line bg-card px-2 text-fg">
             <option value="">Last {dates.length} days</option>
             {dates.map((d) => <option key={d} value={d}>{fmtDate(d, 'short')}</option>)}
           </select>
         </label>
       </div>
-      {!!shown.length && <Muted className="mb-4">{shown.length} {shown.length === 1 ? 'day' : 'days'} · <span className="font-mono">{fmtMin(mins)}</span> tracked</Muted>}
+      {!!shown.length && <Muted className="mb-4">{shown.length} {shown.length === 1 ? 'day' : 'days'} · <span className="tabular-nums">{fmtMin(mins)}</span> tracked</Muted>}
       <div className="space-y-4">
         {!rows.length && <Muted>No one has sent a day yet.</Muted>}
         {!!rows.length && !shown.length && <Muted>Nothing for this filter.</Muted>}

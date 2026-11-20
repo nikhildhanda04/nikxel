@@ -1140,6 +1140,7 @@ Output this exact Markdown structure:
 ## What you worked on
 - Per-feature/bug bullets. Anchor each one to a real ask from the session prompts when possible: "Fixed the typing-linger bug (asked at ~3pm, shipped commit abc123, ~50 line diff)." Group related prompts into one bullet — don't list every prompt verbatim.
 - Note both shipped work (commits) and in-flight work (uncommitted diff).
+- End each top-level bullet with the time it took, estimated from the session-prompt timestamps, commits and app usage, as "(~1h 20m)" or "(~45m)". This is the only time written on the bullet.
 
 ## Meetings
 - One bullet per meeting: time, who/what (use the MOM summary if present), key outcome if obvious.

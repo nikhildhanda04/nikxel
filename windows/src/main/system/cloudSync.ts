@@ -13,7 +13,7 @@ export type Poster = (path: string, body: unknown, bearer: string | null) => Pro
 
 /// The sections that are sent (work and meetings; never chats or open tasks),
 /// and the type an untagged bullet in each gets.
-const SECTION_TYPES: Record<string, string> = { "what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other", "erp tasks": "planning" };
+const SECTION_TYPES: Record<string, string> = { "what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "erp tasks": "planning" };
 
 export class CloudSync {
   /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.

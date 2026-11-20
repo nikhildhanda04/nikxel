@@ -90,7 +90,7 @@ test("daily page: tags hidden, every sent item carries its dayItems id, send bar
   assert.doesNotMatch(html, /\[coding\]|\[other\]/);
   assert.match(html, new RegExp(`data-id="${CloudSync.itemID("what you worked on", "Fixed typing lag")}"`));
   const ids = CloudSync.dayItems(tagged).items.map(i => i.id);
-  assert.equal(ids.length, 4);
+  assert.equal(ids.length, 3); // "Other" is observations, not work: never sent
   for (const id of ids) assert.match(html, new RegExp(`data-id="${id}"`));
   assert.match(html, /<h1 data-id="headline">/);
   assert.equal((html.match(/data-id="/g) ?? []).length, ids.length + 1, "none-ish bullets get no id; headline is crossable");

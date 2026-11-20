@@ -52,7 +52,7 @@ enum CloudSync {
 
     /// The sections that are sent (work and meetings; never chats or open tasks),
     /// and the type an untagged bullet in each gets.
-    static let sectionTypes = ["what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other", "erp tasks": "planning"]
+    static let sectionTypes = ["what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "erp tasks": "planning"]
     static let types: Set<String> = ["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]
 
     /// First 12 hex of SHA-256(section + "\n" + what.lowercased()). The daily page uses it for data-id.

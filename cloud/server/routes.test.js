@@ -161,3 +161,81 @@ test('push rejects non-day kind/bad body; body cannot redirect org/user; old rou
   assert.equal((await c.api('POST', '/api/summaries/x/release', { headers: A(c) })).status, 404);
   c.close();
 });
+
+const orgBody = () => ({
+  people: [['owA', 1], ['admA', 2], ['memA', 3], ['memA2', 4], ['memA3', 5]].map(([u, e]) => ({ erp_id: e, name: u, email: u.toUpperCase() + '@X.com', title: '', manager_erp_id: null, note: '' })),
+  projects: [
+    { erp_id: 10, name: 'P', description: '', active: true, members: [{ erp_id: 3, lead: true }, { erp_id: 4, lead: false }] },
+    { erp_id: 11, name: 'Q', description: '', active: true, members: [{ erp_id: 5, lead: true }, { erp_id: 2, lead: false }] },
+  ],
+});
+async function bootOrg() {
+  const c = await boot();
+  c.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run('memA3', 'sub-memA3', 'memA3@x.com', 'memA3', 1);
+  c.db.prepare('INSERT INTO memberships VALUES (?,?,?)').run('memA3', 'A', 'member');
+  assert.equal((await c.api('POST', '/api/org/import', { headers: c.deviceFor('admA', 'A'), body: orgBody() })).status, 200);
+  const pid = (n) => c.db.prepare('SELECT id FROM org_projects WHERE name = ?').get(n).id;
+  const per = (e) => c.db.prepare('SELECT id FROM org_people WHERE erp_id = ?').get(e).id;
+  return { ...c, pid, per };
+}
+
+test('org import and management are owner/admin only', async () => {
+  const c = await bootOrg();
+  assert.equal((await c.api('POST', '/api/org/import', { headers: c.deviceFor('memA', 'A'), body: orgBody() })).status, 403);
+  assert.equal((await c.api('POST', '/api/org/import', { body: orgBody() })).status, 401);
+  assert.equal((await c.api('POST', '/api/org/import', { headers: c.deviceFor('owA', 'A'), body: { people: 1 } })).status, 400);
+  assert.equal((await c.api('GET', '/api/org', { headers: A(c) })).status, 403);
+  const big = { people: Array.from({ length: 2000 }, (_, i) => ({ erp_id: 1000 + i, name: 'Person ' + i, email: `p${i}@example.com`, title: 'Senior Software Engineer', manager_erp_id: 1, note: 'n'.repeat(100) })), projects: [] };
+  assert.equal((await c.api('POST', '/api/org/import', { headers: c.deviceFor('owA', 'A'), body: big })).status, 200);
+  c.db.prepare('DELETE FROM org_people WHERE erp_id >= 1000').run();
+  const v = (await c.api('GET', '/api/org', { headers: A(c, 'owA', 'owner') })).json;
+  assert.equal(v.people.length, 5); assert.equal(v.people[0].joined, true);
+  assert.equal((await c.api('GET', '/api/org', { headers: c.cookie('owB', 'B', 'owner') })).json.people.length, 0);
+  const own = A(c, 'owA', 'owner'), P = c.pid('P');
+  assert.equal((await c.api('PATCH', `/api/org/projects/${P}`, { headers: A(c), body: { name: 'X' } })).status, 403);
+  assert.equal((await c.api('PATCH', `/api/org/projects/${P}`, { headers: c.cookie('owB', 'B', 'owner'), body: { name: 'X' } })).status, 404);
+  assert.equal((await c.api('PATCH', `/api/org/projects/${P}`, { headers: own, body: { name: '' } })).status, 400);
+  assert.equal((await c.api('PATCH', `/api/org/projects/${P}`, { headers: own, body: { name: 'P2', archived: true } })).status, 200);
+  assert.deepEqual(c.db.prepare('SELECT name, name_by_hand, archived FROM org_projects WHERE id = ?').get(P), { name: 'P2', name_by_hand: 1, archived: 1 });
+  const m = `/api/org/projects/${P}/members/${c.per(4)}`;
+  assert.equal((await c.api('PUT', m, { headers: own, body: { role: 'boss' } })).status, 400);
+  assert.equal((await c.api('DELETE', m, { headers: own })).status, 200);
+  assert.equal(c.db.prepare('SELECT removed FROM project_members WHERE person_id = ?').get(c.per(4)).removed, 1);
+  assert.equal((await c.api('PUT', m, { headers: own, body: { role: 'lead' } })).status, 200);
+  assert.deepEqual(c.db.prepare('SELECT role, role_by_hand, removed FROM project_members WHERE person_id = ?').get(c.per(4)), { role: 'lead', role_by_hand: 1, removed: 0 });
+  assert.equal((await c.api('PUT', `/api/org/projects/${P}/members/nope`, { headers: own, body: { role: 'lead' } })).status, 404);
+  const pp = `/api/org/people/${c.per(5)}`;
+  assert.equal((await c.api('PATCH', pp, { headers: own, body: { user_id: 'owB' } })).status, 400); // not in org
+  assert.equal((await c.api('PATCH', pp, { headers: own, body: { user_id: null } })).status, 200);
+  assert.deepEqual(c.db.prepare('SELECT user_id, linked_by_hand FROM org_people WHERE id = ?').get(c.per(5)), { user_id: null, linked_by_hand: 1 });
+  assert.equal((await c.api('PATCH', pp, { headers: own, body: { user_id: 'memA3' } })).status, 200);
+  c.close();
+});
+
+test('teams: owner all, lead own, member none', async () => {
+  const c = await bootOrg();
+  const names = async (h) => (await c.api('GET', '/api/teams', { headers: h })).json.map((t) => t.name);
+  assert.deepEqual(await names(A(c, 'owA', 'owner')), ['P', 'Q']);
+  assert.deepEqual(await names(A(c, 'memA')), ['P']);
+  assert.deepEqual(await names(A(c, 'memA2')), []);
+  assert.equal((await c.api('GET', '/api/teams')).status, 401);
+  c.close();
+});
+
+test('rollup by team: lead sees only their team, others 403/404', async () => {
+  const c = await bootOrg();
+  for (const u of ['memA', 'memA2', 'memA3', 'admA']) await push(c, c.deviceFor(u, 'A'), [I('a')]);
+  const P = c.pid('P'), Q = c.pid('Q');
+  const r = await c.api('GET', `/api/rollup?team=${P}`, { headers: A(c, 'memA') });
+  assert.equal(r.status, 200); assert.deepEqual(r.json.map((d) => d.user_id).sort(), ['memA', 'memA2']);
+  assert.equal((await c.api('GET', `/api/rollup?team=${P}`, { headers: A(c, 'memA3') })).status, 403); // lead of Q
+  assert.equal((await c.api('GET', `/api/rollup?team=${P}`, { headers: A(c, 'memA2') })).status, 403);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c, 'memA') })).status, 403);
+  assert.deepEqual((await c.api('GET', `/api/rollup?team=${Q}`, { headers: A(c, 'owA', 'owner') })).json.map((d) => d.user_id).sort(), ['admA', 'memA3']);
+  assert.equal((await c.api('GET', `/api/rollup?team=${P}`, { headers: c.cookie('owB', 'B', 'owner') })).status, 404);
+  assert.equal((await c.api('GET', '/api/rollup?team=nope', { headers: A(c, 'owA', 'owner') })).status, 404);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c, 'owA', 'owner') })).json.length, 4);
+  c.db.prepare("UPDATE project_members SET removed = 1 WHERE person_id = (SELECT id FROM org_people WHERE erp_id = 3)").run();
+  assert.equal((await c.api('GET', `/api/rollup?team=${P}`, { headers: A(c, 'memA') })).status, 403); // removed lead
+  c.close();
+});

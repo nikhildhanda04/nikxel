@@ -1,6 +1,7 @@
 // Dev seed: node seed.js  (idempotent; DB_PATH defaults to ./dev.db)
 // Re-seeding updates only rows the seed created (matching id); real pushed days on the same (user, org, kind, date) are left alone.
 import { openDb, bootstrap } from './db.js';
+import { importOrg } from './org.js';
 
 const db = openDb(process.env.DB_PATH || new URL('./dev.db', import.meta.url).pathname);
 bootstrap(db);
@@ -54,4 +55,18 @@ db.transaction(() => {
         JSON.stringify(items), headline, 'admin', 'sent', now);
   }
 })();
+// Org from the "ERP": seeded once, only while the dev org has no org data, so real imports and hand edits are never touched.
+if (!db.prepare('SELECT 1 FROM org_people WHERE org_id = ? UNION ALL SELECT 1 FROM org_projects WHERE org_id = ?').get(ORG, ORG)) {
+  const titles = { 'dev-jake': 'Founder', 'dev-asha': 'Head of Product', 'dev-ben': 'Engineer', 'dev-cleo': 'Designer' };
+  const erpOf = (id) => 101 + people.findIndex((p) => p[0] === id);
+  const team = (ids, lead) => ids.map((id) => ({ erp_id: erpOf(id), lead: id === lead }));
+  importOrg(db, ORG, {
+    people: people.map(([id, name]) => ({ erp_id: erpOf(id), name, email: id + '@dev.local', title: titles[id], manager_erp_id: id === 'dev-jake' ? null : 101, note: '' })),
+    projects: [
+      { erp_id: 1, name: NX, description: 'Work summaries and org dashboard', active: true, members: team(['dev-jake', 'dev-asha', 'dev-ben', 'dev-cleo'], 'dev-asha') },
+      { erp_id: 2, name: POS, description: 'Point of sale for produce stores', active: true, members: team(['dev-jake', 'dev-asha', 'dev-ben', 'dev-cleo'], 'dev-jake') },
+      { erp_id: 3, name: VL, description: 'Camera-based product lookup', active: true, members: team(['dev-jake', 'dev-asha', 'dev-ben', 'dev-cleo'], 'dev-cleo') },
+    ],
+  });
+}
 for (const [id, name, role] of people) console.log(id.padEnd(10), name.padEnd(6), role);

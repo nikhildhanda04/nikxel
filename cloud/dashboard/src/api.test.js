@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canEditFacts } from './api.js';
+import { typeMeta } from './api.js';
 
-test('canEditFacts is owner-only', () => {
-  assert.equal(canEditFacts('owner'), true);
-  assert.equal(canEditFacts('admin'), false);
-  assert.equal(canEditFacts('member'), false);
+test('typeMeta labels known types and falls back to Other', () => {
+  assert.equal(typeMeta('coding').label, 'Coding');
+  assert.equal(typeMeta('shipped').label, 'Shipped');
+  assert.equal(typeMeta('nope').label, 'Other');
+  for (const t of ['coding', 'shipped', 'meeting', 'research', 'learning', 'writing', 'review', 'planning', 'comms', 'other'])
+    assert.ok(typeMeta(t).color && typeMeta(t).icon, t);
 });

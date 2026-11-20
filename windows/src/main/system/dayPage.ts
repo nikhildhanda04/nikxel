@@ -74,7 +74,7 @@ function html(markdown: string, stats: DayStats | null = null, morning = false, 
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,800;9..144,900&display=swap">
 <style>${css}${morning ? morningCSS : ""}</style></head><body>
 <main>
-${hero(title, find("summary"), morning)}
+${hero(title, find("summary"), morning, daily)}
 ${stats ? tiles(stats) : ""}
 ${body}
 ${daily ? `<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><span class="nx-sent"></span></div>` : ""}
@@ -107,7 +107,7 @@ function section(s: Section, n: number, inner: string): string {
 /// "2026-11-12 — Day in review" -> the date large, the takeaway beneath it.
 /// A week's title carries the Sunday it was written; the week shown is
 /// the seven days before it.
-function hero(title: string, summary: Section | undefined, morning: boolean): string {
+function hero(title: string, summary: Section | undefined, morning: boolean, daily: boolean): string {
   const [day, kind] = title.split(" — ");
   const d = parseLocalDate(day ?? "", false);
   const short = (x: Date) => `${x.getDate()} ${fmt.month(x, "short")}`;
@@ -120,7 +120,7 @@ function hero(title: string, summary: Section | undefined, morning: boolean): st
 <div class="${morning ? "sun" : "moon"}" aria-hidden="true"></div>
 <p class="eyebrow"><span>${esc(d ? kind || fallback : fallback)}</span>${d ? `<span class="yr">${d.getFullYear()}</span>` : ""}</p>
 <p class="date">${esc(date)}</p>
-${headline ? `<h1>${inl(headline)}</h1>` : ""}
+${headline ? `<h1${daily ? ' data-id="headline"' : ""}>${inl(headline)}</h1>` : ""}
 </header>
 ${paras.length ? `<div class="summary">${paras.map(p => `<p>${inl(p)}</p>`).join("")}</div>` : ""}`;
 }

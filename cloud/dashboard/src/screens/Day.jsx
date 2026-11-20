@@ -10,7 +10,7 @@ const STATUS = { open: 'bg-lamp-soft', done: 'bg-sage', unclear: 'bg-rose' };
 export const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
 export const fmtDate = (d, weekday = 'long') => { const t = new Date(d + 'T00:00'); return `${t.toLocaleDateString('en-GB', { weekday })}, ${t.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`; };
 const splitStatus = (what) => {
-  const m = /\s+[—–-]\s+(open|done|unclear)$/i.exec(what);
+  const m = /\s+[—–-]\s+(open|done|unclear)\.?$/i.exec(what);
   return m ? [what.slice(0, m.index), m[1].toLowerCase()] : [what, null];
 };
 
@@ -60,7 +60,7 @@ export default function Day({ day, open = false }) {
         {[...groups].filter(([, v]) => v.length).map(([s, v]) => (
           <section key={s} className="pt-5">
             <h4 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-faint">{SECTION_LABEL[s] || s[0].toUpperCase() + s.slice(1)}</h4>
-            <ul className="divide-y divide-line">{v.map((i) => <Item key={i.id} i={i} />)}</ul>
+            <ul className="divide-y divide-line">{v.map((i, n) => <Item key={`${i.id}-${n}`} i={i} />)}</ul>
           </section>
         ))}
       </div>

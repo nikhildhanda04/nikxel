@@ -91,7 +91,8 @@ test("daily page: tags hidden, every sent item carries its dayItems id, send bar
   const ids = CloudSync.dayItems(tagged).items.map(i => i.id);
   assert.equal(ids.length, 6);
   for (const id of ids) assert.match(html, new RegExp(`data-id="${id}"`));
-  assert.equal((html.match(/data-id="/g) ?? []).length, ids.length, "none-ish bullets get no id");
+  assert.match(html, /<h1 data-id="headline">/);
+  assert.equal((html.match(/data-id="/g) ?? []).length, ids.length + 1, "none-ish bullets get no id; headline is crossable");
   assert.match(html, /class="nx-send"/);
   assert.match(html, /class="nx-todo"/, "open-task checkbox still renders");
 });

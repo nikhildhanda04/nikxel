@@ -59,15 +59,15 @@ enum CloudSync {
         return SHA256.hash(data: Data((section + "\n" + what.lowercased()).utf8)).map { String(format: "%02x", $0) }.joined().prefix(12).description
     }
 
-    /// Sends the day (minus `skip` ids) as kind "day". False on no token, no items or failed POST.
-    static func pushDay(summary: String, day: String, skip: Set<String>, post: Poster = httpPost) -> Bool {
+    /// Sends the day (minus `skip` ids; "headline" drops the headline) as kind "day". False on no token, no items (unless allowEmpty: retracts a sent day) or failed POST.
+    static func pushDay(summary: String, day: String, skip: Set<String>, allowEmpty: Bool = false, post: Poster = httpPost) -> Bool {
         guard let tok = token else { return false }
         let (headline, all) = dayItems(fromDailySummary: summary)
         let items = all.filter { !skip.contains($0.id) }.map {
             ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details] as [String: Any]
         }
-        guard !items.isEmpty else { return false }
-        return post("/api/summaries", ["kind": "day", "date": day, "headline": headline, "items": items], tok) != nil
+        guard !items.isEmpty || allowEmpty else { return false }
+        return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
     }
 
     struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String] }

@@ -46,6 +46,12 @@ import Foundation
         check(sentItems.count == 4 && !sentItems.contains { ($0["id"] as? String) == id0 }, "skip drops item")
         check(Set((sentItems.first ?? [:]).keys) == ["id", "section", "what", "type", "minutes", "details"], "item keys")
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in nil }), "failed POST -> false")
+        let all = items.map(\.id)
+        var hl: [String: Any]?, empty: [String: Any]?
+        check(!CloudSync.pushDay(summary: md, day: "d", skip: Set(all), post: { _, _, _ in Data() }), "all skipped, never sent -> false")
+        check(CloudSync.pushDay(summary: md, day: "d", skip: Set(all), allowEmpty: true, post: { _, b, _ in empty = b; return Data() }) && (empty?["items"] as? [[String: Any]])?.isEmpty == true, "allowEmpty retracts with items []")
+        _ = CloudSync.pushDay(summary: md, day: "d", skip: ["headline"], post: { _, b, _ in hl = b; return Data() })
+        check((hl?["headline"] as? String) == "" && (hl?["items"] as? [[String: Any]])?.count == 5, "skip headline blanks it, keeps items")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

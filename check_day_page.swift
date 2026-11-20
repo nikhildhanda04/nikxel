@@ -15,7 +15,7 @@ import Foundation
         check(html.contains("data-id=\"\(CloudSync.itemID(section: "what you worked on", what: "Fixed typing lag"))\""), "bold + duration bullet id")
         let ids = CloudSync.dayItems(fromDailySummary: md).items.map(\.id)
         check(ids.count == 6 && ids.allSatisfy { html.contains("data-id=\"\($0)\"") }, "every dayItems id on the page")
-        check(html.components(separatedBy: "data-id=\"").count - 1 == ids.count, "none-ish bullets get no id")
+        check(html.components(separatedBy: "data-id=\"").count - 1 == ids.count + 1 && html.contains("<h1 data-id=\"headline\">"), "none-ish bullets get no id; headline crossable")
         check(html.contains("class=\"nx-send\""), "send bar")
         check(html.contains("class=\"nx-todo\""), "open-task checkbox")
 

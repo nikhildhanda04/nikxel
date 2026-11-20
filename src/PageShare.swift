@@ -169,10 +169,11 @@ enum PageShare {
                 return ["error": "Couldn't read this day's summary."]
             }
             let skip = (q("skip") ?? "").split(separator: ",").map(String.init)
-            if CloudSync.dayItems(fromDailySummary: md).items.allSatisfy({ skip.contains($0.id) }) { return ["error": "Nothing left to send."] }
+            let resend = FileManager.default.fileExists(atPath: sentURL.path)
+            if !resend, CloudSync.dayItems(fromDailySummary: md).items.allSatisfy({ skip.contains($0.id) }) { return ["error": "Nothing left to send."] }
             // pushDay blocks for up to 20s; keep the listener free meanwhile.
             DispatchQueue.global().async {
-                guard CloudSync.pushDay(summary: md, day: stem, skip: Set(skip)) else { return later(["error": "Couldn't reach the dashboard. Try again."]) }
+                guard CloudSync.pushDay(summary: md, day: stem, skip: Set(skip), allowEmpty: resend) else { return later(["error": "Couldn't reach the dashboard. Try again."]) }
                 if let data = try? JSONSerialization.data(withJSONObject: ["skip": skip, "sentAt": Date().timeIntervalSince1970] as [String: Any]) {
                     try? data.write(to: sentURL, options: .atomic)
                 }

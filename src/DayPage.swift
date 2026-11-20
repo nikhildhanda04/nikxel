@@ -76,7 +76,7 @@ enum DayPage {
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,800;9..144,900&display=swap">
         <style>\(css)\(morning ? morningCSS : "")</style></head><body>
         <main>
-        \(hero(title: title, summary: sections.first { $0.key == "summary" }, morning: morning))
+        \(hero(title: title, summary: sections.first { $0.key == "summary" }, morning: morning, daily: daily))
         \(stats.map(tiles) ?? "")
         \(body)
         \(daily ? #"<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><span class="nx-sent"></span></div>"# : "")
@@ -111,7 +111,7 @@ enum DayPage {
     /// "2026-11-12 — Day in review" -> the date large, the takeaway beneath it.
     /// A week's title carries the Sunday it was written; the week shown is
     /// the seven days before it.
-    private static func hero(title: String, summary: NotePage.Section?, morning: Bool) -> String {
+    private static func hero(title: String, summary: NotePage.Section?, morning: Bool, daily: Bool) -> String {
         let parts = title.components(separatedBy: " — ")
         let p = DateFormatter(); p.locale = Locale(identifier: "en_US_POSIX"); p.dateFormat = "yyyy-MM-dd"
         let d = p.date(from: parts[0])
@@ -133,7 +133,7 @@ enum DayPage {
         <div class="\(morning ? "sun" : "moon")" aria-hidden="true"></div>
         <p class="eyebrow"><span>\(esc(kind))</span>\(year.isEmpty ? "" : "<span class=\"yr\">\(year)</span>")</p>
         <p class="date">\(esc(date))</p>
-        \(headline.isEmpty ? "" : "<h1>\(inl(headline))</h1>")
+        \(headline.isEmpty ? "" : "<h1\(daily ? " data-id=\"headline\"" : "")>\(inl(headline))</h1>")
         </header>
         \(paras.isEmpty ? "" : "<div class=\"summary\">\(paras.map { "<p>\(inl($0))</p>" }.joined())</div>")
         """

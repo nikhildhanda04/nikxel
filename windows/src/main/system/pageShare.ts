@@ -145,8 +145,9 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       const md = readText(file.replace(/\.html$/i, ".md"));
       if (md == null) return { error: "Couldn't read this day's summary." };
       const skip = (q("skip") ?? "").split(",").filter(Boolean);
-      if (CloudSync.dayItems(md).items.every(i => skip.includes(i.id))) return { error: "Nothing left to send." };
-      if (!(await CloudSync.pushDay(md, stem, new Set(skip)))) return { error: "Couldn't reach the dashboard. Try again." };
+      const resend = fs.existsSync(sentFile);
+      if (!resend && CloudSync.dayItems(md).items.every(i => skip.includes(i.id))) return { error: "Nothing left to send." };
+      if (!(await CloudSync.pushDay(md, stem, new Set(skip), undefined, resend))) return { error: "Couldn't reach the dashboard. Try again." };
       try { writeAtomic(sentFile, JSON.stringify({ skip, sentAt: Date.now() / 1000 })); } catch { /* sent anyway */ }
       return { ok: true };
     }

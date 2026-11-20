@@ -55,14 +55,14 @@ export class CloudSync {
     return crypto.createHash("sha256").update(section + "\n" + what.toLowerCase()).digest("hex").slice(0, 12);
   }
 
-  /// Sends the day (minus `skip` ids) as kind "day". False on no token, no items or failed POST.
-  static async pushDay(summary: string, day: string, skip: Set<string>, post: Poster = CloudSync.httpPost): Promise<boolean> {
+  /// Sends the day (minus `skip` ids; "headline" drops the headline) as kind "day". False on no token, no items (unless allowEmpty: retracts a sent day) or failed POST.
+  static async pushDay(summary: string, day: string, skip: Set<string>, post: Poster = CloudSync.httpPost, allowEmpty = false): Promise<boolean> {
     const tok = CloudSync.token();
     if (!tok) return false;
     const { headline, items: all } = CloudSync.dayItems(summary);
     const items = all.filter((i) => !skip.has(i.id));
-    if (items.length === 0) return false;
-    return (await post("/api/summaries", { kind: "day", date: day, headline, items }, tok)) !== null;
+    if (items.length === 0 && !allowEmpty) return false;
+    return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
   }
 
   /// Top-level bullets of every "## " section but Summary; indented bullets become details.

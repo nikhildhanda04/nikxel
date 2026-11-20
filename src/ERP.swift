@@ -1,14 +1,13 @@
 import AppKit
 
-/// Reads the company's Odoo ERP through the browser, no API key. Nikxel keeps
-/// its own Chrome profile for the ERP — separate from the WhatsApp one — so it
-/// has its own login cookie and never touches the user's keychain or their
-/// normal browser. The browser runs headless: background reads (employees,
-/// roles, tasks) show no window at all. A window appears only to sign in once,
-/// and to show a pre-filled task form on Assign.
-///
-/// Everything is read with Odoo's own web JSON-RPC (`/web/dataset/call_kw`),
-/// evaluated inside the logged-in page, so there's no HTML scraping.
+/// Talks to the company's Odoo ERP over its web JSON-RPC — no API key and no
+/// resident browser. A real browser window opens exactly once, for the Google
+/// sign-in (this server's Cloudflare clears a genuine browser but 403s headless
+/// ones); from it we read the Odoo `session_id` cookie, store it, and close the
+/// browser. Every read and write after that is a plain HTTPS call carrying that
+/// cookie — verified to clear Cloudflare — so nothing runs in the background.
+/// The session lasts months; only when Odoo finally expires it, or the user
+/// disconnects, do they sign in again.
 enum ERP {
     static let base = "https://erp.forklyft.in"
     static let port = 9223
@@ -16,19 +15,19 @@ enum ERP {
 
     private static let lock = NSLock()
     private static var cdp: CDPClient?
+    private static let sessionFile = NSHomeDirectory() + "/.nikxel/erp_session"
+    private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36"
 
     // MARK: - Browser
 
-    /// Launches the ERP browser if it isn't up, and minimizes it when
-    /// `background`. A REAL (non-headless) window: this server sits behind
-    /// Cloudflare, which 403s headless browsers and bare HTTP clients alike,
-    /// so only a genuine browser clears it. We never quit+relaunch once signed
-    /// in — a relaunch makes Odoo reject the restored session — so the window
-    /// is hidden by minimizing, not by killing. Loads the app URL (dashboard
-    /// when logged in, login page otherwise). Shares ChromeBot's discovery.
+    /// Opens the ERP browser for the one-time Google sign-in. A REAL
+    /// (non-headless) window, because this server's Cloudflare clears a genuine
+    /// browser but 403s headless ones. Loads the login/app URL and shares
+    /// ChromeBot's discovery. After sign-in we read the session cookie and quit;
+    /// no browser is kept for the reads and writes, which go over plain HTTPS.
     @discardableResult
-    static func launch(background: Bool) -> Bool {
-        if isPortOpen() { if background { minimizeWindow() }; return true }
+    static func launch() -> Bool {
+        if isPortOpen() { return true }
         guard let browser = ChromeBot.availableBrowser() else {
             cblog("ERP: no Chromium browser installed"); return false
         }
@@ -49,17 +48,7 @@ enum ERP {
         do { try task.run() } catch { cblog("ERP: launch failed — \(error)"); return false }
         cblog("ERP: launched \(browser.name)")
         guard waitForPort(30) else { return false }
-        if background { Thread.sleep(forTimeInterval: 1.0); minimizeWindow() }
         return true
-    }
-
-    /// Hide the browser window without killing the process. Minimizes via CDP,
-    /// so the signed-in session stays live in that same process.
-    static func minimizeWindow() {
-        guard let c = client() else { return }
-        guard let w = c.sendSync("Browser.getWindowForTarget") as? [String: Any],
-              let id = w["windowId"] as? Int else { return }
-        c.sendSync("Browser.setWindowBounds", params: ["windowId": id, "bounds": ["windowState": "minimized"]])
     }
 
     static func quit() {
@@ -103,55 +92,97 @@ enum ERP {
 
     // MARK: - Session
 
-    /// The signed-in user's Odoo uid, or nil when logged out or unreachable.
-    static func sessionUID() -> Int? {
-        guard let c = client() else { return nil }
-        let js = """
-        fetch("\(base)/web/session/get_session_info",{method:"POST",headers:{"Content-Type":"application/json"},\
-        body:JSON.stringify({jsonrpc:"2.0",method:"call",params:{}})}).then(r=>r.json())\
-        .then(j=>JSON.stringify({uid:(j.result&&j.result.uid)||null,name:(j.result&&j.result.name)||null}))\
-        .catch(e=>JSON.stringify({uid:null}))
-        """
-        guard let out = c.eval(js), let data = out.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["uid"] as? Int
+    /// The Odoo session cookie captured at sign-in, or nil. Lives in a 0600 file
+    /// (like the share token), not the Chrome profile, so reads need no browser.
+    static var storedSession: String? {
+        get {
+            let s = (try? String(contentsOfFile: sessionFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (s?.isEmpty == false) ? s : nil
+        }
+        set {
+            if let v = newValue, !v.isEmpty {
+                try? FileManager.default.createDirectory(atPath: (sessionFile as NSString).deletingLastPathComponent,
+                                                         withIntermediateDirectories: true)
+                try? v.write(toFile: sessionFile, atomically: true, encoding: .utf8)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sessionFile)
+            } else {
+                try? FileManager.default.removeItem(atPath: sessionFile)
+            }
+        }
     }
 
-    static var isConnected: Bool { NikxelSettings.erpConnected }
+    static var isConnected: Bool { NikxelSettings.erpConnected && storedSession != nil }
+
+    /// Whether the stored session still logs in right now (a cheap HTTP check).
+    /// Lets Assign tell a real sign-out apart from a transient hiccup and ask the
+    /// user to reconnect instead of failing opaquely.
+    static func hasLiveSession() -> Bool {
+        guard storedSession != nil else { return false }
+        return (sessionUID() ?? 0) > 0
+    }
+
+    /// The signed-in user's Odoo uid, or nil when logged out or unreachable.
+    static func sessionUID() -> Int? {
+        guard let resp = post("/web/session/get_session_info", params: [:], timeout: 10),
+              let result = resp["result"] as? [String: Any] else { return nil }
+        return result["uid"] as? Int
+    }
+
+    /// Clears the session on a confirmed sign-out, so the menu and the Assign
+    /// buttons reflect that the user must reconnect. Only on a real Odoo
+    /// SessionExpired — never on a transient network failure.
+    private static func markDisconnected() {
+        storedSession = nil
+        NikxelSettings.erpConnected = false
+        cblog("ERP: session expired — reconnect needed")
+    }
+
+    /// One Odoo web-JSON-RPC POST carrying the stored session cookie; the decoded
+    /// JSON object, or nil on a transport failure. A browser-like User-Agent plus
+    /// the `session_id` cookie are all this server's Cloudflare needs (verified).
+    private static func post(_ path: String, params: [String: Any], timeout: Double) -> [String: Any]? {
+        guard let sid = storedSession, let url = URL(string: base + path),
+              let data = try? JSONSerialization.data(withJSONObject:
+                ["jsonrpc": "2.0", "method": "call", "params": params]) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("session_id=\(sid)", forHTTPHeaderField: "Cookie")
+        req.httpBody = data
+        let sema = DispatchSemaphore(value: 0); var out: [String: Any]?
+        URLSession.shared.dataTask(with: req) { d, _, _ in
+            defer { sema.signal() }
+            if let d = d { out = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
+        }.resume()
+        _ = sema.wait(timeout: .now() + timeout + 2)
+        return out
+    }
 
     // MARK: - Reads
 
-    /// `model.method(args, kwargs)` through Odoo web JSON-RPC, as the logged-in
-    /// page. Returns the decoded `result`, or nil on error (logged, not thrown).
+    /// `model.method(args, kwargs)` through Odoo web JSON-RPC, carrying the
+    /// stored session cookie — no browser. Returns the decoded `result` (a bare
+    /// id for create, a list for search_read, …), or nil on error (logged, not
+    /// thrown). A SessionExpired clears the session so the UI can prompt a
+    /// reconnect.
     static func callKw(_ model: String, _ method: String, args: [Any], kwargs: [String: Any] = [:]) -> Any? {
-        guard let c = client() else { cblog("ERP: \(model).\(method) — no browser session"); return nil }
-        let body: [String: Any] = ["jsonrpc": "2.0", "method": "call",
-            "params": ["model": model, "method": method, "args": args, "kwargs": kwargs]]
-        guard let bodyData = try? JSONSerialization.data(withJSONObject: body),
-              let bodyStr = String(data: bodyData, encoding: .utf8) else { return nil }
-        // The body is embedded as a JS string literal via JSON.stringify of itself.
-        let lit = jsLiteral(bodyStr)
-        let js = """
-        fetch("\(base)/web/dataset/call_kw",{method:"POST",headers:{"Content-Type":"application/json"},body:\(lit)})\
-        .then(r=>r.json()).then(j=>JSON.stringify(j.error?{__erp_error:j.error.data&&j.error.data.message||j.error.message}:(j.result??null)))\
-        .catch(e=>JSON.stringify({__erp_error:String(e)}))
-        """
+        guard storedSession != nil else { cblog("ERP: \(model).\(method) — not connected"); return nil }
         // Writes (create/write/unlink) can be slow when Odoo fires assignment
-        // notifications, so give them headroom rather than timing out and
-        // leaving an orphan record behind.
+        // notifications, so give them headroom.
         let slow = ["create", "write", "unlink"].contains(method)
-        guard let out = c.eval(js, timeout: slow ? 30 : 10) else {
-            cblog("ERP: \(model).\(method) — no response (timed out)"); return nil
+        guard let resp = post("/web/dataset/call_kw",
+                              params: ["model": model, "method": method, "args": args, "kwargs": kwargs],
+                              timeout: slow ? 30 : 15) else {
+            cblog("ERP: \(model).\(method) — no response"); return nil
         }
-        guard let data = out.data(using: .utf8),
-              // create returns a bare id (e.g. 123) — a JSON fragment, so allow it.
-              let decoded = try? JSONSerialization.jsonObject(with: data, options: [.allowFragments]) else {
-            cblog("ERP: \(model).\(method) — unreadable response"); return nil
+        if let err = resp["error"] as? [String: Any] {
+            let name = (err["data"] as? [String: Any])?["name"] as? String ?? ""
+            if (err["code"] as? Int) == 100 || name.contains("SessionExpired") { markDisconnected() }
+            cblog("ERP: \(model).\(method) failed — \(err["message"] ?? err)"); return nil
         }
-        if let obj = decoded as? [String: Any], let err = obj["__erp_error"] {
-            cblog("ERP: \(model).\(method) failed — \(err)"); return nil
-        }
-        return decoded
+        return resp["result"]
     }
 
     struct Employee { let name: String; let email: String; let role: String; let department: String }
@@ -300,11 +331,6 @@ enum ERP {
 
     // MARK: - Helpers
 
-    private static func jsLiteral(_ s: String) -> String {
-        (try? String(data: JSONSerialization.data(withJSONObject: [s]), encoding: .utf8))
-            .map { String($0.dropFirst().dropLast()) } ?? "\"\""
-    }
-
     static func isPortOpen() -> Bool {
         guard let url = URL(string: "http://localhost:\(port)/json/version") else { return false }
         let req = URLRequest(url: url, timeoutInterval: 0.5)
@@ -324,35 +350,54 @@ enum ERP {
 // MARK: - Sign-in (the one window the user sees)
 
 extension ERP {
-    /// Opens a visible ERP window for the one-time Google sign-in, waits until
-    /// Odoo reports a logged-in uid, then drops back to headless. `done(true)`
-    /// once connected. Call off the main thread.
+    /// Opens a visible ERP window for the one-time Google sign-in. Polls until
+    /// the browser holds a logged-in Odoo session, grabs its `session_id` cookie,
+    /// stores it, and closes the browser — from then on every call is plain
+    /// HTTPS, nothing stays open. `done(true)` once connected. Call off the main
+    /// thread.
     static func signIn(done: @escaping (Bool) -> Void) {
         quit()  // clear any prior instance (blocks until gone)
-        guard launch(background: false) else { done(false); return }
+        guard launch() else { done(false); return }
         // Poll for a login for up to 3 minutes while the user signs in.
         // Give the window a moment to come up, then poll. Closing the window
         // (port drops) means "cancel" -- never reopen it behind the user.
         Thread.sleep(forTimeInterval: 2)
         let deadline = Date().addingTimeInterval(180)
         while Date() < deadline {
-            guard isPortOpen() else { cblog("ERP: sign-in window closed — cancelled"); done(false); return }
-            if let uid = sessionUID(), uid > 0 {
+            guard isPortOpen() else {
+                cblog("ERP: sign-in window closed — cancelled"); storedSession = nil; done(false); return
+            }
+            // captureSession stores whatever cookie the browser currently holds
+            // (anonymous at first); sessionUID over HTTP confirms it's logged in.
+            if captureSession(), let uid = sessionUID(), uid > 0 {
                 cblog("ERP: signed in (uid \(uid))")
                 NikxelSettings.erpConnected = true
-                minimizeWindow()   // keep THIS process (its session is live); just hide it
+                quit()   // no resident browser — reads and writes go over HTTPS
                 done(true); return
             }
             Thread.sleep(forTimeInterval: 2)
         }
         cblog("ERP: sign-in timed out")
+        storedSession = nil
         quit()
         done(false)
     }
 
-    /// On launch: bring the browser up (minimized) if we were connected before.
-    static func startIfConnected() {
-        guard NikxelSettings.erpConnected else { return }
-        DispatchQueue.global(qos: .utility).async { launch(background: true) }
+    /// Read the Odoo `session_id` cookie from the signed-in browser via CDP and
+    /// store it. false until the browser actually has one.
+    private static func captureSession() -> Bool {
+        guard let c = client(),
+              let r = c.sendSync("Storage.getCookies") as? [String: Any],
+              let cookies = r["cookies"] as? [[String: Any]],
+              let sid = cookies.first(where: {
+                  ($0["name"] as? String) == "session_id" &&
+                  (($0["domain"] as? String) ?? "").contains("forklyft")
+              })?["value"] as? String, !sid.isEmpty else { return false }
+        storedSession = sid
+        return true
     }
+
+    /// Nothing to start — reads and writes are plain HTTPS with the stored
+    /// cookie; no browser runs in the background. Kept for the launch call site.
+    static func startIfConnected() {}
 }

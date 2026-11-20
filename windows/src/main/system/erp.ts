@@ -1,131 +1,100 @@
-import { app, BrowserWindow, session } from "electron";
+import { BrowserWindow, session, net } from "electron";
 import { cblog } from "../core/diag";
 import { readText } from "../core/paths";
 import { richHtml } from "../recording/markdown";
 import { Settings } from "../core/settings";
-import { CDPClient } from "../whatsapp/cdpClient";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 
-/// Reads the company's Odoo ERP through a hidden Electron BrowserWindow with
-/// its own persistent session partition — the Windows equivalent of the Mac
-/// app's separate Chrome (src/ERP.swift). A real Chromium UA so the server's
-/// Cloudflare lets it through; the window is shown only for the one-time
-/// sign-in, then hidden (not destroyed) so the Odoo session stays live. Every
-/// read and the task create go through Odoo's web JSON-RPC, evaluated in the
-/// logged-in page — no HTML scraping, no keychain.
+/// Talks to the company's Odoo ERP over its web JSON-RPC — no API key and no
+/// resident browser. A visible Electron window opens exactly once, for the
+/// Google sign-in (this server's Cloudflare clears a real Chromium but 403s
+/// headless clients); from its session partition we read the Odoo `session_id`
+/// cookie, store it, and destroy the window. Every read and write after that is
+/// a plain HTTPS call carrying that cookie — so nothing runs in the background.
+/// The session lasts months. The Mac equivalent is src/ERP.swift.
 
 const BASE = "https://erp.forklyft.in";
 const PARTITION = "persist:nikxel-erp";
 const ODOO_URL = `${BASE}/odoo/`;
 
 let win: BrowserWindow | null = null;
-let cdp: CDPClient | null = null;
-let quitting = false;
-let quitHooked = false;
-
-function createWindow(): BrowserWindow {
-  const ua = chromeUserAgent();
-  const ses = session.fromPartition(PARTITION);
-  ses.setUserAgent(ua);
-
-  const w = new BrowserWindow({
-    width: 1100,
-    height: 800,
-    show: false,
-    title: "Forklyft ERP — Nikxel",
-    autoHideMenuBar: true,
-    webPreferences: {
-      partition: PARTITION,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-      // Keep timers/rendering alive while hidden so background reads work.
-      backgroundThrottling: false,
-    },
-  });
-  w.webContents.setUserAgent(ua);
-  w.webContents.setBackgroundThrottling(false);
-
-  // Closing hides: the session and the page stay alive while Nikxel runs.
-  // Only a real quit destroys it.
-  if (!quitHooked) {
-    quitHooked = true;
-    app.on("before-quit", () => { quitting = true; });
-  }
-  w.on("close", e => { if (quitting) return; e.preventDefault(); w.hide(); });
-  w.on("closed", () => { if (win === w) { win = null; cdp = null; } });
-  w.webContents.on("render-process-gone", () => {
-    if (!w.isDestroyed()) w.loadURL(ODOO_URL, { userAgent: ua }).catch(() => {});
-  });
-
-  cdp = new CDPClient(w.webContents, ua);
-  cdp.attach();
-  w.loadURL(ODOO_URL, { userAgent: ua }).catch(e => cblog(`ERP: load failed — ${e}`));
-  cblog("ERP: opened ERP window");
-  win = w;
-  return w;
-}
-
-/// The window, created on demand. `force` creates it even when ERP was never
-/// connected — only for the explicit sign-in action.
-function ensureWindow(force: boolean): BrowserWindow | null {
-  if (win && !win.isDestroyed()) return win;
-  if (!force && !Settings.erpConnected) return null;
-  try {
-    return createWindow();
-  } catch (e) {
-    cblog(`ERP: couldn't create window — ${e}`);
-    return null;
-  }
-}
-
-function ensureCDP(): CDPClient | null {
-  if (!ensureWindow(false)) return null;
-  return cdp;
-}
-
-export function isConnected(): boolean { return Settings.erpConnected; }
 
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
+export function isConnected(): boolean { return Settings.erpConnected && !!Settings.erpSession; }
+
+/// Whether the stored session still logs in right now (a cheap HTTP check).
+/// Lets Assign tell a real sign-out apart from a transient hiccup and ask the
+/// user to reconnect instead of failing opaquely.
+export async function hasLiveSession(): Promise<boolean> {
+  if (!Settings.erpSession) return false;
+  return ((await sessionUID()) ?? 0) > 0;
+}
+
 // MARK: - Session
 
+/// The signed-in user's Odoo uid, or null when logged out or unreachable.
 async function sessionUID(): Promise<number | null> {
-  const c = ensureCDP();
-  if (!c) return null;
-  const js = `fetch("${BASE}/web/session/get_session_info",{method:"POST",headers:{"Content-Type":"application/json"},` +
-    `body:JSON.stringify({jsonrpc:"2.0",method:"call",params:{}})}).then(r=>r.json())` +
-    `.then(j=>JSON.stringify({uid:(j.result&&j.result.uid)||null})).catch(e=>JSON.stringify({uid:null}))`;
-  const out = await c.eval(js);
-  if (!out) return null;
-  try { const o = JSON.parse(out) as { uid?: unknown }; return typeof o.uid === "number" ? o.uid : null; } catch { return null; }
+  const resp = await post("/web/session/get_session_info", {}, 10000);
+  const result = resp && (resp.result as Record<string, unknown> | undefined);
+  return result && typeof result.uid === "number" ? result.uid : null;
+}
+
+/// Clears the session on a confirmed sign-out, so the menu and Assign buttons
+/// reflect that the user must reconnect. Only on a real Odoo SessionExpired —
+/// never on a transient network failure.
+function markDisconnected(): void {
+  Settings.erpSession = "";
+  Settings.erpConnected = false;
+  cblog("ERP: session expired — reconnect needed");
+}
+
+/// One Odoo web-JSON-RPC POST carrying the stored session cookie; the decoded
+/// JSON object, or null on a transport failure. A browser-like User-Agent plus
+/// the `session_id` cookie are all this server's Cloudflare needs (verified).
+function post(path: string, params: Record<string, unknown>, timeout: number): Promise<Record<string, unknown> | null> {
+  const sid = Settings.erpSession;
+  if (!sid) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const req = net.request({ method: "POST", url: BASE + path });
+    req.setHeader("Content-Type", "application/json");
+    req.setHeader("User-Agent", chromeUserAgent());
+    req.setHeader("Cookie", `session_id=${sid}`);
+    const timer = setTimeout(() => { try { req.abort(); } catch { /* already done */ } resolve(null); }, timeout);
+    req.on("response", res => {
+      const chunks: Buffer[] = [];
+      res.on("data", c => chunks.push(c as Buffer));
+      res.on("end", () => {
+        clearTimeout(timer);
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { resolve(null); }
+      });
+    });
+    req.on("error", () => { clearTimeout(timer); resolve(null); });
+    req.write(JSON.stringify({ jsonrpc: "2.0", method: "call", params }));
+    req.end();
+  });
 }
 
 // MARK: - JSON-RPC
 
-/// `model.method(args, kwargs)` through Odoo web JSON-RPC, as the logged-in
-/// page. Returns the decoded result, or null on error (logged, not thrown).
+/// `model.method(args, kwargs)` through Odoo web JSON-RPC, carrying the stored
+/// session cookie — no browser. Returns the decoded result (a bare id for
+/// create, a list for search_read, …), or null on error (logged, not thrown).
+/// A SessionExpired clears the session so the UI can prompt a reconnect.
 async function callKw(model: string, method: string, args: unknown[], kwargs: Record<string, unknown> = {}): Promise<unknown> {
-  const c = ensureCDP();
-  if (!c) { cblog(`ERP: ${model}.${method} — no browser session`); return null; }
-  const body = JSON.stringify({ jsonrpc: "2.0", method: "call", params: { model, method, args, kwargs } });
-  const lit = JSON.stringify(body); // body embedded as a JS string literal
-  const js = `fetch("${BASE}/web/dataset/call_kw",{method:"POST",headers:{"Content-Type":"application/json"},body:${lit}})` +
-    `.then(r=>r.json()).then(j=>JSON.stringify(j.error?{__erp_error:j.error.data&&j.error.data.message||j.error.message}:(j.result??null)))` +
-    `.catch(e=>JSON.stringify({__erp_error:String(e)}))`;
+  if (!Settings.erpSession) { cblog(`ERP: ${model}.${method} — not connected`); return null; }
   // Writes can be slow when Odoo fires assignment notifications — give them
   // headroom rather than orphaning a record on a timeout.
   const slow = method === "create" || method === "write" || method === "unlink";
-  const out = await c.eval(js, slow ? 30000 : 10000);
-  if (!out) { cblog(`ERP: ${model}.${method} — no response (timed out)`); return null; }
-  let decoded: unknown;
-  try { decoded = JSON.parse(out); } catch { cblog(`ERP: ${model}.${method} — unreadable response`); return null; }
-  if (decoded && typeof decoded === "object" && "__erp_error" in (decoded as Record<string, unknown>)) {
-    cblog(`ERP: ${model}.${method} failed — ${(decoded as Record<string, unknown>).__erp_error}`);
+  const resp = await post("/web/dataset/call_kw", { model, method, args, kwargs }, slow ? 30000 : 15000);
+  if (!resp) { cblog(`ERP: ${model}.${method} — no response`); return null; }
+  const err = resp.error as { code?: number; message?: string; data?: { name?: string } } | undefined;
+  if (err) {
+    if (err.code === 100 || String(err.data?.name ?? "").includes("SessionExpired")) markDisconnected();
+    cblog(`ERP: ${model}.${method} failed — ${err.message || JSON.stringify(err)}`);
     return null;
   }
-  return decoded;
+  return resp.result ?? null;
 }
 
 // MARK: - Reads
@@ -250,34 +219,58 @@ function significantWords(s: string): Set<string> {
 
 // MARK: - Sign-in (the one window the user sees)
 
-/// Opens the ERP window for the one-time sign-in, waits until Odoo reports a
-/// logged-in uid, then hides it (keeping the session). Resolves true once
-/// connected. Hiding/closing the window cancels.
+/// Opens a visible ERP window for the one-time Google sign-in. Polls until the
+/// partition holds a logged-in Odoo session, captures its `session_id` cookie,
+/// stores it, and destroys the window — from then on every call is plain HTTPS,
+/// nothing stays open. Resolves true once connected. Closing the window cancels.
 export async function signIn(): Promise<boolean> {
-  const w = ensureWindow(true);
-  if (!w) return false;
-  w.show();
-  w.focus();
+  const ua = chromeUserAgent();
+  session.fromPartition(PARTITION).setUserAgent(ua);
+  const w = new BrowserWindow({
+    width: 1100, height: 800, title: "Forklyft ERP — Nikxel", autoHideMenuBar: true,
+    webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  win = w;
+  w.on("closed", () => { if (win === w) win = null; });
+  w.webContents.setUserAgent(ua);
+  w.loadURL(ODOO_URL, { userAgent: ua }).catch(e => cblog(`ERP: load failed — ${e}`));
+  cblog("ERP: opened sign-in window");
   await delay(1500);
   const deadline = Date.now() + 180000;
   while (Date.now() < deadline) {
-    if (!win || win.isDestroyed() || !win.isVisible()) { cblog("ERP: sign-in window closed — cancelled"); return false; }
-    const uid = await sessionUID();
-    if (uid && uid > 0) {
-      cblog(`ERP: signed in (uid ${uid})`);
-      Settings.erpConnected = true;
-      if (win && !win.isDestroyed()) win.hide();
-      return true;
+    if (!win || w.isDestroyed()) { cblog("ERP: sign-in window closed — cancelled"); Settings.erpSession = ""; return false; }
+    // captureSession stores whatever cookie the partition holds (anonymous at
+    // first); sessionUID over HTTP confirms it's logged in.
+    if (await captureSession()) {
+      const uid = await sessionUID();
+      if (uid && uid > 0) {
+        cblog(`ERP: signed in (uid ${uid})`);
+        Settings.erpConnected = true;
+        win = null;
+        if (!w.isDestroyed()) w.destroy();
+        return true;
+      }
     }
     await delay(2000);
   }
   cblog("ERP: sign-in timed out");
-  if (win && !win.isDestroyed()) win.hide();
+  Settings.erpSession = "";
+  win = null;
+  if (!w.isDestroyed()) w.destroy();
   return false;
 }
 
-/// On launch: bring the hidden window up if we were connected before.
-export function startIfConnected(): void {
-  if (!Settings.erpConnected) return;
-  ensureWindow(false);
+/// Read the Odoo `session_id` cookie from the sign-in partition and store it.
+/// false until the partition actually has one.
+async function captureSession(): Promise<boolean> {
+  try {
+    const cookies = await session.fromPartition(PARTITION).cookies.get({ name: "session_id" });
+    const c = cookies.find(ck => (ck.domain ?? "").includes("forklyft") && ck.value);
+    if (c?.value) { Settings.erpSession = c.value; return true; }
+  } catch (e) { cblog(`ERP: cookie read failed — ${e}`); }
+  return false;
 }
+
+/// Nothing to start — reads and writes are plain HTTPS with the stored cookie;
+/// no browser runs in the background. Kept for the launch call site.
+export function startIfConnected(): void { /* no resident browser */ }

@@ -58,6 +58,7 @@ interface Stored {
   connectedAgent?: string;
   whatsappConnected?: boolean;
   erpConnected?: boolean;
+  erpSession?: string;
   onboardingCompleted?: boolean;
   roleAsked?: boolean;
   userContext?: string;
@@ -232,6 +233,8 @@ export const Settings = {
 
   get erpConnected(): boolean { return load().erpConnected ?? false; },
   set erpConnected(v: boolean) { save(s => { s.erpConnected = v; }); },
+  get erpSession(): string { return load().erpSession ?? ""; },
+  set erpSession(v: string) { save(s => { s.erpSession = v || undefined; }); },
 
   get onboardingCompleted(): boolean { return load().onboardingCompleted ?? false; },
   set onboardingCompleted(v: boolean) { save(s => { s.onboardingCompleted = v; }); },

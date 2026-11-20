@@ -321,7 +321,7 @@ class NikxelApp {
       item("Summarize This Week Now", () => this.dayLogger.generateWeekNow()),
       { label: "AI Usage", submenu: this.usageMenu() },
       item("Connect Google Account…", () => this.calendarWatcher.reauthenticate()),
-      Settings.erpConnected
+      ERP.isConnected()
         ? item("Forklyft ERP connected ✓", () => void this.connectERP())
         : item("Connect Forklyft ERP…", () => void this.connectERP()),
       item("Tell Nikxel About You…", () => showAboutMe()),
@@ -387,7 +387,7 @@ class NikxelApp {
   }
 
   private async connectERP(): Promise<void> {
-    if (Settings.erpConnected) {
+    if (ERP.isConnected()) {
       await dialog.showMessageBox({
         type: "info", title: "Nikxel", noLink: true,
         message: "Forklyft ERP is connected",

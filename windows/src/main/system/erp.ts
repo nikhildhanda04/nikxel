@@ -14,8 +14,8 @@ import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 /// a plain HTTPS call carrying that cookie — so nothing runs in the background.
 /// The session lasts months. The Mac equivalent is src/ERP.swift.
 
-const BASE = "https://erp.forklyft.in";
-const PARTITION = "persist:nikxel-erp";
+export const BASE = "https://erp.forklyft.in";
+export const PARTITION = "persist:nikxel-erp";
 const ODOO_URL = `${BASE}/odoo/`;
 
 let win: BrowserWindow | null = null;

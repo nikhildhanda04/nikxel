@@ -70,7 +70,8 @@ export default function Day({ day, open = false }) {
   );
 }
 
-function Item({ i }) {
+// `who` (project view) adds a person tag and drops the project tag, which is the page itself.
+export function Item({ i, who }) {
   const t = typeMeta(i.type), [what, status] = splitStatus(i.what || '');
   return (
     <li className="py-3">
@@ -80,7 +81,8 @@ function Item({ i }) {
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         <Tag dot={t.color}>{t.label}</Tag>
-        {i.project && <Tag className="max-w-full">{i.project}</Tag>}
+        {who && <Tag>{who}</Tag>}
+        {i.project && !who && <Tag className="max-w-full">{i.project}</Tag>}
         {status && <Tag dot={STATUS[status]}>{status}</Tag>}
       </div>
       {i.details?.length > 0 && (

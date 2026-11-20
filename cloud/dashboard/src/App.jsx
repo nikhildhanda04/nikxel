@@ -7,6 +7,7 @@ import Connect from './screens/Connect.jsx';
 import Mine from './screens/Mine.jsx';
 import People from './screens/People.jsx';
 import Team from './screens/Team.jsx';
+import Projects from './screens/Projects.jsx';
 
 const useHash = () => {
   const [h, setH] = useState(location.hash.slice(1) || 'mine');
@@ -17,6 +18,8 @@ const useHash = () => {
   }, []);
   return h;
 };
+
+const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -29,9 +32,10 @@ export default function App() {
   if (!me.orgId) return <Shell><Onboarding onDone={load} /></Shell>;
 
   const admin = me.role === 'admin' || me.role === 'owner';
-  const tabs = [['mine', 'My days'], ...(admin ? [['team', 'Team'], ['people', 'People']] : []), ['connect', 'Connect']];
-  const tab = tabs.some(([k]) => k === route) ? route : 'mine';
-  const screen = { mine: <Mine />, connect: <Connect />, team: <Team />, people: <People me={me} /> }[tab];
+  const tabs = [['mine', 'My days'], ...(admin ? [['team', 'Team'], ['projects', 'Projects'], ['people', 'People']] : []), ['connect', 'Connect']];
+  const [base, sub] = route.split('/'); // #projects/<encoded name>
+  const tab = tabs.some(([k]) => k === base) ? base : 'mine';
+  const screen = { mine: <Mine />, connect: <Connect />, team: <Team />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} />, people: <People me={me} /> }[tab];
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Muted } from '../ui.jsx';
 import Day, { fmtMin, fmtDate } from './Day.jsx';
+import Charts from './Charts.jsx';
 
 const pill = (on) => `inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors ${on ? 'bg-fg text-bg' : 'bg-accent text-pill-fg hover:text-fg'}`;
 
@@ -19,6 +20,7 @@ export default function Team() {
 
   return (
     <div>
+      <Charts rows={rows} />
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Person" className="flex flex-wrap gap-1.5 mr-auto">
           <button className={pill(!who)} aria-pressed={!who} onClick={() => setWho('')}>All</button>

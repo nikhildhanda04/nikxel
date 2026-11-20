@@ -13,6 +13,7 @@ import * as PageEdit from "./pageEdit";
 import * as ERP from "./erp";
 import { NotePage } from "../recording/notePage";
 import { DayPage } from "./dayPage";
+import { CloudSync } from "./cloudSync";
 
 /// The Share button on summary pages. The page is a local file, so it can't
 /// reach WhatsApp itself: it asks Nikxel over localhost, and Nikxel sends the
@@ -130,6 +131,25 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       catch { return { error: "Couldn't build the client summary." }; }
       return { url: pathToFileURL(clientFile).href };
     }
+    case "/dashboard-state":
+    case "/dashboard": {
+      // The daily page's Send bar. <stem>.sent.json beside it remembers what was crossed out.
+      if (path.basename(path.dirname(file)) !== "daily") return { error: "Only a daily summary can be sent to the dashboard." };
+      const stem = path.basename(file).replace(/\.html$/i, ""), sentFile = path.join(path.dirname(file), `${stem}.sent.json`);
+      if (url.pathname === "/dashboard-state") {
+        let sent: { skip?: string[]; sentAt?: number } = {};
+        try { sent = JSON.parse(readText(sentFile) ?? "{}"); } catch { /* never sent */ }
+        return { paired: CloudSync.token() !== null, skip: sent.skip ?? [], sentAt: sent.sentAt ?? null };
+      }
+      if (!CloudSync.token()) return { error: "Connect Nikxel to the dashboard first (menu → Connect to Dashboard…)" };
+      const md = readText(file.replace(/\.html$/i, ".md"));
+      if (md == null) return { error: "Couldn't read this day's summary." };
+      const skip = (q("skip") ?? "").split(",").filter(Boolean);
+      if (CloudSync.dayItems(md).items.every(i => skip.includes(i.id))) return { error: "Nothing left to send." };
+      if (!(await CloudSync.pushDay(md, stem, new Set(skip)))) return { error: "Couldn't reach the dashboard. Try again." };
+      try { writeAtomic(sentFile, JSON.stringify({ skip, sentAt: Date.now() / 1000 })); } catch { /* sent anyway */ }
+      return { ok: true };
+    }
     case "/erp":
       // Just whether Assign buttons should show. Matching + create happen
       // server-side on /assign, so the page needs no roster.
@@ -188,7 +208,7 @@ function migrateWidgets(): void {
       if (e.isDirectory()) { walk(full); continue; }
       if (!e.name.toLowerCase().endsWith(".html")) continue;
       const html = readText(full);
-      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw4-->")) continue;
+      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw5-->")) continue;
       const block = widget(html.includes("nx-edit"));
       // Replacer function so "$1" inside the block isn't treated specially.
       const out = html.replace(/<!--nikxel-share-->[\s\S]*?<!--\/nikxel-share-->/, () => block);
@@ -211,7 +231,7 @@ function allowedFile(p: string | null): string | null {
 // MARK: - The button
 
 /// Same markup as src/PageShare.swift.
-const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw4--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw5--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -311,6 +331,36 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       else alert((r && r.error) || "Couldn't build the client summary.");
     });
   };
+
+  // --- Daily page: cross out what stays private, then send the day to the
+  // org dashboard. What was crossed out comes back from <day>.sent.json.
+  var bar = document.querySelector(".nx-send");
+  if (bar) {
+    var sendBtn = bar.querySelector("button"), sentMsg = bar.querySelector(".nx-sent");
+    var hhmm = function (s) { var d = new Date(s * 1000); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); };
+    call("dashboard-state").then(function (r) {
+      if (!r || r.error) return;
+      bar.hidden = false;
+      document.querySelectorAll("[data-id]").forEach(function (el) {
+        if ((r.skip || []).indexOf(el.getAttribute("data-id")) >= 0) el.classList.add("x");
+      });
+      if (r.sentAt) sentMsg.textContent = "Sent " + hhmm(r.sentAt);
+    });
+    document.addEventListener("click", function (e) {
+      if (bar.hidden || e.target.closest("a, input, button")) return;
+      var item = e.target.closest("[data-id]"); if (!item) return;
+      e.preventDefault();   // a click on a task's text crosses it out rather than ticking it
+      item.classList.toggle("x");
+    });
+    sendBtn.onclick = function () {
+      var skip = [].map.call(document.querySelectorAll("[data-id].x"), function (el) { return el.getAttribute("data-id"); });
+      sendBtn.disabled = true; sentMsg.textContent = "Sending…";
+      call("dashboard", { skip: skip.join(",") }).then(function (r) {
+        sendBtn.disabled = false;
+        sentMsg.textContent = (r && r.error) || "Sent ✓ " + hhmm(Date.now() / 1000);
+      });
+    };
+  }
 
   // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
   // connected. Creates the task (title + matched assignee + due) and opens it

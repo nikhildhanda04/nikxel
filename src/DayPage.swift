@@ -42,24 +42,27 @@ enum DayPage {
         return roots
     }
 
-    static func html(from markdown: String, stats: DayLogger.DayStats? = nil, morning: Bool = false) -> String {
+    /// `daily` (the 10pm page only): each sent item gets its CloudSync id as data-id, plus the Send bar.
+    static func html(from markdown: String, stats: DayLogger.DayStats? = nil, morning: Bool = false, daily: Bool = false) -> String {
+        // The type tags are for the dashboard.
+        let markdown = markdown.replacingOccurrences(of: #"(?m)^(\s*[-*] )\[[a-z]+\] "#, with: "$1", options: .regularExpression)
         let (title, sections) = NotePage.parse(markdown)
         var body = "", empty: [String] = [], side: [NotePage.Section] = []
         for s in sections where s.key != "summary" {
             if s.isEmpty { empty.append(s.title); continue }
             if s.key == "browsing & reading" || s.key == "other" { side.append(s); continue }
-            let items = tree(markdown, key: s.key)
+            let items = tree(markdown, key: s.key), id = ider(s.key, daily)
             switch s.key {
-            case "what you worked on": body += section(s, items.count, timeline(items) + paras(s))
-            case "meetings": body += section(s, items.count, meetings(items) + paras(s))
-            case "whatsapp", "slack": body += section(s, items.count, statusList(items) + paras(s))
-            case "open tasks": body += section(s, items.count, todoList(items) + paras(s))
-            default: body += section(s, s.count, NotePage.generic(s.blocks))
+            case "what you worked on": body += section(s, items.count, timeline(items, id) + paras(s))
+            case "meetings": body += section(s, items.count, meetings(items, id) + paras(s))
+            case "whatsapp", "slack": body += section(s, items.count, statusList(items, id) + paras(s))
+            case "open tasks": body += section(s, items.count, todoList(items, id) + paras(s))
+            default: body += section(s, s.count, plainOrGeneric(s, markdown, daily))
             }
         }
         if !side.isEmpty {
             body += "<div class=\"pair\">" + side.map {
-                "<section id=\"\(NotePage.anchor($0.title))\" class=\"sec panel\"><h2>\(esc($0.title))</h2>\(NotePage.generic($0.blocks))</section>"
+                "<section id=\"\(NotePage.anchor($0.title))\" class=\"sec panel\"><h2>\(esc($0.title))</h2>\(plainOrGeneric($0, markdown, daily))</section>"
             }.joined() + "</div>\n"
         }
         if !empty.isEmpty { body += "<p class=\"empty\">Quiet on \(empty.map(esc).joined(separator: " · ")).</p>\n" }
@@ -76,10 +79,29 @@ enum DayPage {
         \(hero(title: title, summary: sections.first { $0.key == "summary" }, morning: morning))
         \(stats.map(tiles) ?? "")
         \(body)
+        \(daily ? #"<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><span class="nx-sent"></span></div>"# : "")
         <footer>Written by Nikxel from \(morning ? "this week's daily summaries" : "today's activity") on this computer. Nothing here left it.</footer>
         </main>
         \(PageShare.widget(editable: PageEdit.daysEditable))</body></html>
         """
+    }
+
+    /// ` data-id="…"` for a top-level bullet: the id dayItems gives that same bullet, so the
+    /// page and the sent day agree. Empty when not daily or when dayItems skips it ("None today.").
+    private static func ider(_ key: String, _ daily: Bool) -> (String) -> String {
+        { text in
+            guard daily, let it = CloudSync.dayItems(fromDailySummary: "## \(key)\n- \(text)").items.first else { return "" }
+            return " data-id=\"\(it.id)\""
+        }
+    }
+
+    /// Daily pages list plain sections from the tree so each top-level bullet can carry an id;
+    /// anything with headings, code or tasks keeps NotePage's generic layout.
+    private static func plainOrGeneric(_ s: NotePage.Section, _ markdown: String, _ daily: Bool) -> String {
+        let simple = s.blocks.allSatisfy { if case .bullet = $0 { return true }; if case .para = $0 { return true }; return false }
+        guard daily, simple else { return NotePage.generic(s.blocks) }
+        let id = ider(s.key, true)
+        return "<ul class=\"plain\">" + tree(markdown, key: s.key).map { "<li\(id($0.text))>\(inl($0.text))\(kids($0.kids))</li>" }.joined() + "</ul>\n" + paras(s)
     }
 
     private static func section(_ s: NotePage.Section, _ n: Int, _ inner: String) -> String {
@@ -137,41 +159,41 @@ enum DayPage {
         items.isEmpty ? "" : "<ul class=\"kids\">" + items.map { "<li>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ul>"
     }
 
-    private static func timeline(_ items: [Item]) -> String {
-        "<ol class=\"line\">" + items.map { "<li>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ol>\n"
+    private static func timeline(_ items: [Item], _ id: (String) -> String) -> String {
+        "<ol class=\"line\">" + items.map { "<li\(id($0.text))>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ol>\n"
     }
 
-    private static func meetings(_ items: [Item]) -> String {
+    private static func meetings(_ items: [Item], _ id: (String) -> String) -> String {
         "<div class=\"meets\">" + items.map { i -> String in
             let ns = i.text as NSString
             guard let m = leadTime.firstMatch(in: i.text, range: NSRange(location: 0, length: ns.length)) else {
-                return "<div class=\"meet\"><div class=\"mb\"><p>\(inl(i.text))</p>\(kids(i.kids))</div></div>"
+                return "<div class=\"meet\"\(id(i.text))><div class=\"mb\"><p>\(inl(i.text))</p>\(kids(i.kids))</div></div>"
             }
             // "**10:31, Standup**:" -> the time leaves the bold, the title keeps it.
             let reopen = m.range(at: 1).location != NSNotFound && m.range(at: 3).location == NSNotFound
             let rest = (reopen ? "**" : "") + ns.substring(from: m.range.upperBound)
             let time = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
-            return "<div class=\"meet\"><span class=\"tm\">\(esc(time))</span><div class=\"mb\"><p>\(inl(rest))</p>\(kids(i.kids))</div></div>"
+            return "<div class=\"meet\"\(id(i.text))><span class=\"tm\">\(esc(time))</span><div class=\"mb\"><p>\(inl(rest))</p>\(kids(i.kids))</div></div>"
         }.joined() + "</div>\n"
     }
 
-    private static func statusList(_ items: [Item]) -> String {
-        "<ul class=\"chat\">" + items.map { "<li>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ul>\n"
+    private static func statusList(_ items: [Item], _ id: (String) -> String) -> String {
+        "<ul class=\"chat\">" + items.map { "<li\(id($0.text))>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ul>\n"
     }
 
     /// Open tasks as checkboxes. Disabled as written, so a sent copy is
     /// read-only; the Share widget enables them and saves a tick (/task).
     /// `data-i` counts only bullets with a status, as markTask does.
-    private static func todoList(_ items: [Item]) -> String {
+    private static func todoList(_ items: [Item], _ id: (String) -> String) -> String {
         var n = -1
         return "<ul class=\"chat\">" + items.map { i -> String in
             let ns = i.text as NSString
             guard let m = status.firstMatch(in: i.text, range: NSRange(location: 0, length: ns.length)) else {
-                return "<li>\(inl(i.text))\(kids(i.kids))</li>"
+                return "<li\(id(i.text))>\(inl(i.text))\(kids(i.kids))</li>"
             }
             n += 1
             let st = ns.substring(with: m.range(at: 1)).lowercased()
-            return "<li class=\"todo\"><label><input type=\"checkbox\" class=\"nx-todo\" data-i=\"\(n)\"\(st == "done" ? " checked" : "") disabled>"
+            return "<li class=\"todo\"\(id(i.text))><label><input type=\"checkbox\" class=\"nx-todo\" data-i=\"\(n)\"\(st == "done" ? " checked" : "") disabled>"
                 + "<span>\(inl(ns.substring(to: m.range.location)))</span>\(st == "unclear" ? " <span class=\"st unclear\">unclear</span>" : "")</label>\(kids(i.kids))</li>"
         }.joined() + "</ul>\n"
     }
@@ -308,6 +330,15 @@ enum DayPage {
     pre { margin: 0; padding: 14px 16px; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font: 400 13px/1.6 var(--mono); white-space: pre-wrap; }
     pre code { background: none; padding: 0; }
 
+    .x { text-decoration: line-through; opacity: .45 }
+    .nx-send { margin-top: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+    .nx-send[hidden] { display: none; }
+    .nx-send p { flex: 1 1 240px; color: var(--muted); font-size: 14.5px; }
+    .nx-send button { font: 600 14px/1 var(--sans); color: var(--bg); background: var(--accent); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; }
+    .nx-send button:disabled { opacity: .6; cursor: default; }
+    .nx-sent { font: 500 13px/1.3 var(--mono); color: var(--muted); }
+    .nx-sent:empty { display: none; }
+
     .empty { margin-top: 40px; padding-top: 18px; border-top: 1px dashed var(--line); color: var(--faint); font-size: 14px; }
     footer { margin-top: 28px; color: var(--faint); font-size: 12.5px; }
 
@@ -317,7 +348,7 @@ enum DayPage {
       @keyframes rise { from { transform: translateY(8px); } to { transform: none; } }
     }
     @media print {
-      body { background: #fff; } .sky { color: var(--ink); background: none; padding: 0; } .moon, footer { display: none; }
+      body { background: #fff; } .sky { color: var(--ink); background: none; padding: 0; } .moon, footer, .nx-send { display: none; }
       .eyebrow { color: var(--muted); } h1 { color: var(--ink); } .sec { break-inside: avoid; }
     }
     """

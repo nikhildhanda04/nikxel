@@ -653,7 +653,7 @@ ${report}`;
         // The .md stays: it's what the WhatsApp bot's memory reads back.
         const stats = this.dayStats(date);
         const page = file.replace(/\.md$/, ".html");
-        await fs.promises.writeFile(page, DayPage.html(output, stats), "utf8");
+        await fs.promises.writeFile(page, DayPage.html(output, stats, false, true), "utf8");
         const line = DayLogger.digestLine(stats);
         if (line) this.onSummaryReady?.(line, page);
         await TwinDistiller.distill([], TwinProfile.recentSentMessages(), output,
@@ -1146,6 +1146,7 @@ Output this exact Markdown structure:
 Rules:
 - Never invent activity not in the data. Inferring is OK ("session prompts mention 'typing lag' and you committed to StateMachine.swift, so you were fixing the typing bug") — flag uncertain inferences.
 - When session prompts and git activity disagree, prefer what the session prompts say the user was trying to do.
+- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. \`- [research] Compared three OCR libraries…\`. Pick [shipped] for a push, release or deploy.
 - Output ONLY the Markdown — no preamble, no closing remarks.
 
 ---

@@ -608,7 +608,7 @@ DAILY SUMMARIES:
                 // The .md stays: it's what the WhatsApp bot's memory reads back.
                 let stats = self.dayStats(for: date)
                 let pageURL = fileURL.deletingPathExtension().appendingPathExtension("html")
-                try DayPage.html(from: output, stats: stats).write(to: pageURL, atomically: true, encoding: .utf8)
+                try DayPage.html(from: output, stats: stats, daily: true).write(to: pageURL, atomically: true, encoding: .utf8)
                 if let line = Self.digestLine(stats) {
                     DispatchQueue.main.async { self.onSummaryReady?(line, pageURL) }
                 }
@@ -1206,6 +1206,7 @@ Output this exact Markdown structure:
 Rules:
 - Never invent activity not in the data. Inferring is OK ("session prompts mention 'typing lag' and you committed to StateMachine.swift, so you were fixing the typing bug") — flag uncertain inferences.
 - When session prompts and git activity disagree, prefer what the session prompts say the user was trying to do.
+- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. `- [research] Compared three OCR libraries…`. Pick [shipped] for a push, release or deploy.
 - Output ONLY the Markdown — no preamble, no closing remarks.
 
 ---

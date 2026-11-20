@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { DayPage } from "../main/system/dayPage";
+import { CloudSync } from "../main/system/cloudSync";
 
 export const day = `# 2026-11-12 — Day in review
 
@@ -79,4 +80,26 @@ test("HTML in the summary is escaped", () => {
   const html = DayPage.html("# 2026-11-12 — Day in review\n\n## What you worked on\n- <script>alert(1)</script> <img src=x>\n");
   assert.doesNotMatch(html, /<script>alert/);
   assert.doesNotMatch(html, /<img src=x>/);
+});
+
+const tagged = "## Summary\nBig day on the dashboard.\n\n## What you worked on\n- [coding] **Fixed typing lag** — 1h 30m\n  - found the missing tap re-enable\n- Planning Q4 ~2h\n\n## Meetings\n- 10:30 — Standup 15m\n- None today.\n\n## WhatsApp\n- No calls today.\n- Ravi asked you to send the deck — open\n\n## Open tasks\n- Send deck — for Ravi — open\n\n## Other\n- [other] Long focus block after lunch\n";
+
+test("daily page: tags hidden, every sent item carries its dayItems id, send bar", () => {
+  const html = DayPage.html(tagged, null, false, true);
+  assert.doesNotMatch(html, /\[coding\]|\[other\]/);
+  assert.match(html, new RegExp(`data-id="${CloudSync.itemID("what you worked on", "Fixed typing lag")}"`));
+  const ids = CloudSync.dayItems(tagged).items.map(i => i.id);
+  assert.equal(ids.length, 6);
+  for (const id of ids) assert.match(html, new RegExp(`data-id="${id}"`));
+  assert.equal((html.match(/data-id="/g) ?? []).length, ids.length, "none-ish bullets get no id");
+  assert.match(html, /class="nx-send"/);
+  assert.match(html, /class="nx-todo"/, "open-task checkbox still renders");
+});
+
+test("not daily: no ids, no send bar, tags still hidden", () => {
+  const html = DayPage.html(tagged, null, false, false);
+  assert.doesNotMatch(html, /data-id=/);
+  assert.doesNotMatch(html, /class="nx-send"/);
+  assert.doesNotMatch(html, /\[coding\]/);
+  assert.match(html, /class="nx-todo"/);
 });

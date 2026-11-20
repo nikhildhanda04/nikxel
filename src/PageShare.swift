@@ -43,7 +43,7 @@ enum PageShare {
               let re = try? NSRegularExpression(pattern: "<!--nikxel-share-->[\\s\\S]*?<!--/nikxel-share-->") else { return }
         for case let url as URL in en where url.pathExtension == "html" {
             guard let html = try? String(contentsOf: url, encoding: .utf8),
-                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw4-->") else { continue }
+                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw5-->") else { continue }
             let block = widget(editable: html.contains("nx-edit"))
             let out = re.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html),
                                                   withTemplate: NSRegularExpression.escapedTemplate(for: block))
@@ -67,17 +67,20 @@ enum PageShare {
             conn.start(queue: queue)
             conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
                 let req = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                let body = handle(req)
-                let json = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
-                var head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n"
-                head += "Content-Length: \(json.count)\r\nConnection: close\r\n\r\n"
-                conn.send(content: Data(head.utf8) + json, completion: .contentProcessed { _ in conn.cancel() })
+                let reply = { (body: [String: Any]) in
+                    let json = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+                    var head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n"
+                    head += "Content-Length: \(json.count)\r\nConnection: close\r\n\r\n"
+                    conn.send(content: Data(head.utf8) + json, completion: .contentProcessed { _ in conn.cancel() })
+                }
+                if let body = handle(req, later: reply) { reply(body) }
             }
         }
         l.start(queue: queue)
     }
 
-    private static func handle(_ req: String) -> [String: Any] {
+    /// Nil when the answer comes later through `later` (/dashboard, off this queue).
+    private static func handle(_ req: String, later: @escaping ([String: Any]) -> Void) -> [String: Any]? {
         let q = { (k: String) in GoogleAuth.queryParam(request: req, key: k) }
         guard q("t") == token else { return ["error": "This page can only be shared from the Mac that made it."] }
         let route = req.split(separator: " ").dropFirst().first?.split(separator: "?").first ?? ""
@@ -152,6 +155,30 @@ enum PageShare {
                 return ["error": "Couldn't build the client summary."]
             }
             return ["url": clientFile.absoluteString]
+        case "/dashboard-state", "/dashboard":
+            // The daily page's Send bar. <stem>.sent.json beside it remembers what was crossed out.
+            guard file.deletingLastPathComponent().lastPathComponent == "daily" else { return ["error": "Only a daily summary can be sent to the dashboard."] }
+            let stem = file.deletingPathExtension().lastPathComponent
+            let sentURL = file.deletingLastPathComponent().appendingPathComponent("\(stem).sent.json")
+            if route == "/dashboard-state" {
+                let sent = (try? Data(contentsOf: sentURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+                return ["paired": CloudSync.token != nil, "skip": sent["skip"] as? [String] ?? [], "sentAt": sent["sentAt"] as? Double ?? NSNull()]
+            }
+            guard CloudSync.token != nil else { return ["error": "Connect Nikxel to the dashboard first (menu → Connect to Dashboard…)"] }
+            guard let md = try? String(contentsOf: file.deletingPathExtension().appendingPathExtension("md"), encoding: .utf8) else {
+                return ["error": "Couldn't read this day's summary."]
+            }
+            let skip = (q("skip") ?? "").split(separator: ",").map(String.init)
+            if CloudSync.dayItems(fromDailySummary: md).items.allSatisfy({ skip.contains($0.id) }) { return ["error": "Nothing left to send."] }
+            // pushDay blocks for up to 20s; keep the listener free meanwhile.
+            DispatchQueue.global().async {
+                guard CloudSync.pushDay(summary: md, day: stem, skip: Set(skip)) else { return later(["error": "Couldn't reach the dashboard. Try again."]) }
+                if let data = try? JSONSerialization.data(withJSONObject: ["skip": skip, "sentAt": Date().timeIntervalSince1970] as [String: Any]) {
+                    try? data.write(to: sentURL, options: .atomic)
+                }
+                later(["ok": true])
+            }
+            return nil
         case "/erp":
             // Just whether Assign buttons should show. Matching + create happen
             // server-side on /assign, so the page needs no roster.
@@ -216,7 +243,7 @@ enum PageShare {
 
     /// Same markup in windows/src/main/system/pageShare.ts.
     private static let widgetTemplate = #"""
-<!--nikxel-share--><!--nxw4--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+<!--nikxel-share--><!--nxw5--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 <style>
@@ -316,6 +343,36 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       else alert((r && r.error) || "Couldn't build the client summary.");
     });
   };
+
+  // --- Daily page: cross out what stays private, then send the day to the
+  // org dashboard. What was crossed out comes back from <day>.sent.json.
+  var bar = document.querySelector(".nx-send");
+  if (bar) {
+    var sendBtn = bar.querySelector("button"), sentMsg = bar.querySelector(".nx-sent");
+    var hhmm = function (s) { var d = new Date(s * 1000); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); };
+    call("dashboard-state").then(function (r) {
+      if (!r || r.error) return;
+      bar.hidden = false;
+      document.querySelectorAll("[data-id]").forEach(function (el) {
+        if ((r.skip || []).indexOf(el.getAttribute("data-id")) >= 0) el.classList.add("x");
+      });
+      if (r.sentAt) sentMsg.textContent = "Sent " + hhmm(r.sentAt);
+    });
+    document.addEventListener("click", function (e) {
+      if (bar.hidden || e.target.closest("a, input, button")) return;
+      var item = e.target.closest("[data-id]"); if (!item) return;
+      e.preventDefault();   // a click on a task's text crosses it out rather than ticking it
+      item.classList.toggle("x");
+    });
+    sendBtn.onclick = function () {
+      var skip = [].map.call(document.querySelectorAll("[data-id].x"), function (el) { return el.getAttribute("data-id"); });
+      sendBtn.disabled = true; sentMsg.textContent = "Sending…";
+      call("dashboard", { skip: skip.join(",") }).then(function (r) {
+        sendBtn.disabled = false;
+        sentMsg.textContent = (r && r.error) || "Sent ✓ " + hhmm(Date.now() / 1000);
+      });
+    };
+  }
 
   // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
   // connected. Creates the task (title + matched assignee + due) and opens it

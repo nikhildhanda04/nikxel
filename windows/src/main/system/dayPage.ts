@@ -2,6 +2,7 @@ import * as PageShare from "./pageShare";
 import { escapeHtml as esc, favicon, fmt, inline as inl, isNone, parseLocalDate } from "../recording/markdown";
 import { anchor, count, generic, isEmpty, lead, parse, Section } from "../recording/notePage";
 import type { DayStats } from "./dayLogger";
+import { CloudSync } from "./cloudSync";
 
 /// Port of DayPage.swift.
 ///
@@ -38,7 +39,9 @@ function tree(markdown: string, key: string): Item[] {
   return roots;
 }
 
-function html(markdown: string, stats: DayStats | null = null, morning = false): string {
+/// `daily` (the 10pm page only): each sent item gets its CloudSync id as data-id, plus the Send bar.
+function html(markdown: string, stats: DayStats | null = null, morning = false, daily = false): string {
+  markdown = markdown.replace(/^(\s*[-*] )\[[a-z]+\] /gm, "$1"); // the type tags are for the dashboard
   const { title, sections } = parse(markdown);
   const find = (k: string) => sections.find(s => s.key === k);
 
@@ -49,17 +52,17 @@ function html(markdown: string, stats: DayStats | null = null, morning = false):
     if (s.key === "summary") continue;
     if (isEmpty(s)) { empty.push(s.title); continue; }
     if (s.key === "browsing & reading" || s.key === "other") { side.push(s); continue; }
-    const items = tree(markdown, s.key);
+    const items = tree(markdown, s.key), id = ider(s.key, daily);
     switch (s.key) {
-      case "what you worked on": body += section(s, items.length, timeline(items) + paras(s)); break;
-      case "meetings": body += section(s, items.length, meetings(items) + paras(s)); break;
-      case "whatsapp": case "slack": body += section(s, items.length, statusList(items) + paras(s)); break;
-      case "open tasks": body += section(s, items.length, todoList(items) + paras(s)); break;
-      default: body += section(s, count(s), generic(s.blocks));
+      case "what you worked on": body += section(s, items.length, timeline(items, id) + paras(s)); break;
+      case "meetings": body += section(s, items.length, meetings(items, id) + paras(s)); break;
+      case "whatsapp": case "slack": body += section(s, items.length, statusList(items, id) + paras(s)); break;
+      case "open tasks": body += section(s, items.length, todoList(items, id) + paras(s)); break;
+      default: body += section(s, count(s), plainOrGeneric(s, markdown, daily));
     }
   }
   if (side.length) {
-    body += `<div class="pair">${side.map(s => `<section id="${anchor(s.title)}" class="sec panel"><h2>${esc(s.title)}</h2>${generic(s.blocks)}</section>`).join("")}</div>\n`;
+    body += `<div class="pair">${side.map(s => `<section id="${anchor(s.title)}" class="sec panel"><h2>${esc(s.title)}</h2>${plainOrGeneric(s, markdown, daily)}</section>`).join("")}</div>\n`;
   }
   if (empty.length) body += `<p class="empty">Quiet on ${empty.map(esc).join(" · ")}.</p>\n`;
 
@@ -74,9 +77,27 @@ function html(markdown: string, stats: DayStats | null = null, morning = false):
 ${hero(title, find("summary"), morning)}
 ${stats ? tiles(stats) : ""}
 ${body}
+${daily ? `<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><span class="nx-sent"></span></div>` : ""}
 <footer>Written by Nikxel from ${morning ? "this week's daily summaries" : "today's activity"} on this computer. Nothing here left it.</footer>
 </main>
 ${PageShare.widget(false)}</body></html>`;
+}
+
+/// ` data-id="…"` for a top-level bullet: the id dayItems gives that same bullet, so the
+/// page and the sent day agree. Empty when not daily or when dayItems skips it ("None today.").
+function ider(key: string, daily: boolean): (text: string) => string {
+  return text => {
+    const it = daily ? CloudSync.dayItems(`## ${key}\n- ${text}`).items[0] : undefined;
+    return it ? ` data-id="${it.id}"` : "";
+  };
+}
+
+/// Daily pages list plain sections from the tree so each top-level bullet can carry an id;
+/// anything with headings, code or tasks keeps NotePage's generic layout.
+function plainOrGeneric(s: Section, markdown: string, daily: boolean): string {
+  if (!daily || !s.blocks.every(b => b.t === "bullet" || b.t === "para")) return generic(s.blocks);
+  const id = ider(s.key, true);
+  return `<ul class="plain">${tree(markdown, s.key).map(i => `<li${id(i.text)}>${inl(i.text)}${kids(i.kids)}</li>`).join("")}</ul>\n` + paras(s);
 }
 
 function section(s: Section, n: number, inner: string): string {
@@ -128,35 +149,35 @@ function kids(items: Item[]): string {
   return items.length ? `<ul class="kids">${items.map(k => `<li>${withStatus(k.text)}${kids(k.kids)}</li>`).join("")}</ul>` : "";
 }
 
-function timeline(items: Item[]): string {
-  return `<ol class="line">${items.map(i => `<li>${withStatus(i.text)}${kids(i.kids)}</li>`).join("")}</ol>\n`;
+function timeline(items: Item[], id: (t: string) => string): string {
+  return `<ol class="line">${items.map(i => `<li${id(i.text)}>${withStatus(i.text)}${kids(i.kids)}</li>`).join("")}</ol>\n`;
 }
 
-function meetings(items: Item[]): string {
+function meetings(items: Item[], id: (t: string) => string): string {
   return `<div class="meets">${items.map(i => {
     const m = LEAD_TIME.exec(i.text);
     // "**10:31, Standup**:" -> the time leaves the bold, the title keeps it.
     const rest = m ? (m[1] && !m[3] ? "**" : "") + i.text.slice(m[0].length) : i.text;
     const time = m ? m[2].trim() : "";
-    return `<div class="meet">${time ? `<span class="tm">${esc(time)}</span>` : ""}<div class="mb"><p>${inl(rest)}</p>${kids(i.kids)}</div></div>`;
+    return `<div class="meet"${id(i.text)}>${time ? `<span class="tm">${esc(time)}</span>` : ""}<div class="mb"><p>${inl(rest)}</p>${kids(i.kids)}</div></div>`;
   }).join("")}</div>\n`;
 }
 
-function statusList(items: Item[]): string {
-  return `<ul class="chat">${items.map(i => `<li>${withStatus(i.text)}${kids(i.kids)}</li>`).join("")}</ul>\n`;
+function statusList(items: Item[], id: (t: string) => string): string {
+  return `<ul class="chat">${items.map(i => `<li${id(i.text)}>${withStatus(i.text)}${kids(i.kids)}</li>`).join("")}</ul>\n`;
 }
 
 /// Open tasks as checkboxes. Disabled as written, so a sent copy is
 /// read-only; the Share widget enables them and saves a tick (/task).
 /// `data-i` counts only bullets with a status, as markTask does.
-function todoList(items: Item[]): string {
+function todoList(items: Item[], id: (t: string) => string): string {
   let n = -1;
   return `<ul class="chat">${items.map(i => {
     const m = STATUS.exec(i.text);
-    if (!m) return `<li>${inl(i.text)}${kids(i.kids)}</li>`;
+    if (!m) return `<li${id(i.text)}>${inl(i.text)}${kids(i.kids)}</li>`;
     n++;
     const st = m[1].toLowerCase();
-    return `<li class="todo"><label><input type="checkbox" class="nx-todo" data-i="${n}"${st === "done" ? " checked" : ""} disabled>`
+    return `<li class="todo"${id(i.text)}><label><input type="checkbox" class="nx-todo" data-i="${n}"${st === "done" ? " checked" : ""} disabled>`
       + `<span>${inl(i.text.slice(0, m.index))}</span>${st === "unclear" ? ` <span class="st unclear">unclear</span>` : ""}</label>${kids(i.kids)}</li>`;
   }).join("")}</ul>\n`;
 }
@@ -290,6 +311,15 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 pre { margin: 0; padding: 14px 16px; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font: 400 13px/1.6 var(--mono); white-space: pre-wrap; }
 pre code { background: none; padding: 0; }
 
+.x { text-decoration: line-through; opacity: .45 }
+.nx-send { margin-top: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.nx-send[hidden] { display: none; }
+.nx-send p { flex: 1 1 240px; color: var(--muted); font-size: 14.5px; }
+.nx-send button { font: 600 14px/1 var(--sans); color: var(--bg); background: var(--accent); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; }
+.nx-send button:disabled { opacity: .6; cursor: default; }
+.nx-sent { font: 500 13px/1.3 var(--mono); color: var(--muted); }
+.nx-sent:empty { display: none; }
+
 .empty { margin-top: 40px; padding-top: 18px; border-top: 1px dashed var(--line); color: var(--faint); font-size: 14px; }
 footer { margin-top: 28px; color: var(--faint); font-size: 12.5px; }
 
@@ -299,7 +329,7 @@ footer { margin-top: 28px; color: var(--faint); font-size: 12.5px; }
   @keyframes rise { from { transform: translateY(8px); } to { transform: none; } }
 }
 @media print {
-  body { background: #fff; } .sky { color: var(--ink); background: none; padding: 0; } .moon, footer { display: none; }
+  body { background: #fff; } .sky { color: var(--ink); background: none; padding: 0; } .moon, footer, .nx-send { display: none; }
   .eyebrow { color: var(--muted); } h1 { color: var(--ink); } .sec { break-inside: avoid; }
 }
 `;

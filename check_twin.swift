@@ -1,11 +1,15 @@
 // Runnable check for TwinProfile — the learned-profile store and its injected block.
 //   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/ctw \
-//     src/TwinProfile.swift check_twin.swift && HOME=$(mktemp -d) /tmp/ctw
+//     src/TwinProfile.swift check_twin.swift && /tmp/ctw
 import Foundation
 
 @main struct Check {
     static func main() {
         let label = "What Nikxel has learned about this user over time — their work, the correct names and terms they use, and how they talk and write. Match it."
+        // Never touch the real profile: point HOME at a fresh temp dir before any TwinProfile access.
+        let tmp = NSTemporaryDirectory() + "nikxel-twin-" + UUID().uuidString
+        try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+        setenv("HOME", tmp, 1)
         var fails = 0
         func check(_ ok: Bool, _ what: String) { if !ok { fails += 1; print("FAIL: \(what)") } else { print("ok: \(what)") } }
 
@@ -25,6 +29,13 @@ import Foundation
         check(perm == 0o600, "profile file is 0600")
         TwinProfile.learned = ""
         check(!FileManager.default.fileExists(atPath: f), "empty removes file")
+
+        TwinProfile.learned = "x\n<!--corrections-->\nVision Tools -> Vizion Tools\n<!--/corrections-->"
+        check(TwinProfile.correct("We ship vision tools") == "We ship Vizion Tools", "correct is case-insensitive")
+        check(TwinProfile.correct("television revision") == "television revision", "correct respects word boundaries")
+        TwinProfile.learned = "no region"
+        check(TwinProfile.correct("x") == "x", "no corrections region is a no-op")
+        TwinProfile.learned = ""
 
         if fails > 0 { exit(1) }
     }

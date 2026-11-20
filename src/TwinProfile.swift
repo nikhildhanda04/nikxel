@@ -32,4 +32,29 @@ enum TwinProfile {
         guard !t.isEmpty else { return "" }
         return "What Nikxel has learned about this user over time — their work, the correct names and terms they use, and how they talk and write. Match it.\n\(t)"
     }
+
+    /// `wrong -> right` lines inside the <!--corrections--> region of `learned`.
+    static func corrections() -> [(wrong: String, right: String)] {
+        let t = learned
+        guard let a = t.range(of: "<!--corrections-->"),
+              let b = t.range(of: "<!--/corrections-->", range: a.upperBound..<t.endIndex) else { return [] }
+        return t[a.upperBound..<b.lowerBound].split(whereSeparator: \.isNewline).compactMap { line in
+            let p = line.components(separatedBy: " -> ")
+            guard p.count == 2 else { return nil }
+            let w = p[0].trimmingCharacters(in: .whitespaces), r = p[1].trimmingCharacters(in: .whitespaces)
+            return w.isEmpty ? nil : (w, r)
+        }
+    }
+
+    /// Applies each learned correction, case-insensitive and on word boundaries.
+    static func correct(_ text: String) -> String {
+        var out = text
+        for (wrong, right) in corrections() {
+            guard let re = try? NSRegularExpression(pattern: "\\b" + NSRegularExpression.escapedPattern(for: wrong) + "\\b",
+                                                    options: [.caseInsensitive]) else { continue }
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out),
+                                              withTemplate: NSRegularExpression.escapedTemplate(for: right))
+        }
+        return out
+    }
 }

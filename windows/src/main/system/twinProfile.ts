@@ -4,6 +4,7 @@ import { nikxelPath, writeAtomic } from "../core/paths";
 /// What Nikxel has learned about the user over time, in ~/.nikxel/twin/profile.md.
 /// Separate from the user's own userContext, which this never touches.
 /// Mirrors TwinProfile.swift.
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const file = () => nikxelPath("twin/profile.md");
 
 export const TwinProfile = {
@@ -24,5 +25,27 @@ export const TwinProfile = {
     if (b >= 0) t = t.slice(0, a) + t.slice(b + "<!--/corrections-->".length);
     t = t.trim();
     return t ? `What Nikxel has learned about this user over time — their work, the correct names and terms they use, and how they talk and write. Match it.\n${t}` : "";
+  },
+
+  /// `wrong -> right` lines inside the <!--corrections--> region of `learned`.
+  corrections(): { wrong: string; right: string }[] {
+    const t = this.learned;
+    const a = t.indexOf("<!--corrections-->");
+    const b = a < 0 ? -1 : t.indexOf("<!--/corrections-->", a);
+    if (b < 0) return [];
+    const out: { wrong: string; right: string }[] = [];
+    for (const line of t.slice(a + "<!--corrections-->".length, b).split(/\r?\n/)) {
+      const p = line.split(" -> ");
+      if (p.length === 2 && p[0].trim()) out.push({ wrong: p[0].trim(), right: p[1].trim() });
+    }
+    return out;
+  },
+
+  /// Applies each learned correction, case-insensitive and on word boundaries.
+  correct(text: string): string {
+    let out = text;
+    for (const { wrong, right } of this.corrections())
+      out = out.replace(new RegExp("\\b" + escapeRegExp(wrong) + "\\b", "gi"), () => right);
+    return out;
   },
 };

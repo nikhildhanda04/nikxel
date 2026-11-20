@@ -29,4 +29,11 @@ test("TwinProfile: learned store and injected block", t => {
 
   TP.learned = "";
   assert.ok(!fs.existsSync(path.join(home, ".nikxel", "twin", "profile.md")));
+
+  TP.learned = "x\n<!--corrections-->\nVision Tools -> Vizion Tools\n<!--/corrections-->";
+  assert.equal(TP.correct("We ship vision tools"), "We ship Vizion Tools");
+  assert.equal(TP.correct("television revision"), "television revision");
+  TP.learned = "no region";
+  assert.equal(TP.correct("x"), "x");
+  TP.learned = "";
 });

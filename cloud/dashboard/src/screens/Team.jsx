@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { Muted } from '../ui.jsx';
+import { Muted, chipCls as pill } from '../ui.jsx';
 import Day, { fmtMin, fmtDate } from './Day.jsx';
 import Charts from './Charts.jsx';
-
-const pill = (on) => `inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors ${on ? 'bg-fg text-bg' : 'bg-accent text-pill-fg hover:text-fg'}`;
 
 export default function Team() {
   const [rows, setRows] = useState(null), [err, setErr] = useState('');

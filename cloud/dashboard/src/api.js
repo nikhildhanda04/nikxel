@@ -21,6 +21,12 @@ export const api = {
   pairingCode: () => call('GET', '/pairing-code'),
   mine: () => call('GET', '/summaries/mine'),
   rollup: () => call('GET', '/rollup'),
+  org: () => call('GET', '/org'),
+  teams: () => call('GET', '/teams'),
+  patchProject: (id, patch) => call('PATCH', `/org/projects/${encodeURIComponent(id)}`, patch),
+  setMember: (projectId, personId, role) => call('PUT', `/org/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(personId)}`, { role }),
+  removeMember: (projectId, personId) => call('DELETE', `/org/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(personId)}`),
+  linkPerson: (personId, userId) => call('PATCH', `/org/people/${encodeURIComponent(personId)}`, { user_id: userId }),
 };
 
 // Item type -> label, CSS color var (index.css), and a 24x24 SVG path. Plain JS so node --test can import it.

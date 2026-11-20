@@ -11,7 +11,7 @@ export default function TeamGrid({ cards, open }) {
         const lead = t.leads[0];
         return (
           <button key={t.id} data-team={t.id} onClick={() => open(t.id)}
-            aria-label={`${t.name} — ${t.count} member${t.count === 1 ? '' : 's'}, ${lead ? `lead ${lead}` : 'no lead'}`}
+            aria-label={`${t.name} — ${t.count} member${t.count === 1 ? '' : 's'}, ${lead ? `lead ${lead}` : 'no lead'}${t.archived ? ', archived' : ''}${t.active ? '' : ', inactive in ERP'}`}
             className={`flex min-w-0 items-start gap-3 rounded-xl border border-line bg-card px-3 py-2.5 text-left transition-colors hover:border-fg/25 ${t.active && !t.archived ? '' : 'opacity-60'}`}>
             <span className="min-w-0 flex-1">
               <span className="flex min-w-0 items-center gap-1.5">

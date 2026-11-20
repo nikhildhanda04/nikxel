@@ -47,7 +47,7 @@ export default function Org({ route = 'org' }) {
         ? <People org={org} members={members} membersErr={membersErr} err={err} run={run} />
         : <Teams org={org} f={f} setF={setF} />}
       {tab === 'teams' && open && (
-        <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { location.hash = 'org'; }} />
+        <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { setErr((x) => ({ ...x, ['t' + open.id]: '' })); location.hash = 'org'; }} />
       )}
     </div>
   );

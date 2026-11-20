@@ -18,7 +18,17 @@ export default function TeamDrawer({ p, people, err, run, close }) {
     panel.current.focus();
     const body = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    // Window-level so it still works when the focused control unmounts (Remove, Rename) and focus drops to body.
+    const onKey = (e) => {
+      if (e.key === 'Escape') return close();
+      if (e.key !== 'Tab') return;
+      const el = panel.current, f = [...el.querySelectorAll(FOCUSABLE)], at = document.activeElement;
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (!el.contains(at)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      else if (e.shiftKey && (at === first || at === el)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+    };
     addEventListener('keydown', onKey);
     return () => {
       removeEventListener('keydown', onKey);
@@ -26,31 +36,23 @@ export default function TeamDrawer({ p, people, err, run, close }) {
       document.querySelector(`[data-team="${CSS.escape(String(p.id))}"]`)?.focus(); // hand focus back to the card
     };
   }, [p.id]);
-
-  // Keep Tab inside the dialog.
-  const trap = (e) => {
-    if (e.key !== 'Tab') return;
-    const f = [...panel.current.querySelectorAll(FOCUSABLE)];
-    if (!f.length) return;
-    const first = f[0], last = f[f.length - 1], at = document.activeElement;
-    if (e.shiftKey && (at === first || at === panel.current)) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
-  };
+  // Esc while renaming cancels the rename only (React's stopPropagation keeps it from the window listener).
+  const cancelRename = () => { setName(null); panel.current.focus(); };
 
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/30" onClick={close} aria-hidden="true" />
-      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="team-drawer-title" tabIndex={-1} onKeyDown={trap}
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="team-drawer-title" tabIndex={-1}
         className="absolute inset-y-0 right-0 flex w-full flex-col overflow-y-auto border-l border-line bg-bg p-5 shadow-2xl outline-none sm:w-[440px]">
         <div className="flex items-start gap-2">
           {name === null ? (
             <h2 id="team-drawer-title" className="min-w-0 flex-1 font-heading text-xl font-semibold tracking-tight break-words">{p.name}</h2>
           ) : (
-            <form onSubmit={save} className="flex min-w-0 flex-1 gap-2">
+            <form onSubmit={save} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancelRename(); } }} className="flex min-w-0 flex-1 gap-2">
               <h2 id="team-drawer-title" className="sr-only">Rename {p.name}</h2>
               <Input autoFocus aria-label="Project name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
               <Btn primary disabled={!name.trim()}>Save</Btn>
-              <Btn type="button" onClick={() => setName(null)}>Cancel</Btn>
+              <Btn type="button" onClick={cancelRename}>Cancel</Btn>
             </form>
           )}
           <button onClick={close} aria-label="Close" className="-mr-1 grid size-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-accent hover:text-fg">

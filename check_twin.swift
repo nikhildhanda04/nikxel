@@ -10,8 +10,13 @@ import Foundation
         let tmp = NSTemporaryDirectory() + "nikxel-twin-" + UUID().uuidString
         try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
         setenv("HOME", tmp, 1)
+        setenv("CFFIXED_USER_HOME", tmp, 1) // NSHomeDirectory() on macOS honors this, not HOME
         var fails = 0
         func check(_ ok: Bool, _ what: String) { if !ok { fails += 1; print("FAIL: \(what)") } else { print("ok: \(what)") } }
+
+        print("NSHomeDirectory() = \(NSHomeDirectory())")
+        check(NSHomeDirectory() == tmp, "check is sandboxed to temp HOME")
+        if NSHomeDirectory() != tmp { exit(1) } // never touch the real home
 
         TwinProfile.learned = ""
         check(TwinProfile.injectedBlock == "", "empty profile injects nothing")

@@ -73,6 +73,12 @@ enum CloudSync {
         return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
     }
 
+    /// Sends OrgImport's body (after the user confirmed it). False on no token or a failed POST (403 for non owner/admin).
+    static func importOrg(_ body: [String: Any], post: Poster = httpPost) -> Bool {
+        guard let tok = token else { return false }
+        return post("/api/org/import", body, tok) != nil
+    }
+
     struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String]; var project = "" }
 
     /// Top-level bullets of every "## " section but Summary; indented bullets become details.

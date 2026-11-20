@@ -217,6 +217,45 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// Reads people and projects from the ERP, has the AI write short notes, and sends the draft
+    /// to the dashboard's Org tab, only after the user confirms exactly what goes.
+    @objc func buildOrgFromERP() {
+        let missing = [ERP.isConnected ? nil : "connect Forklyft ERP", CloudSync.token == nil ? "connect to the dashboard" : nil].compactMap { $0 }
+        guard missing.isEmpty else {
+            NikxelView.tell(icon: "🏢", title: "Can't build the org yet", lines: ["First \(missing.joined(separator: " and ")) from this menu."], kind: .warning)
+            return
+        }
+        NikxelView.tell(icon: "🏢", title: "Reading ERP…", lines: ["Gathering people, projects and who works on what. This can take a minute."])
+        let momGen = meetingCoordinator.momGen
+        DispatchQueue.global(qos: .userInitiated).async {
+            let snap = ERP.orgSnapshot()
+            guard !snap.people.isEmpty || !snap.projects.isEmpty else {
+                DispatchQueue.main.async {
+                    NikxelView.tell(icon: "⚠️", title: "Couldn't read the ERP", lines: ["Check your ERP connection and try again."], kind: .warning)
+                }
+                return
+            }
+            let ai = OrgImport.parseAI((try? momGen.runPrompt(OrgImport.prompt(snap), kind: "org-import")) ?? "")
+            let body = OrgImport.buildImportBody(snap, ai)
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Send this org to the dashboard?"
+                alert.informativeText = "Nikxel will send " + OrgImport.summary(body) + "\n\nYou can refine it in the dashboard's Org tab."
+                alert.addButton(withTitle: "Send")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runOnTop() == .alertFirstButtonReturn else { return }
+                DispatchQueue.global(qos: .utility).async {
+                    let ok = CloudSync.importOrg(body)
+                    DispatchQueue.main.async {
+                        NikxelView.tell(icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send",
+                                        lines: [ok ? "Refine it in the dashboard's Org tab." : "Only the owner or an admin can do this, or the dashboard is unreachable."],
+                                        kind: ok ? .info : .warning)
+                    }
+                }
+            }
+        }
+    }
+
     func refreshERPMenu() {
         erpConnectItem?.title = ERP.isConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
     }
@@ -396,6 +435,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let dashItem = NSMenuItem(title: "Connect to Dashboard…", action: #selector(connectDashboard), keyEquivalent: "")
         dashItem.target = self; menu.addItem(dashItem)
+
+        let orgItem = NSMenuItem(title: "Build org from ERP…", action: #selector(buildOrgFromERP), keyEquivalent: "")
+        orgItem.target = self; menu.addItem(orgItem)
 
         let aboutMe = NSMenuItem(title: "Tell Nikxel About You…", action: #selector(openAboutMe), keyEquivalent: "")
         aboutMe.target = self; menu.addItem(aboutMe)

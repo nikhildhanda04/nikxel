@@ -249,6 +249,39 @@ enum ERP {
         }
     }
 
+    /// People, projects and who worked on what (task assignees, last 90 days) for "Build org from ERP…".
+    /// Empty on any failure. Blocking; call off the main thread.
+    static func orgSnapshot() -> OrgSnapshot {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let since = f.string(from: Date().addingTimeInterval(-90 * 86400))
+        guard let emps = callKw("hr.employee", "search_read", args: [[], ["name", "work_email", "job_title", "parent_id", "user_id"]],
+                                kwargs: ["limit": 2000]) as? [[String: Any]],
+              let projs = callKw("project.project", "search_read", args: [[], ["name", "user_id", "active"]],
+                                 kwargs: ["limit": 1000]) as? [[String: Any]],
+              let tasks = callKw("project.task", "search_read", args: [[["write_date", ">=", since]], ["project_id", "user_ids", "name"]],
+                                 kwargs: ["limit": 5000, "order": "write_date desc"]) as? [[String: Any]] else { return OrgSnapshot() }
+        // Many2one fields come back as [id, "Name"] or false.
+        func m2o(_ v: Any?) -> Int? { (v as? [Any])?.first as? Int }
+        var users: [Int: Set<Int>] = [:], names: [Int: [String]] = [:]
+        for t in tasks {
+            guard let p = m2o(t["project_id"]) else { continue }
+            users[p, default: []].formUnion(t["user_ids"] as? [Int] ?? [])
+            if names[p, default: []].count < 15 { names[p, default: []].append(t["name"] as? String ?? "") }
+        }
+        return OrgSnapshot(
+            people: emps.compactMap { r in
+                guard let id = r["id"] as? Int else { return nil }
+                return .init(id: id, name: r["name"] as? String ?? "", email: r["work_email"] as? String ?? "",
+                             title: r["job_title"] as? String ?? "", managerID: m2o(r["parent_id"]), userID: m2o(r["user_id"]))
+            },
+            projects: projs.compactMap { r in
+                guard let id = r["id"] as? Int else { return nil }
+                return .init(id: id, name: r["name"] as? String ?? "", managerUserID: m2o(r["user_id"]), active: r["active"] as? Bool ?? true,
+                             userIDs: Array(users[id] ?? []).sorted(), taskNames: names[id] ?? [])
+            })
+    }
+
     // MARK: - Tasks
 
     /// Create a project.task and return its id (nil on failure). The page's

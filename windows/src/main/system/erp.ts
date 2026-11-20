@@ -5,6 +5,7 @@ import { richHtml } from "../recording/markdown";
 import { Settings } from "../core/settings";
 import { TwinProfile } from "./twinProfile";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
+import { OrgSnapshot } from "./orgImport";
 
 /// Talks to the company's Odoo ERP over its web JSON-RPC — no API key and no
 /// resident browser. A visible Electron window opens exactly once, for the
@@ -137,6 +138,36 @@ export async function tasksTouched(day: Date): Promise<TouchedTask[]> {
   return rows
     .filter((r): r is Record<string, unknown> => !!r && typeof (r as any).name === "string" && !!(r as any).name)
     .map(r => ({ name: r.name as string, project: m2o(r.project_id), stage: m2o(r.stage_id), deadline: typeof r.date_deadline === "string" ? r.date_deadline : "" }));
+}
+
+/// People, projects and who worked on what (task assignees, last 90 days) for "Build org from ERP…".
+/// Empty on any failure.
+export async function orgSnapshot(): Promise<OrgSnapshot> {
+  const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 19).replace("T", " "); // Odoo stores write_date in UTC
+  const [emps, projs, tasks] = await Promise.all([
+    callKw("hr.employee", "search_read", [[], ["name", "work_email", "job_title", "parent_id", "user_id"]], { limit: 2000 }),
+    callKw("project.project", "search_read", [[], ["name", "user_id", "active"]], { limit: 1000 }),
+    callKw("project.task", "search_read", [[["write_date", ">=", since]], ["project_id", "user_ids", "name"]], { limit: 5000, order: "write_date desc" }),
+  ]);
+  if (!Array.isArray(emps) || !Array.isArray(projs) || !Array.isArray(tasks)) return { people: [], projects: [] };
+  const m2o = (v: unknown) => (Array.isArray(v) && typeof v[0] === "number" ? v[0] : null); // [id, "Name"] or false
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const users = new Map<number, Set<number>>(), names = new Map<number, string[]>();
+  for (const t of tasks as Record<string, unknown>[]) {
+    const p = m2o(t?.project_id);
+    if (p == null) continue;
+    if (!users.has(p)) { users.set(p, new Set()); names.set(p, []); }
+    for (const u of Array.isArray(t.user_ids) ? t.user_ids : []) if (typeof u === "number") users.get(p)!.add(u);
+    if (names.get(p)!.length < 15) names.get(p)!.push(str(t.name));
+  }
+  const rows = (a: unknown[]) => a.filter((r): r is Record<string, unknown> => !!r && typeof (r as any).id === "number");
+  return {
+    people: rows(emps).map(r => ({ id: r.id as number, name: str(r.name), email: str(r.work_email), title: str(r.job_title), managerID: m2o(r.parent_id), userID: m2o(r.user_id) })),
+    projects: rows(projs).map(r => ({
+      id: r.id as number, name: str(r.name), managerUserID: m2o(r.user_id), active: r.active !== false,
+      userIDs: [...(users.get(r.id as number) ?? [])].sort((x, y) => x - y), taskNames: names.get(r.id as number) ?? [],
+    })),
+  };
 }
 
 // MARK: - Tasks

@@ -69,6 +69,13 @@ export class CloudSync {
     return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
   }
 
+  /// Sends orgImport's body (after the user confirmed it). False on no token or a failed POST (403 for non owner/admin).
+  static async importOrg(body: unknown, post: Poster = CloudSync.httpPost): Promise<boolean> {
+    const tok = CloudSync.token();
+    if (!tok) return false;
+    return (await post("/api/org/import", body, tok)) !== null;
+  }
+
   /// Top-level bullets of every "## " section but Summary; indented bullets become details.
   /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
   static dayItems(md: string): { headline: string; items: DayItem[] } {

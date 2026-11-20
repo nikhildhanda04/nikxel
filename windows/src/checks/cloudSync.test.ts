@@ -15,7 +15,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   const { headline, items } = CS.dayItems(md);
   assert.equal(headline, "Big day on the dashboard.");
   assert.equal(items.length, 3); // work + meetings only
-  assert.deepEqual({ ...items[0], id: "" }, { id: "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"] });
+  assert.deepEqual({ ...items[0], id: "" }, { id: "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"], project: "" });
   assert.deepEqual([items[1].type, items[1].minutes], ["other", 120]);
   assert.equal(items.find((i: any) => i.section === "meetings").type, "meeting");
   assert.ok(!items.some((i: any) => ["whatsapp", "open tasks"].includes(i.section)), "chats and open tasks never sent");
@@ -27,6 +27,12 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   const w = CS.dayItems("## Summary\nLine one\nline two.\n\nignored\n\n## What you worked on\n- [gaming] Played chess");
   assert.equal(w.headline, "Line one line two.");
   assert.deepEqual([w.items[0].what, w.items[0].type], ["Played chess", "other"]);
+  const pm = CS.dayItems("## What you worked on\n- [coding] [[Produce POS]] Fixed sign-out 1h\n- [other] No project here\n\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n- [[A ]] weird]] name]] Task — Done").items;
+  assert.equal(pm.length, 4);
+  assert.deepEqual([pm[0].project, pm[0].what, pm[0].minutes, pm[0].type], ["Produce POS", "Fixed sign-out", 60, "coding"]);
+  assert.equal(pm[1].project, "");
+  assert.deepEqual([pm[2].section, pm[2].type, pm[2].project, pm[2].what], ["erp tasks", "planning", "Produce POS", "Sign-out button — In Progress (due 2026-11-25)"]);
+  assert.equal(pm[3].project, "A");
 
   let calls = 0;
   assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => { calls++; return null; }), false);
@@ -46,7 +52,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.equal(sent.kind, "day");
   assert.equal(sent.items.length, 2);
   assert.ok(!sent.items.some((i: any) => i.id === items[0].id));
-  assert.deepEqual(Object.keys(sent.items[0]).sort(), ["details", "id", "minutes", "section", "type", "what"]);
+  assert.deepEqual(Object.keys(sent.items[0]).sort(), ["details", "id", "minutes", "project", "section", "type", "what"]);
   assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => null), false);
   const all = new Set(items.map((i: any) => i.id));
   assert.equal(await CS.pushDay(md, "d", all, async () => ({})), false, "all skipped, never sent");

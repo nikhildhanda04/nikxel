@@ -229,6 +229,26 @@ enum ERP {
         }
     }
 
+    struct TouchedTask { let name, project, stage, deadline: String }
+
+    /// The user's tasks written on `day` (local), for the 10pm summary. [] when not connected or on any failure.
+    static func tasksTouched(on day: Date) -> [TouchedTask] {
+        guard isConnected, let uid = sessionUID(), uid > 0 else { return [] }
+        let start = Calendar.current.startOfDay(for: day)
+        guard let end = Calendar.current.date(byAdding: .day, value: 1, to: start) else { return [] }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        guard let rows = callKw("project.task", "search_read",
+                                args: [[["user_ids", "in", [uid]], ["write_date", ">=", f.string(from: start)], ["write_date", "<", f.string(from: end)]],
+                                       ["name", "project_id", "stage_id", "date_deadline"]]) as? [[String: Any]] else { return [] }
+        // Many2one fields come back as [id, "Name"] or false.
+        func m2o(_ v: Any?) -> String { (v as? [Any])?.last as? String ?? "" }
+        return rows.compactMap { r in
+            guard let name = r["name"] as? String, !name.isEmpty else { return nil }
+            return TouchedTask(name: name, project: m2o(r["project_id"]), stage: m2o(r["stage_id"]), deadline: r["date_deadline"] as? String ?? "")
+        }
+    }
+
     // MARK: - Tasks
 
     /// Create a project.task and return its id (nil on failure). The page's

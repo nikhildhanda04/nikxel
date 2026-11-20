@@ -15,7 +15,7 @@ import Foundation
         let (headline, items) = CloudSync.dayItems(fromDailySummary: md)
         check(headline == "Big day on the dashboard.", "headline")
         check(items.count == 3, "work + meetings only: \(items.count)")
-        check(items.first == CloudSync.DayItem(id: items.first?.id ?? "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"]), "item 0")
+        check(items.first == CloudSync.DayItem(id: items.first?.id ?? "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"], project: ""), "item 0")
         check(items.count > 1 && items[1].type == "other" && items[1].minutes == 120, "untagged -> other, 2h")
         check(items.contains { $0.section == "meetings" && $0.type == "meeting" }, "meeting type")
         check(!items.contains { ["whatsapp", "open tasks"].contains($0.section) }, "chats and open tasks never sent")
@@ -26,6 +26,11 @@ import Foundation
         let (h2, i2) = CloudSync.dayItems(fromDailySummary: "## Summary\nLine one\nline two.\n\nignored\n\n## What you worked on\n- [gaming] Played chess")
         check(h2 == "Line one line two.", "wrapped headline: \(h2)")
         check(i2.first?.what == "Played chess" && i2.first?.type == "other", "unknown tag stripped, type other")
+        let pm = CloudSync.dayItems(fromDailySummary: "## What you worked on\n- [coding] [[Produce POS]] Fixed sign-out 1h\n- [other] No project here\n\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n- [[A ]] weird]] name]] Task — Done").items
+        check(pm.count == 4 && pm[0].project == "Produce POS" && pm[0].what == "Fixed sign-out" && pm[0].minutes == 60 && pm[0].type == "coding", "project tag after type tag")
+        check(pm.count == 4 && pm[1].project == "", "no project -> empty")
+        check(pm.count == 4 && pm[2].section == "erp tasks" && pm[2].type == "planning" && pm[2].project == "Produce POS" && pm[2].what == "Sign-out button — In Progress (due 2026-11-25)", "erp tasks item")
+        check(pm.count == 4 && pm[3].project == "A", "odd project name: \(pm.count == 4 ? pm[3].project : "")")
 
         var calls = 0
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in calls += 1; return nil }) && calls == 0, "pushDay with no token is a no-op")
@@ -45,7 +50,7 @@ import Foundation
         check(r && bearer == "tok123" && (sent?["kind"] as? String) == "day" && (sent?["date"] as? String) == "2026-11-20", "push body kind/date, bearer")
         check(Set(sent?.keys.map { $0 } ?? []) == ["kind", "date", "headline", "items"], "push body keys")
         check(sentItems.count == 2 && !sentItems.contains { ($0["id"] as? String) == id0 }, "skip drops item")
-        check(Set((sentItems.first ?? [:]).keys) == ["id", "section", "what", "type", "minutes", "details"], "item keys")
+        check(Set((sentItems.first ?? [:]).keys) == ["id", "section", "what", "type", "minutes", "details", "project"], "item keys")
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in nil }), "failed POST -> false")
         let all = items.map(\.id)
         var hl: [String: Any]?, empty: [String: Any]?

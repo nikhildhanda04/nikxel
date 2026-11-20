@@ -47,6 +47,7 @@ enum DayPage {
         let preview = daily ? previewBlock(markdown) : ""
         // The type tags are for the dashboard.
         let markdown = markdown.replacingOccurrences(of: #"(?m)^(\s*[-*] )\[[a-z]+\] "#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^(\s*[-*] )\[\[[^\]\n]+?\]\][ \t]*"#, with: "$1", options: .regularExpression)
         let (title, sections) = NotePage.parse(markdown)
         var body = "", empty: [String] = [], side: [NotePage.Section] = []
         for s in sections where s.key != "summary" {
@@ -93,7 +94,7 @@ enum DayPage {
     private static func previewBlock(_ markdown: String) -> String {
         let (headline, items) = CloudSync.dayItems(fromDailySummary: markdown)
         let day: [String: Any] = ["headline": headline, "items": items.map {
-            ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details] as [String: Any] }]
+            ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details, "project": $0.project] as [String: Any] }]
         let json = (try? JSONSerialization.data(withJSONObject: day)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return "<script type=\"application/json\" id=\"nx-day\">\(json.replacingOccurrences(of: "<", with: "\\u003c"))</script>\n"
             + previewDialog + "\n<script>" + previewJS + "</script>"
@@ -118,6 +119,7 @@ enum DayPage {
   function item(i, going) {
     var t = type(i.type);
     return '<li><label class="pv-row">' + tick(i.id, going) + '<span class="pv-chip pv-' + t + '">' + T[t] + '</span>'
+      + (i.project ? '<span class="pv-proj">' + esc(i.project) + '</span>' : '')
       + '<span class="pv-what">' + esc(i.what) + '</span>' + (i.minutes ? '<span class="pv-min">' + dur(i.minutes) + '</span>' : '') + '</label>'
       + (i.details.length ? '<details><summary>' + i.details.length + ' more</summary><ul>' + i.details.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join("") + '</ul></details>' : '')
       + '</li>';
@@ -441,6 +443,7 @@ enum DayPage {
     .pv-tick { flex: none; width: 17px; height: 17px; margin: 0; transform: translateY(3px); accent-color: var(--accent); cursor: pointer; }
     .pv-what { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
     .pv-min { font: 500 13px/1 var(--mono); color: var(--muted); }
+    .pv-proj { flex: none; font: 500 12px/1 var(--sans); color: var(--muted); background: var(--line); border-radius: 99px; padding: 4px 9px; }
     .pv-chip { flex: none; font: 600 10.5px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: #fff; background: var(--pv); border-radius: 6px; padding: 4px 7px; }
     .pv-items details { margin: 4px 0 0 27px; color: var(--muted); font-size: 14px; }
     .pv-items summary { cursor: pointer; }

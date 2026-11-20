@@ -5,6 +5,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { DayPage } from "../main/system/dayPage";
 import { CloudSync } from "../main/system/cloudSync";
+import { DayLogger } from "../main/system/dayLogger";
 
 export const day = `# 2026-11-12 — Day in review
 
@@ -121,4 +122,18 @@ test("open tasks and chats stay on the page but are never crossable or sent", ()
   assert.doesNotMatch(html, new RegExp(`data-id="${CloudSync.itemID("whatsapp", "Ravi asked you to send the deck — open")}"`));
   assert.match(html, /class="nx-todo"/);
   assert.match(DayPage.markTask(tagged, 0, true) ?? "", /Ravi — done/);
+});
+
+test("project tags: hidden on the page, carried in the embedded day, pill in the preview", () => {
+  const html = DayPage.html("## What you worked on\n- [coding] [[Produce POS]] Fixed sign-out 1h\n\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n", null, false, true);
+  assert.doesNotMatch(html, /\[\[Produce POS\]\]|\[coding\]/);
+  const json = /<script type="application\/json" id="nx-day">(.*?)<\/script>/.exec(html);
+  assert.equal(JSON.parse(json![1]).items[0].project, "Produce POS");
+  assert.match(html, /pv-proj/);
+});
+
+test("erpTasksSection", () => {
+  assert.equal(DayLogger.erpTasksSection([{ name: "Sign-out button", project: "Produce POS", stage: "In Progress", deadline: "2026-11-25" }, { name: "X", project: "", stage: "Done", deadline: "" }]),
+    "\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n- X — Done\n");
+  assert.equal(DayLogger.erpTasksSection([]), "");
 });

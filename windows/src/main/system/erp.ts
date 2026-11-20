@@ -120,6 +120,25 @@ export async function projects(): Promise<{ id: number; name: string }[]> {
     .map(r => ({ id: r.id as number, name: r.name as string }));
 }
 
+export interface TouchedTask { name: string; project: string; stage: string; deadline: string }
+
+/// The user's tasks written on `day` (local), for the 10pm summary. [] when not connected or on any failure.
+export async function tasksTouched(day: Date): Promise<TouchedTask[]> {
+  if (!isConnected()) return [];
+  const uid = await sessionUID();
+  if (!uid) return [];
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  const utc = (d: Date) => d.toISOString().slice(0, 19).replace("T", " "); // Odoo stores write_date in UTC
+  const rows = await callKw("project.task", "search_read",
+    [[["user_ids", "in", [uid]], ["write_date", ">=", utc(start)], ["write_date", "<", utc(end)]], ["name", "project_id", "stage_id", "date_deadline"]]);
+  if (!Array.isArray(rows)) return [];
+  const m2o = (v: unknown) => (Array.isArray(v) && typeof v[1] === "string" ? v[1] : ""); // [id, "Name"] or false
+  return rows
+    .filter((r): r is Record<string, unknown> => !!r && typeof (r as any).name === "string" && !!(r as any).name)
+    .map(r => ({ name: r.name as string, project: m2o(r.project_id), stage: m2o(r.stage_id), deadline: typeof r.date_deadline === "string" ? r.date_deadline : "" }));
+}
+
 // MARK: - Tasks
 
 export async function createTask(title: string, descriptionHTML: string, assigneeUserID: number | null, deadline: string | null): Promise<number | null> {

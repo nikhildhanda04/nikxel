@@ -3,17 +3,17 @@ import * as crypto from "crypto";
 import { nikxelPath, writeAtomic, readText } from "../core/paths";
 
 /// Pairs this PC with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details}]}, sent on the user's Send click,
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click,
 /// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Port of CloudSync.swift.
 
-export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[] }
+export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[]; project: string }
 /// Resolves the parsed JSON body on 2xx, null on any failure.
 export type Poster = (path: string, body: unknown, bearer: string | null) => Promise<any | null>;
 
 /// The sections that are sent (work and meetings; never chats or open tasks),
 /// and the type an untagged bullet in each gets.
-const SECTION_TYPES: Record<string, string> = { "what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other" };
+const SECTION_TYPES: Record<string, string> = { "what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other", "erp tasks": "planning" };
 
 export class CloudSync {
   /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
@@ -91,6 +91,10 @@ export class CloudSync {
         // Any [word] tag is hidden on the daily page, so strip it here; unknown ones keep the default type.
         const tag = /^\[([a-z]+)\]\s*/.exec(text);
         if (tag) { if (CloudSync.types.has(tag[1])) type = tag[1]; text = text.slice(tag[0].length); }
+        // Then an optional [[ERP project]] tag.
+        const pj = /^\[\[([^\]]+?)\]\]\s*/.exec(text);
+        const project = pj ? pj[1].trim() : "";
+        if (pj) text = text.slice(pj[0].length);
         let minutes = 0;
         const m = dur.exec(text);
         if (m) {
@@ -101,7 +105,7 @@ export class CloudSync {
           .replace(/^[ —\-–:,;]+|[ —\-–:,;]+$/g, "");
         const low = what.toLowerCase();
         if (what.length < 3 || CloudSync.isNone(low) || ["none today", "nothing", "no calls", "no tasks"].some((p) => low.startsWith(p))) continue;
-        out.push({ id: CloudSync.itemID(section, what), section, what, type, minutes, details: [] });
+        out.push({ id: CloudSync.itemID(section, what), section, what, type, minutes, details: [], project });
         open = true;
       } else if (open && /^\s+[-*] /.test(line)) {
         out[out.length - 1].details.push(line.trim().slice(2).replace(/\*\*/g, ""));

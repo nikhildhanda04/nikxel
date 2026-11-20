@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 /// Pairs this Mac with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details}]}, sent on the user's Send click,
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click,
 /// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Mirrors cloudSync.ts.
 enum CloudSync {
@@ -52,7 +52,7 @@ enum CloudSync {
 
     /// The sections that are sent (work and meetings; never chats or open tasks),
     /// and the type an untagged bullet in each gets.
-    static let sectionTypes = ["what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other"]
+    static let sectionTypes = ["what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "other": "other", "erp tasks": "planning"]
     static let types: Set<String> = ["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]
 
     /// First 12 hex of SHA-256(section + "\n" + what.lowercased()). The daily page uses it for data-id.
@@ -67,13 +67,13 @@ enum CloudSync {
         guard let tok = token else { return false }
         let (headline, all) = dayItems(fromDailySummary: summary)
         let items = all.filter { !skip.contains($0.id) }.map {
-            ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details] as [String: Any]
+            ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details, "project": $0.project] as [String: Any]
         }
         guard !items.isEmpty || allowEmpty else { return false }
         return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
     }
 
-    struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String] }
+    struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String]; var project = "" }
 
     /// Top-level bullets of every "## " section but Summary; indented bullets become details.
     /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
@@ -100,6 +100,12 @@ enum CloudSync {
                     if types.contains(tag) { type = tag }
                     text.removeSubrange(r)
                 }
+                // Then an optional [[ERP project]] tag.
+                var project = ""
+                if let r = text.range(of: #"^\[\[([^\]]+?)\]\]\s*"#, options: .regularExpression) {
+                    project = String(text[r]).trimmingCharacters(in: CharacterSet(charactersIn: "[]").union(.whitespaces))
+                    text.removeSubrange(r)
+                }
                 var minutes = 0
                 let ns = text as NSString
                 if let m = dur.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
@@ -112,14 +118,14 @@ enum CloudSync {
                     .trimmingCharacters(in: CharacterSet(charactersIn: " —-–:,;"))
                 let low = what.lowercased()
                 if what.count < 3 || isNone(low) || low.hasPrefix("none today") || low.hasPrefix("nothing") || low.hasPrefix("no calls") || low.hasPrefix("no tasks") { continue }
-                out.append(DayItem(id: itemID(section: section, what: what), section: section, what: what, type: type, minutes: minutes, details: []))
+                out.append(DayItem(id: itemID(section: section, what: what), section: section, what: what, type: type, minutes: minutes, details: [], project: project))
                 open = true
             } else if open, line.hasPrefix(" ") || line.hasPrefix("\t") {
                 var d = line.trimmingCharacters(in: .whitespaces)
                 guard d.hasPrefix("- ") || d.hasPrefix("* ") else { continue }
                 d = String(d.dropFirst(2)).replacingOccurrences(of: "**", with: "")
                 let last = out.removeLast()
-                out.append(DayItem(id: last.id, section: last.section, what: last.what, type: last.type, minutes: last.minutes, details: last.details + [d]))
+                out.append(DayItem(id: last.id, section: last.section, what: last.what, type: last.type, minutes: last.minutes, details: last.details + [d], project: last.project))
             }
         }
         return (headline, out)

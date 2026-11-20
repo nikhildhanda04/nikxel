@@ -34,6 +34,19 @@ import Foundation
         let plain = DayPage.html(from: md)
         check(!plain.contains("data-id=") && !plain.contains("class=\"nx-send\"") && !plain.contains("<dialog class=\"nx-pv\"") && !plain.contains("id=\"nx-day\"") && !plain.contains("[coding]"), "not daily: no ids, no bar, no tags")
         check(plain.contains("class=\"nx-todo\""), "not daily: checkbox")
+        let pmd = "## What you worked on\n- [coding] [[Produce POS]] Fixed sign-out 1h\n\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n"
+        let ph = DayPage.html(from: pmd, daily: true)
+        check(!ph.contains("[[Produce POS]]") && !ph.contains("[coding]"), "project tags hidden")
+        if let r = ph.range(of: #"(?<=id="nx-day">).*?(?=</script>)"#, options: .regularExpression),
+           let day = try? JSONSerialization.jsonObject(with: Data(ph[r].utf8)) as? [String: Any],
+           let items = day["items"] as? [[String: Any]] {
+            check(items.first?["project"] as? String == "Produce POS", "embedded item carries project")
+        } else { check(false, "embedded day (project)") }
+        check(ph.contains("pv-proj"), "preview shows project pill")
+        let tasks = [ERP.TouchedTask(name: "Sign-out button", project: "Produce POS", stage: "In Progress", deadline: "2026-11-25"),
+                     ERP.TouchedTask(name: "X", project: "", stage: "Done", deadline: "")]
+        check(DayLogger.erpTasksSection(tasks) == "\n## ERP tasks\n- [[Produce POS]] Sign-out button — In Progress (due 2026-11-25)\n- X — Done\n", "erpTasksSection")
+        check(DayLogger.erpTasksSection([]) == "", "erpTasksSection empty")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

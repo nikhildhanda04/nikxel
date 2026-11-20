@@ -13,6 +13,7 @@ import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { TwinDistiller } from "./twinDistiller";
 import { TwinProfile } from "./twinProfile";
 import * as ErpCrawl from "./erpCrawl";
+import * as ERP from "./erp";
 import { DayPage } from "./dayPage";
 import { desktopRequest } from "./desktopHelper";
 import * as Slack from "./slack";
@@ -659,8 +660,10 @@ ${report}`;
       try {
         const report = await this.buildReport(date);
         if (report === "") return;
-        const prompt = this.summaryPrompt(report, date);
-        const output = TwinProfile.correct(await this.momGenerator.runPrompt(prompt, "daily-summary"));
+        const erpProjects = ERP.isConnected() ? (await ERP.projects().catch(() => [])).map(p => p.name) : [];
+        const prompt = this.summaryPrompt(report, date, erpProjects);
+        const output = TwinProfile.correct(await this.momGenerator.runPrompt(prompt, "daily-summary"))
+          + DayLogger.erpTasksSection(await ERP.tasksTouched(date).catch(() => []));
         const file = this.summaryFile(date);
         await fs.promises.writeFile(file, output, "utf8");
         // The .md stays: it's what the WhatsApp bot's memory reads back.
@@ -1095,7 +1098,15 @@ ${report}`;
     }
   }
 
-  private summaryPrompt(report: string, date: Date): string {
+  /// The "## ERP tasks" section appended after the model's output: one bullet per task
+  /// the user touched today, project-tagged like the work bullets. "" when there are none.
+  static erpTasksSection(tasks: ERP.TouchedTask[]): string {
+    if (!tasks.length) return "";
+    return "\n## ERP tasks\n" + tasks.map(t => "- " + (t.project ? `[[${t.project}]] ` : "") + t.name
+      + (t.stage ? ` — ${t.stage}` : "") + (t.deadline ? ` (due ${t.deadline})` : "") + "\n").join("");
+  }
+
+  private summaryPrompt(report: string, date: Date, erpProjects: string[] = []): string {
     const day = dayStamp(date);
     return `You are generating an end-of-day journal entry for the user, based on raw activity data captured throughout the day:
 - Foreground app + window-title samples (every 15s) — shows what was on screen.
@@ -1159,13 +1170,13 @@ Output this exact Markdown structure:
 Rules:
 - Never invent activity not in the data. Inferring is OK ("session prompts mention 'typing lag' and you committed to StateMachine.swift, so you were fixing the typing bug") — flag uncertain inferences.
 - When session prompts and git activity disagree, prefer what the session prompts say the user was trying to do.
-- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. \`- [research] Compared three OCR libraries…\`. Pick [shipped] for a push, release or deploy.
+- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. \`- [research] Compared three OCR libraries…\`. Pick [shipped] for a push, release or deploy.${erpProjects.length ? "\n- After the type tag, add the ERP project the bullet belongs to as `[[<exact name from the ERP projects list>]] `, only when it clearly belongs to one; otherwise add nothing." : ""}
 - Output ONLY the Markdown — no preamble, no closing remarks.
 
 ---
 RAW ACTIVITY DATA:
 ${report}
-`;
+${erpProjects.length ? "\nERP projects:\n" + erpProjects.map(p => `- ${p}`).join("\n") + "\n" : ""}`;
   }
 }
 

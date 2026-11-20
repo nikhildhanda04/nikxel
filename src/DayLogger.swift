@@ -617,8 +617,10 @@ DAILY SUMMARIES:
             let report = self.buildReport(for: date)
             if report.isEmpty { return }
             do {
-                let prompt = self.summaryPrompt(report: report, date: date)
+                let erpProjects = ERP.isConnected ? ERP.projects().map(\.name) : []
+                let prompt = self.summaryPrompt(report: report, date: date, erpProjects: erpProjects)
                 let output = TwinProfile.correct(try self.momGenerator.runPrompt(prompt, kind: "daily-summary"))
+                    + Self.erpTasksSection(ERP.tasksTouched(on: date))
                 let fileURL = self.summaryFileURL(for: date)
                 try output.write(to: fileURL, atomically: true, encoding: .utf8)
                 // The .md stays: it's what the WhatsApp bot's memory reads back.
@@ -1157,7 +1159,17 @@ DAILY SUMMARIES:
         }
     }
 
-    private func summaryPrompt(report: String, date: Date) -> String {
+    /// The "## ERP tasks" section appended after the model's output: one bullet per task
+    /// the user touched today, project-tagged like the work bullets. "" when there are none.
+    static func erpTasksSection(_ tasks: [ERP.TouchedTask]) -> String {
+        if tasks.isEmpty { return "" }
+        return "\n## ERP tasks\n" + tasks.map { t in
+            "- " + (t.project.isEmpty ? "" : "[[\(t.project)]] ") + t.name + (t.stage.isEmpty ? "" : " — \(t.stage)")
+                + (t.deadline.isEmpty ? "" : " (due \(t.deadline))") + "\n"
+        }.joined()
+    }
+
+    private func summaryPrompt(report: String, date: Date, erpProjects: [String] = []) -> String {
         let day = Self.dayKey(date)
         return """
 You are generating an end-of-day journal entry for the user, based on raw activity data captured throughout the day:
@@ -1222,12 +1234,13 @@ Output this exact Markdown structure:
 Rules:
 - Never invent activity not in the data. Inferring is OK ("session prompts mention 'typing lag' and you committed to StateMachine.swift, so you were fixing the typing bug") — flag uncertain inferences.
 - When session prompts and git activity disagree, prefer what the session prompts say the user was trying to do.
-- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. `- [research] Compared three OCR libraries…`. Pick [shipped] for a push, release or deploy.
+- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. `- [research] Compared three OCR libraries…`. Pick [shipped] for a push, release or deploy.\(erpProjects.isEmpty ? "" : "\n- After the type tag, add the ERP project the bullet belongs to as `[[<exact name from the ERP projects list>]] `, only when it clearly belongs to one; otherwise add nothing.")
 - Output ONLY the Markdown — no preamble, no closing remarks.
 
 ---
 RAW ACTIVITY DATA:
 \(report)
+\(erpProjects.isEmpty ? "" : "\nERP projects:\n" + erpProjects.map { "- \($0)" }.joined(separator: "\n") + "\n")
 """
     }
 }

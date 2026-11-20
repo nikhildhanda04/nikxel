@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { filterPeople, teamCards } from '../orgView.js';
-import { Btn, H, Icon, Input, Muted, Tag, chipCls } from '../ui.jsx';
+import { filterPeople, orgStats, sortTeams, teamCards, teamSummary } from '../orgView.js';
+import { Btn, H, Input, Muted, Tag, chipCls } from '../ui.jsx';
+import OrgSummary from './OrgSummary.jsx';
+import TeamDrawer, { selCls } from './TeamDrawer.jsx';
+import TeamGrid from './TeamGrid.jsx';
 
-const selCls = 'h-8 min-w-0 rounded-lg border border-line bg-card px-2 text-sm text-fg';
-const STAR = 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1-4.4-4.3 6.1-.9z';
-const SHOWN = 8; // members per card before "+N more"
 const ROWS = 12; // people rows before "Show all"
 
 function Chips({ label, value, set, opts }) {
@@ -16,8 +16,10 @@ function Chips({ label, value, set, opts }) {
   );
 }
 
-export default function Org() {
+// route: 'org' (Teams) | 'org/people' | 'org/team/<id>' (Teams with that team's drawer open)
+export default function Org({ route = 'org' }) {
   const [org, setOrg] = useState(null), [members, setMembers] = useState([]), [membersErr, setMembersErr] = useState(''), [err, setErr] = useState({});
+  const [f, setF] = useState({ q: '', which: 'active', noLead: false, sort: 'size' }); // Teams toolbar; survives drawer open/close
   const load = () => api.org().then(setOrg, (e) => setErr((x) => ({ ...x, load: e.message })));
   useEffect(() => { load(); api.members().then(setMembers, (e) => setMembersErr(e.message)); }, []);
   // Every mutation: run it, then refetch the org; errors show next to the thing that failed (keyed).
@@ -27,10 +29,26 @@ export default function Org() {
   if (!org.people.length && !org.projects.length) return (
     <div><H>Org</H><Muted>Nothing yet — in Nikxel, choose Build org from ERP…</Muted></div>
   );
+  const [, sub, id] = route.split('/');
+  const tab = sub === 'people' ? 'people' : 'teams';
+  const open = sub === 'team' ? teamCards(org.projects, 'all').find((p) => encodeURIComponent(p.id) === id) : null; // any status; unknown id: just the grid
+  const noLead = () => { setF((x) => ({ ...x, which: 'active', noLead: true })); location.hash = 'org'; };
+
   return (
-    <div>
-      <People org={org} members={members} membersErr={membersErr} err={err} run={run} />
-      <Teams org={org} err={err} run={run} />
+    <div className="lg:-mx-[160px] xl:-mx-[280px]">
+      <OrgSummary s={orgStats(org)} onNoLead={noLead} />
+      <nav aria-label="Org" className="mb-5 flex gap-5 border-b border-line text-sm">
+        {[['org', 'Teams', 'teams'], ['org/people', 'People', 'people']].map(([h, l, k]) => (
+          <a key={k} href={'#' + h} aria-current={tab === k ? 'page' : undefined}
+            className="-mb-px border-b-2 border-transparent pb-2 text-muted transition-colors hover:text-fg aria-[current=page]:border-fg aria-[current=page]:font-medium aria-[current=page]:text-fg">{l}</a>
+        ))}
+      </nav>
+      {tab === 'people'
+        ? <People org={org} members={members} membersErr={membersErr} err={err} run={run} />
+        : <Teams org={org} f={f} setF={setF} />}
+      {tab === 'teams' && open && (
+        <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { location.hash = 'org'; }} />
+      )}
     </div>
   );
 }
@@ -92,87 +110,24 @@ function People({ org, members, membersErr, err, run }) {
   );
 }
 
-function Teams({ org, err, run }) {
-  const [which, setWhich] = useState('active'), [q, setQ] = useState('');
-  const s = q.trim().toLowerCase();
-  const cards = teamCards(org.projects, which).filter((p) => !s || p.name.toLowerCase().includes(s));
+function Teams({ org, f, setF }) {
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const s = f.q.trim().toLowerCase();
+  const cards = sortTeams(teamCards(org.projects, f.which, { noLead: f.noLead }).filter((p) => !s || p.name.toLowerCase().includes(s)).map(teamSummary), f.sort);
   return (
     <section>
-      <H>Teams <span className="text-sm font-normal text-muted tabular-nums">{teamCards(org.projects, 'active').length} active</span></H>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Input type="search" placeholder="Search projects" aria-label="Search projects" value={q} onChange={(e) => setQ(e.target.value)} className="sm:max-w-64" />
-        <Chips label="Status" value={which} set={setWhich} opts={[['active', 'Active'], ['inactive', 'Inactive'], ['archived', 'Archived'], ['all', 'All']]} />
-      </div>
-      {!cards.length ? <Muted>{s ? 'No projects match.' : `No ${which === 'all' ? '' : which + ' '}projects.`}</Muted> : (
-        <div className="space-y-4">{cards.map((p) => <Card key={p.id} p={p} people={org.people} err={err['t' + p.id]} run={(x) => run('t' + p.id, x)} />)}</div>
-      )}
-    </section>
-  );
-}
-
-function Card({ p, people, err, run }) {
-  const [name, setName] = useState(null), [all, setAll] = useState(false); // name !== null: renaming
-  const inTeam = new Set(p.members.map((m) => m.person_id));
-  const addable = people.filter((x) => !inTeam.has(x.id));
-  const shown = all ? p.members : p.members.slice(0, SHOWN);
-  const save = (e) => { e.preventDefault(); run(api.patchProject(p.id, { name }).then(() => setName(null))); };
-
-  return (
-    <div className={`rise rounded-xl border border-line bg-card p-4 ${p.archived ? 'opacity-70' : ''}`}>
-      {name === null ? (
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 className="min-w-0 flex-1 truncate font-heading text-xl font-semibold tracking-tight">{p.name}</h3>
-          {p.archived && <Tag>archived</Tag>}
-          {!p.active && <Tag>inactive in ERP</Tag>}
-        </div>
-      ) : (
-        <form onSubmit={save} className="flex gap-2">
-          <Input autoFocus aria-label="Project name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
-          <Btn primary disabled={!name.trim()}>Save</Btn>
-          <Btn type="button" onClick={() => setName(null)}>Cancel</Btn>
-        </form>
-      )}
-      {p.description && <p className="mt-1 text-sm text-muted line-clamp-2">{p.description}</p>}
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {!p.members.length && <span className="text-sm text-muted">No members.</span>}
-        {shown.map((m) => {
-          const lead = m.role === 'lead';
-          return (
-            <span key={m.person_id} className="inline-flex h-7 max-w-full items-center rounded-md bg-accent text-sm text-pill-fg">
-              <button onClick={() => run(api.setMember(p.id, m.person_id, lead ? 'member' : 'lead'))} aria-pressed={lead}
-                aria-label={lead ? `${m.name} is lead; make member` : `Make ${m.name} lead`} title={lead ? 'Lead' : 'Make lead'}
-                className={`grid h-full place-items-center pl-2 pr-1 transition-colors ${lead ? 'text-fg' : 'text-muted/60 hover:text-fg'}`}>
-                <svg viewBox="0 0 24 24" className="size-3.5" fill={lead ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d={STAR} /></svg>
-              </button>
-              <span className={`truncate ${lead ? 'font-medium text-fg' : ''}`}>{m.name}</span>
-              <button onClick={() => run(api.removeMember(p.id, m.person_id))} aria-label={`Remove ${m.name}`} title="Remove"
-                className="grid h-full place-items-center pl-1 pr-2 text-muted transition-colors hover:text-fg">
-                <Icon d="M6 6l12 12M18 6L6 18" className="size-3" />
-              </button>
-            </span>
-          );
-        })}
-        {p.members.length > SHOWN && (
-          <button onClick={() => setAll(!all)} className="h-7 px-1.5 text-sm text-muted transition-colors hover:text-fg">
-            {all ? 'Show less' : `+${p.members.length - SHOWN} more`}
-          </button>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {addable.length > 0 && (
-          <select aria-label={`Add a person to ${p.name}`} className={`${selCls} mr-auto`} value="" onChange={(e) => run(api.setMember(p.id, e.target.value, 'member'))}>
-            <option value="" disabled>Add person…</option>
-            {addable.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </select>
-        )}
-        <span className="ml-auto flex gap-2">
-          {name === null && <Btn onClick={() => setName(p.name)}>Rename</Btn>}
-          <Btn onClick={() => run(api.patchProject(p.id, { archived: !p.archived }))}>{p.archived ? 'Unarchive' : 'Archive'}</Btn>
+        <Input type="search" placeholder="Search teams" aria-label="Search teams" value={f.q} onChange={(e) => set('q')(e.target.value)} className="sm:max-w-56" />
+        <Chips label="Status" value={f.which} set={set('which')} opts={[['active', 'Active'], ['inactive', 'Inactive'], ['archived', 'Archived'], ['all', 'All']]} />
+        <button className={chipCls(f.noLead)} aria-pressed={f.noLead} onClick={() => set('noLead')(!f.noLead)}>No lead</button>
+        <span className="flex items-center gap-2 sm:ml-auto">
+          <span className="text-xs text-muted">Sort</span>
+          <Chips label="Sort" value={f.sort} set={set('sort')} opts={[['size', 'Size'], ['name', 'Name']]} />
         </span>
       </div>
-      {err && <Muted className="mt-3">{err}</Muted>}
-    </div>
+      {!cards.length
+        ? <Muted>{s ? 'No teams match.' : `No ${f.which === 'all' ? '' : f.which + ' '}teams${f.noLead ? ' without a lead' : ''}.`}</Muted>
+        : <TeamGrid cards={cards} open={(id) => { location.hash = 'org/team/' + encodeURIComponent(id); }} />}
+    </section>
   );
 }

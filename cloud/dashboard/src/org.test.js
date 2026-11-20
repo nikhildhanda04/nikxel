@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterPeople, teamCards } from './orgView.js';
+import { filterPeople, teamCards, initials, teamSummary, orgStats, sortTeams } from './orgView.js';
 
 const people = [
   { id: 'p1', name: 'Asha Rao', email: 'asha@x.com', title: 'Engineer', joined: true },
@@ -42,4 +42,49 @@ test('teamCards: Active = not archived and active in ERP; Inactive = not archive
 test('teamCards: excludes removed members and lists leads first', () => {
   assert.deepEqual(teamCards(projects, 'active')[0].members.map((m) => m.person_id), ['p1', 'p2']);
   assert.equal(projects[0].members.length, 3); // input untouched
+});
+
+test('initials: one or two uppercase letters, ? when empty', () => {
+  assert.equal(initials('Shivay Sharan'), 'SS');
+  assert.equal(initials('Aarib'), 'A');
+  assert.equal(initials(''), '?');
+  assert.equal(initials('  asha  rao  kumar '), 'AR');
+});
+
+test('teamSummary: drops removed members, leads first, count excludes removed', () => {
+  const s = teamSummary(projects[0]);
+  assert.deepEqual(s.members.map((m) => m.person_id), ['p1', 'p2']);
+  assert.deepEqual(s.leads, ['Asha']);
+  assert.equal(s.count, 2);
+  assert.deepEqual([s.id, s.name, s.active, s.archived], ['a', 'Alpha', true, false]);
+  assert.deepEqual(teamSummary({ id: 'z', name: 'Z', active: true, archived: false, members: [] }).leads, []);
+});
+
+const m = (person_id, role, removed = false) => ({ person_id, name: person_id, role, removed });
+const org = {
+  people: [{ id: 'p1', joined: true }, { id: 'p2', joined: false }, { id: 'p3', joined: true }],
+  projects: [
+    { id: 't1', name: 'One', active: true, archived: false, members: [m('p1', 'lead'), m('p2', 'member')] },
+    { id: 't2', name: 'Two', active: true, archived: false, members: [m('p2', 'member')] },
+    { id: 't3', name: 'Three', active: true, archived: false, members: [m('p3', 'lead', true), m('p1', 'member')] },
+    { id: 't4', name: 'Four', active: true, archived: true, members: [] },
+    { id: 't5', name: 'Five', active: false, archived: false, members: [] },
+  ],
+};
+
+test('orgStats: active teams, active teams without a live lead, people, joined', () => {
+  assert.deepEqual(orgStats(org), { activeTeams: 3, noLead: 2, people: 3, joined: 2 });
+});
+
+test('sortTeams: size = count desc then name; name = alphabetical ignoring case', () => {
+  const c = (name, count) => ({ name, count });
+  const cards = [c('bravo', 2), c('Zulu', 6), c('alpha', 2), c('Echo', 6)];
+  assert.deepEqual(sortTeams(cards, 'size').map((x) => x.name), ['Echo', 'Zulu', 'alpha', 'bravo']);
+  assert.deepEqual(sortTeams(cards, 'name').map((x) => x.name), ['alpha', 'bravo', 'Echo', 'Zulu']);
+  assert.equal(cards[0].name, 'bravo'); // input untouched
+});
+
+test('teamCards: noLead keeps only teams without a live lead', () => {
+  assert.deepEqual(teamCards(org.projects, 'active', { noLead: true }).map((p) => p.id), ['t2', 't3']);
+  assert.deepEqual(teamCards(org.projects, 'active', {}).map((p) => p.id), ['t1', 't2', 't3']);
 });

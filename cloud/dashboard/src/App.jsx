@@ -37,7 +37,7 @@ export default function App() {
   const tabs = [['mine', 'My days'], ...(lead ? [['team', 'Team'], ['projects', 'Projects']] : []), ...(admin ? [['people', 'People'], ['org', 'Org']] : []), ['connect', 'Connect']];
   const [base, sub] = route.split('/'); // #projects/<encoded name>
   const tab = tabs.some(([k]) => k === base) ? base : 'mine';
-  const screen = { mine: <Mine />, connect: <Connect />, team: <Team teams={teams} admin={admin} />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} teams={teams} admin={admin} />, people: <People me={me} />, org: <Org /> }[tab];
+  const screen = { mine: <Mine />, connect: <Connect />, team: <Team teams={teams} admin={admin} />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} teams={teams} admin={admin} />, people: <People me={me} />, org: <Org route={route} /> }[tab];
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (

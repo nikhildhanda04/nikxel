@@ -73,6 +73,21 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.redirect(m ? '/' : '/onboarding');
   });
 
+  r.get('/me', session, (req, res) => {
+    const u = db.prepare('SELECT name, email FROM users WHERE id = ?').get(req.session.userId);
+    res.json({ userId: req.session.userId, orgId: req.session.orgId, role: req.session.role, name: u?.name ?? u?.email ?? null });
+  });
+
+  // Dev only: impossible unless DEV_LOGIN=1 is set in the environment.
+  r.post('/dev/login', (req, res) => {
+    if (process.env.DEV_LOGIN !== '1') return res.status(404).json({ error: 'not found' });
+    const u = str(req.body?.userId) && db.prepare('SELECT id FROM users WHERE id = ?').get(req.body.userId);
+    if (!u) return res.status(404).json({ error: 'no such user' });
+    const m = membership(u.id);
+    issueSession(res, { userId: u.id, orgId: m?.org_id ?? null, role: m?.role ?? null }, secret());
+    res.json({ ok: true });
+  });
+
   r.post('/orgs', session, (req, res) => {
     if (!str(req.body?.name)) throw bad('name required');
     if (membership(req.session.userId)) return res.status(409).json({ error: 'already in an org' });

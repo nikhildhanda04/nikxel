@@ -22,5 +22,5 @@ export function createApp(db, opts) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assertSecret(process.env.SESSION_SECRET); // fail loud at startup
   const db = openDb(process.env.DB_PATH || 'nikxel.db'); bootstrap(db);
-  createApp(db).listen(process.env.PORT || 3000);
+  createApp(db).listen(process.env.PORT || 3001);
 }

@@ -172,3 +172,17 @@ test('push whitelists item keys, server owns removed, validates kind/visibility'
   assert.deepEqual(it, { id: 'i1', what: 'a', minutes: 1, removed: false });
   c.close();
 });
+
+test('dev login is 404 unless DEV_LOGIN=1; /me returns session identity', async () => {
+  const c = await boot();
+  delete process.env.DEV_LOGIN;
+  assert.equal((await c.api('POST', '/api/dev/login', { body: { userId: 'owA' } })).status, 404);
+  process.env.DEV_LOGIN = '1';
+  const ok = await c.api('POST', '/api/dev/login', { body: { userId: 'owA' } });
+  delete process.env.DEV_LOGIN;
+  assert.equal(ok.status, 200);
+  const me = await c.api('GET', '/api/me', { headers: A(c, 'owA', 'owner') });
+  assert.deepEqual(me.json, { userId: 'owA', orgId: 'A', role: 'owner', name: 'owA' });
+  assert.equal((await c.api('GET', '/api/me')).status, 401);
+  c.close();
+});

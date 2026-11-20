@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@layer base {
+  body { @apply bg-white text-neutral-900 antialiased; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; }
+}

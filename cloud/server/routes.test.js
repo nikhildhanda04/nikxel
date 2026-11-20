@@ -62,8 +62,8 @@ test('admin rollup excludes pending and other orgs', async () => {
   c.seed('b1', 'owB', 'B', 'released', [c.item('i1')]);
   const r = await c.api('GET', '/api/rollup', { headers: A(c, 'admA', 'admin') });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.json.map((s) => s.id), ['a1']);
-  assert.deepEqual(r.json[0].items.map((i) => i.id), ['i1']);
+  assert.equal(r.json.length, 1);
+  assert.deepEqual(r.json[0], { date: '2026-11-20', user_id: 'memA', items: [{ id: 'i1', what: 'wi1', minutes: 30 }] }); // no notes/visibility/status/removed
   assert.equal((await c.api('GET', '/api/rollup', { headers: A(c) })).status, 403);
   assert.equal((await c.api('GET', '/api/rollup')).status, 401);
   const m = await c.api('GET', '/api/members', { headers: A(c, 'admA', 'admin') });
@@ -73,7 +73,7 @@ test('admin rollup excludes pending and other orgs', async () => {
 
 test('push merges and preserves redactions', async () => {
   const c = await boot(); const dev = c.deviceFor('memA', 'A');
-  const push = (items, extra = {}) => c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-20', items, notes: '', visibility: 'private', ...extra } });
+  const push = (items, extra = {}) => c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-20', items, notes: '', visibility: 'admin', ...extra } });
   assert.equal((await push([{ id: 'i1', what: 'a', minutes: 10 }, { id: 'i2', what: 'b', minutes: 5 }])).status, 200);
   assert.equal((await c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: 'd', items: [{ id: 'x', what: 'a', minutes: 'ten' }] } })).status, 400);
   const mine = (await c.api('GET', '/api/summaries/mine', { headers: A(c) })).json;
@@ -86,7 +86,7 @@ test('push merges and preserves redactions', async () => {
   const by = Object.fromEntries(after[0].items.map((i) => [i.id, i]));
   assert.equal(by.i1.removed, true); assert.equal(by.i1.minutes, 11); assert.equal(by.i3.removed, false);
   // body can't redirect org/user
-  await c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-21', items: [], org_id: 'B', user_id: 'owB' } });
+  await c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-21', items: [], visibility: 'admin', org_id: 'B', user_id: 'owB' } });
   assert.equal(c.db.prepare("SELECT org_id,user_id FROM summaries WHERE date='2026-11-21'").get().org_id, 'A');
   assert.equal((await c.api('POST', '/api/summaries', { body: {} })).status, 401);
   c.close();
@@ -97,9 +97,10 @@ test('release makes a summary appear in the rollup; only owner of row may', asyn
   const admin = A(c, 'admA', 'admin');
   assert.equal((await c.api('GET', '/api/rollup', { headers: admin })).json.length, 0);
   assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c, 'memA2') })).status, 404);
+  assert.equal((await c.api('POST', '/api/summaries/s1/redact', { headers: A(c, 'memA2'), body: { itemId: 'i1' } })).status, 404);
   assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c, 'admA', 'admin') })).status, 404);
   assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c) })).status, 200);
-  assert.deepEqual((await c.api('GET', '/api/rollup', { headers: admin })).json.map((s) => s.id), ['s1']);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: admin })).json.length, 1);
   assert.equal((await c.api('POST', '/api/summaries/s1/redact', { headers: A(c), body: { itemId: 'i1' } })).status, 403);
   c.close();
 });
@@ -142,11 +143,32 @@ test('google callback upserts by sub and issues session', async () => {
     exchange: async () => ({ id_token: 't' }),
     verifier: async () => ({ sub: 'sub-memA', email: 'changed@x.com', name: 'M', email_verified: true }),
   });
-  const r = await c.api('GET', '/api/auth/google/callback?code=abc');
+  assert.equal((await c.api('GET', '/api/auth/google/callback?code=abc')).status, 401); // no state
+  assert.equal((await c.api('GET', '/api/auth/google/callback?code=abc&state=zz', { headers: { cookie: 'nikxel_oauth_state=other' } })).status, 401);
+  const r = await c.api('GET', '/api/auth/google/callback?code=abc&state=good', { headers: { cookie: 'nikxel_oauth_state=good' } });
   assert.equal(r.status, 302); assert.equal(r.res.headers.get('location'), '/');
   assert.match(r.res.headers.get('set-cookie'), /nikxel_session=/);
   assert.equal(c.db.prepare('SELECT COUNT(*) n FROM users').get().n, 5); // upsert, no dup
   const g = await c.api('GET', '/api/auth/google');
+  assert.match(g.res.headers.get('set-cookie'), /nikxel_oauth_state=/);
   assert.equal(g.status, 302); assert.match(g.res.headers.get('location'), /accounts\.google\.com.*client_id=cid.*scope=openid/);
+  c.close();
+});
+
+test('google verify failure is 401', async () => {
+  const c = await boot({ exchange: async () => ({ id_token: 't' }), verifier: async () => ({ sub: 'x', email_verified: false }) });
+  const r = await c.api('GET', '/api/auth/google/callback?code=a&state=s', { headers: { cookie: 'nikxel_oauth_state=s' } });
+  assert.equal(r.status, 401);
+  c.close();
+});
+
+test('push whitelists item keys, server owns removed, validates kind/visibility', async () => {
+  const c = await boot(); const dev = c.deviceFor('memA', 'A');
+  const body = (o) => ({ headers: dev, body: { kind: 'work', date: '2026-11-20', visibility: 'admin', items: [{ id: 'i1', what: 'a', minutes: 1, removed: true, secret: 'x' }], ...o } });
+  assert.equal((await c.api('POST', '/api/summaries', body({ kind: 'bogus' }))).status, 400);
+  assert.equal((await c.api('POST', '/api/summaries', body({ visibility: 'private' }))).status, 400);
+  assert.equal((await c.api('POST', '/api/summaries', body({}))).status, 200);
+  const it = JSON.parse(c.db.prepare('SELECT items FROM summaries').get().items)[0];
+  assert.deepEqual(it, { id: 'i1', what: 'a', minutes: 1, removed: false });
   c.close();
 });

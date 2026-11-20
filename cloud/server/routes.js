@@ -17,6 +17,7 @@ function validItem(i, partial = false) {
   if (i.minutes !== undefined || !partial) if (!num(i.minutes)) throw bad('bad minutes');
 }
 
+const KINDS = ['work', 'meeting', 'project'], VIS = ['admin', 'org'];
 const parse = (row) => row && { ...row, items: JSON.parse(row.items) };
 
 async function defaultExchange(code) {
@@ -46,16 +47,24 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   };
   const save = (row) => db.prepare('UPDATE summaries SET items = ?, status = ? WHERE id = ?').run(JSON.stringify(row.items), row.status, row.id);
 
+  const STATE = 'nikxel_oauth_state';
   r.get('/auth/google', (req, res) => {
-    const q = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: process.env.GOOGLE_REDIRECT_URI, response_type: 'code', scope: 'openid email profile' });
+    const state = crypto.randomBytes(16).toString('hex');
+    res.cookie(STATE, state, { httpOnly: true, sameSite: 'lax', secure: true, path: '/api/auth/google', maxAge: 10 * 60 * 1000 });
+    const q = new URLSearchParams({ state, client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: process.env.GOOGLE_REDIRECT_URI, response_type: 'code', scope: 'openid email profile' });
     res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + q);
   });
 
-  // ponytail: no OAuth `state` param; add a state cookie check if login-CSRF matters.
   r.get('/auth/google/callback', async (req, res) => {
+    const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(STATE + '='));
+    const want = raw?.slice(STATE.length + 1);
+    res.clearCookie(STATE, { path: '/api/auth/google' });
+    if (!want || req.query.state !== want) return res.status(401).json({ error: 'bad state' });
     if (!str(req.query.code)) throw bad('missing code');
     const { id_token } = await exchange(req.query.code);
-    const g = await verifyGoogle(id_token, process.env.GOOGLE_CLIENT_ID, verifier);
+    let g;
+    try { g = await verifyGoogle(id_token, process.env.GOOGLE_CLIENT_ID, verifier); }
+    catch { return res.status(401).json({ error: 'google verification failed' }); }
     db.prepare(`INSERT INTO users (id, google_sub, email, name, created_at) VALUES (?,?,?,?,?)
       ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, name = excluded.name`).run(uid(), g.sub, g.email, g.name ?? null, Date.now());
     const user = db.prepare('SELECT id FROM users WHERE google_sub = ?').get(g.sub);
@@ -128,15 +137,16 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     const { kind, date, items, notes = '', visibility = 'private' } = req.body ?? {};
     if (!str(kind) || !str(date) || !Array.isArray(items)) throw bad('bad summary');
     items.forEach((i) => validItem(i));
-    if (typeof notes !== 'string' || !str(visibility)) throw bad('bad summary');
+    if (typeof notes !== 'string' || !KINDS.includes(kind) || !VIS.includes(visibility)) throw bad('bad summary');
+    const clean = items.map(({ id, what, minutes }) => ({ id, what, minutes })); // server owns `removed`
     const { userId, orgId } = req.device; // never from the body
     db.transaction(() => {
       const ex = parse(db.prepare('SELECT * FROM summaries WHERE user_id=? AND org_id=? AND kind=? AND date=?').get(userId, orgId, kind, date));
       if (!ex) {
         db.prepare('INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(uid(), userId, orgId, kind, date,
-          JSON.stringify(mergeItems([], items)), notes, visibility, 'pending', Date.now());
+          JSON.stringify(mergeItems([], clean)), notes, visibility, 'pending', Date.now());
       } else if (ex.status === 'pending') { // released summaries are frozen: no re-push edits
-        db.prepare('UPDATE summaries SET items=?, notes=?, visibility=? WHERE id=?').run(JSON.stringify(mergeItems(ex.items, items)), notes, visibility, ex.id);
+        db.prepare('UPDATE summaries SET items=?, notes=?, visibility=? WHERE id=?').run(JSON.stringify(mergeItems(ex.items, clean)), notes, visibility, ex.id);
       }
     })();
     res.json({ ok: true });
@@ -168,8 +178,10 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   });
 
   r.get('/rollup', requireRole('owner', 'admin'), (req, res) => {
-    const rows = db.prepare('SELECT * FROM summaries WHERE org_id = ?').all(req.session.orgId);
-    res.json(rows.map((x) => adminView(parse(x))).filter(Boolean));
+    const rows = db.prepare("SELECT * FROM summaries WHERE org_id = ? AND kind = 'work'").all(req.session.orgId);
+    res.json(rows.map((x) => adminView(parse(x))).filter(Boolean).map((v) => ({
+      date: v.date, user_id: v.user_id, items: v.items.map(({ id, what, minutes }) => ({ id, what, minutes })),
+    })));
   });
 
   return r;

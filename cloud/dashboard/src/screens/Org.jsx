@@ -1,20 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { filterPeople, orgStats, sortTeams, teamCards, teamSummary } from '../orgView.js';
-import { Btn, H, Input, Muted, Tag, chipCls } from '../ui.jsx';
+import { orgStats, sortTeams, teamCards, teamSummary } from '../orgView.js';
+import { Chips, H, Input, Muted, chipCls } from '../ui.jsx';
 import OrgSummary from './OrgSummary.jsx';
-import TeamDrawer, { selCls } from './TeamDrawer.jsx';
+import PeopleTable from './PeopleTable.jsx';
+import TeamDrawer from './TeamDrawer.jsx';
 import TeamGrid from './TeamGrid.jsx';
-
-const ROWS = 12; // people rows before "Show all"
-
-function Chips({ label, value, set, opts }) {
-  return (
-    <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
-      {opts.map(([k, l]) => <button key={k} className={chipCls(value === k)} aria-pressed={value === k} onClick={() => set(k)}>{l}</button>)}
-    </div>
-  );
-}
 
 // route: 'org' (Teams) | 'org/people' | 'org/team/<id>' (Teams with that team's drawer open)
 export default function Org({ route = 'org' }) {
@@ -44,69 +35,12 @@ export default function Org({ route = 'org' }) {
         ))}
       </nav>
       {tab === 'people'
-        ? <People org={org} members={members} membersErr={membersErr} err={err} run={run} />
+        ? <PeopleTable org={org} members={members} membersErr={membersErr} err={err} run={run} />
         : <Teams org={org} f={f} setF={setF} />}
       {tab === 'teams' && open && (
         <TeamDrawer key={open.id} p={open} people={org.people} err={err['t' + open.id]} run={(x) => run('t' + open.id, x)} close={() => { setErr((x) => ({ ...x, ['t' + open.id]: '' })); location.hash = 'org'; }} />
       )}
     </div>
-  );
-}
-
-function People({ org, members, membersErr, err, run }) {
-  const [q, setQ] = useState(''), [which, setWhich] = useState('all'), [copied, setCopied] = useState(''), [all, setAll] = useState(false);
-  const matched = filterPeople(org.people, q, which), shown = all ? matched : matched.slice(0, ROWS);
-  const managerOf = new Map(org.people.map((p) => [p.erp_id, p.name]));
-  const linked = new Set(org.people.map((p) => p.user_id).filter(Boolean));
-  const free = members.filter((m) => !linked.has(m.user_id));
-  const invite = (p) => run('p' + p.id, api.invite('member').then(async (r) => {
-    const link = `${location.origin}/#join=${r.token}`;
-    try { await navigator.clipboard.writeText(link); setCopied(p.id); }
-    catch { prompt('Copy this invite link', link); } // clipboard blocked (http, permissions): let them copy by hand
-  }));
-  const joinedN = org.people.filter((p) => p.joined).length;
-
-  return (
-    <section className="mb-12">
-      <H>People <span className="text-sm font-normal text-muted tabular-nums">{joinedN} of {org.people.length} joined</span></H>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Input type="search" placeholder="Search name, email, title" aria-label="Search people" value={q} onChange={(e) => setQ(e.target.value)} className="sm:max-w-64" />
-        <Chips label="Joined" value={which} set={setWhich} opts={[['all', 'All'], ['joined', 'Joined'], ['not', 'Not joined']]} />
-      </div>
-      {membersErr && <Muted className="mb-3">Couldn’t load members, so linking is unavailable: {membersErr}</Muted>}
-      {!shown.length ? <Muted>No one matches.</Muted> : (
-        <ul className="divide-y divide-line rounded-xl border border-line bg-card">
-          {shown.map((p) => (
-            <li key={p.id} className="px-4 py-3 text-sm">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span className="min-w-0 flex-1 basis-48">
-                  <span className="block truncate font-medium">{p.name}</span>
-                  <span className="block truncate text-xs text-muted">
-                    {[p.title, p.manager_erp_id != null && managerOf.get(p.manager_erp_id) && `reports to ${managerOf.get(p.manager_erp_id)}`, p.email].filter(Boolean).join(' · ') || '—'}
-                  </span>
-                </span>
-                {p.joined ? <Tag dot="var(--fg)">joined</Tag> : <>
-                  {free.length > 0 && (
-                    <select aria-label={`Link ${p.name} to a user`} className={selCls} value="" onChange={(e) => run('p' + p.id, api.linkPerson(p.id, e.target.value))}>
-                      <option value="" disabled>Link to user…</option>
-                      {free.map((m) => <option key={m.user_id} value={m.user_id}>{m.name || m.email}</option>)}
-                    </select>
-                  )}
-                  <Btn onClick={() => invite(p)}>{copied === p.id ? 'Link copied' : 'Invite'}</Btn>
-                </>}
-              </div>
-              {p.note && <p className="mt-1.5 text-xs text-muted line-clamp-2">{p.note}</p>}
-              {err['p' + p.id] && <Muted className="mt-1.5">{err['p' + p.id]}</Muted>}
-            </li>
-          ))}
-        </ul>
-      )}
-      {matched.length > ROWS && (
-        <button onClick={() => setAll(!all)} className="mt-3 text-sm text-muted transition-colors hover:text-fg">
-          {all ? 'Show fewer' : `Show all ${matched.length}`}
-        </button>
-      )}
-    </section>
   );
 }
 

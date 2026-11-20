@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterPeople, teamCards, initials, teamSummary, orgStats, sortTeams } from './orgView.js';
+import { filterPeople, teamCards, initials, teamSummary, orgStats, sortTeams, teamsOfPerson, nameList, tipPos } from './orgView.js';
 
 const people = [
   { id: 'p1', name: 'Asha Rao', email: 'asha@x.com', title: 'Engineer', joined: true },
@@ -87,4 +87,36 @@ test('sortTeams: size = count desc then name; name = alphabetical ignoring case'
 test('teamCards: noLead keeps only teams without a live lead', () => {
   assert.deepEqual(teamCards(org.projects, 'active', { noLead: true }).map((p) => p.id), ['t2', 't3']);
   assert.deepEqual(teamCards(org.projects, 'active', {}).map((p) => p.id), ['t1', 't2', 't3']);
+});
+
+test('teamsOfPerson: skips archived teams and removed memberships, led teams first', () => {
+  const ps = [
+    { id: 'x', name: 'Xray', archived: false, members: [m('p1', 'member')] },
+    { id: 'y', name: 'Yank', archived: false, members: [m('p1', 'lead')] },
+    { id: 'z', name: 'Zed', archived: true, members: [m('p1', 'lead')] },
+    { id: 'w', name: 'Whisky', archived: false, members: [m('p1', 'member', true)] },
+    { id: 'v', name: 'Victor', archived: false, members: [m('p2', 'lead')] },
+  ];
+  assert.deepEqual(teamsOfPerson(ps, 'p1'), ['Yank', 'Xray']);
+  assert.deepEqual(teamsOfPerson(ps, 'p9'), []);
+});
+
+test('nameList: comma list, capped with "and N more"', () => {
+  assert.equal(nameList(['A']), 'A');
+  assert.equal(nameList(['A', 'B', 'C']), 'A, B, C');
+  const many = Array.from({ length: 13 }, (_, i) => 'n' + i);
+  assert.equal(nameList(many), 'n0, n1, n2, n3, n4, n5, n6, n7, n8, n9 and 3 more');
+  assert.equal(nameList(many.slice(0, 10)), many.slice(0, 10).join(', '));
+});
+
+test('tipPos: above and centered, clamped into the viewport, flips below when no room', () => {
+  const r = (left, top, width = 20, height = 20) => ({ left, top, width, height, right: left + width, bottom: top + height });
+  // room above: centered over the trigger, 6px gap
+  assert.deepEqual(tipPos(r(100, 200), { width: 80, height: 30 }, 375), { left: 70, top: 164, below: false });
+  // near the right edge: clamped to 375 - 8 - width
+  assert.deepEqual(tipPos(r(350, 200), { width: 120, height: 30 }, 375), { left: 247, top: 164, below: false });
+  // near the left edge
+  assert.equal(tipPos(r(0, 200), { width: 120, height: 30 }, 375).left, 8);
+  // no room above: below the trigger
+  assert.deepEqual(tipPos(r(100, 10), { width: 80, height: 30 }, 375), { left: 70, top: 36, below: true });
 });

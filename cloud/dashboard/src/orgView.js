@@ -40,3 +40,23 @@ export function orgStats(org) {
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
 // by: 'size' (count desc, then name) | 'name'
 export const sortTeams = (cards, by) => [...cards].sort(by === 'size' ? (a, b) => b.count - a.count || byName(a, b) : byName);
+
+// Names of non-archived teams where personId is a non-removed member; teams they lead first.
+export function teamsOfPerson(projects, personId) {
+  const rows = projects.filter((p) => !p.archived).flatMap((p) => {
+    const m = p.members.find((x) => x.person_id === personId && !x.removed);
+    return m ? [{ name: p.name, lead: m.role === 'lead' }] : [];
+  });
+  return rows.sort((a, b) => b.lead - a.lead).map((r) => r.name);
+}
+
+// "A, B, C" — past `cap` names: "A, …, J and 3 more".
+export const nameList = (names, cap = 10) =>
+  names.length > cap ? `${names.slice(0, cap).join(', ')} and ${names.length - cap} more` : names.join(', ');
+
+// Tooltip placement (viewport coords): centered above the trigger, kept 8px inside the viewport width; below if no room above.
+export function tipPos(r, tip, vw, gap = 6, pad = 8) {
+  const left = Math.max(pad, Math.min(r.left + r.width / 2 - tip.width / 2, vw - pad - tip.width));
+  const below = r.top - gap - tip.height < pad;
+  return { left, top: below ? r.bottom + gap : r.top - gap - tip.height, below };
+}

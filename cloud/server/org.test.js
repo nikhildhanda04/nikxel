@@ -79,6 +79,9 @@ test('teamsFor and teamMemberUserIds', () => {
   assert.deepEqual(teamsFor(db, 'O', 'jake', 'owner').map((t) => t.name), ['Nikxel', 'POS']);
   assert.deepEqual(teamsFor(db, 'O', 'asha', 'member').map((t) => t.name), ['Nikxel']);
   assert.deepEqual(teamsFor(db, 'O', 'ben', 'member'), []);
+  db.prepare('UPDATE org_projects SET active = 0 WHERE erp_id = 10').run();
+  assert.deepEqual(teamsFor(db, 'O', 'jake', 'owner').map((t) => [t.name, t.active]), [['Nikxel', false], ['POS', true]]);
+  assert.deepEqual(teamsFor(db, 'O', 'asha', 'member').map((t) => t.active), [false]);
   db.prepare('UPDATE org_projects SET archived = 1 WHERE erp_id = 11').run();
   assert.deepEqual(teamsFor(db, 'O', 'jake', 'owner').map((t) => t.name), ['Nikxel']);
   assert.deepEqual(teamMemberUserIds(db, project(db, 10).id).sort(), ['asha', 'ben']);

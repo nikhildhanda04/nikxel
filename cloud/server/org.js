@@ -72,11 +72,12 @@ export function orgView(db, orgId) {
 }
 
 export function teamsFor(db, orgId, userId, role) {
-  if (role === 'owner' || role === 'admin')
-    return db.prepare('SELECT id, name FROM org_projects WHERE org_id = ? AND archived = 0 ORDER BY name').all(orgId);
-  return db.prepare(`SELECT pr.id, pr.name FROM org_projects pr JOIN project_members pm ON pm.project_id = pr.id
+  const rows = role === 'owner' || role === 'admin'
+    ? db.prepare('SELECT id, name, active FROM org_projects WHERE org_id = ? AND archived = 0 ORDER BY name').all(orgId)
+    : db.prepare(`SELECT pr.id, pr.name, pr.active FROM org_projects pr JOIN project_members pm ON pm.project_id = pr.id
     JOIN org_people p ON p.id = pm.person_id
     WHERE pr.org_id = ? AND pr.archived = 0 AND p.org_id = ? AND p.user_id = ? AND pm.role = 'lead' AND pm.removed = 0 ORDER BY pr.name`).all(orgId, orgId, userId);
+  return rows.map((t) => ({ ...t, active: !!t.active }));
 }
 
 export const teamMemberUserIds = (db, projectId) => db.prepare(`SELECT p.user_id FROM project_members pm JOIN org_people p ON p.id = pm.person_id

@@ -36,7 +36,7 @@ ${capturedText}`;
   /// trimmed and cut to `cap` on a line boundary.
   accept(next: string, old: string, cap = 2000): string {
     const t = next.trim();
-    if (!t || !/[a-z0-9]/i.test(t)) return old;
+    if (!t || !/[\p{L}\p{N}]/u.test(t)) return old; // Unicode: non-Latin facts are real content, not a refusal
     if (t.length <= cap) return t;
     if (t[cap] === "\n") return t.slice(0, cap);
     const head = t.slice(0, cap), nl = head.lastIndexOf("\n");
@@ -54,6 +54,16 @@ ${capturedText}`;
     let out = "";
     try { out = await runPrompt(this.readerPrompt(this.boundText(sections)), "erp-ingest"); } catch { /* keep old */ }
     this.facts = this.accept(out, this.facts);
+  },
+
+  /// True for a nav link the read-only crawl must NOT follow — logout and
+  /// delete/destroy-style controls some ERPs expose as plain GET links. The
+  /// crawl rides the authenticated session, so following one could log the user
+  /// out or mutate data; the Odoo driver never hits this (fixed read views),
+  /// but the generic fallback follows discovered links.
+  skipLink(href: string): boolean {
+    const h = href.toLowerCase();
+    return ["logout", "signout", "sign-out", "logoff", "delete", "destroy", "unlink"].some(w => h.includes(w));
   },
 
   /// Captured sections joined and truncated to `cap` chars (on a line

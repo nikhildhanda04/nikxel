@@ -26,6 +26,12 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
         check(ErpContext.accept(new: "Project Rentop — yours — due Fri", old: "") == "Project Rentop — yours — due Fri", "accept takes real facts")
         check(ErpContext.accept(new: String(repeating: "x", count: 2500), old: "").count <= 2000, "accept caps length")
         check(ErpContext.accept(new: "Who\nl1\nl2\nl3", old: "", cap: 8) == "Who\nl1", "accept cuts on a line boundary")
+        check(ErpContext.accept(new: "مشروع رينتوب — مستحق الجمعة", old: "OLD") == "مشروع رينتوب — مستحق الجمعة", "accept keeps non-Latin facts")
+
+        // skipLink: deny logout/delete-style GET links, allow ordinary views.
+        check(ErpContext.skipLink("https://erp.x.com/web/session/logout") == true, "skipLink denies logout")
+        check(ErpContext.skipLink("https://erp.x.com/app?action=delete&id=7") == true, "skipLink denies delete")
+        check(ErpContext.skipLink("https://erp.x.com/odoo/contacts") == false, "skipLink allows views")
 
         // boundText: caps total, joins sections.
         check(ErpContext.boundText(sections: [String(repeating: "a", count: 5000), String(repeating: "b", count: 5000)], cap: 8000).count <= 8000, "boundText caps total")

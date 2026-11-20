@@ -63,6 +63,16 @@ enum ErpContext {
         facts = accept(new: out, old: facts)
     }
 
+    /// True for a nav link the read-only crawl must NOT follow — logout and
+    /// delete/destroy-style controls that some ERPs expose as plain GET links.
+    /// The crawl rides the authenticated session, so following one could log
+    /// the user out or mutate data; the Odoo driver never hits this (fixed read
+    /// views), but the generic fallback follows discovered links.
+    static func skipLink(_ href: String) -> Bool {
+        let h = href.lowercased()
+        return ["logout", "signout", "sign-out", "logoff", "delete", "destroy", "unlink"].contains { h.contains($0) }
+    }
+
     /// Captured sections joined and truncated to `cap` chars (on a line
     /// boundary) — the bound on what the reader LLM ever sees in one run.
     static func boundText(sections: [String], cap: Int = 8000) -> String {

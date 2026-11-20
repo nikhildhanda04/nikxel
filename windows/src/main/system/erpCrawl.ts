@@ -120,7 +120,7 @@ async function captureGeneric(win: BrowserWindow): Promise<string[]> {
   try {
     const seen = new Set<string>();
     for (const it of JSON.parse(json) as { label: string; href: string }[]) {
-      if (it.href && !seen.has(it.href)) { seen.add(it.href); links.push(it); }
+      if (it.href && !seen.has(it.href) && !ErpContext.skipLink(it.href)) { seen.add(it.href); links.push(it); }
     }
   } catch { /* no links */ }
   const sections: string[] = [`## Home\n${await textOf(win, "body")}`];

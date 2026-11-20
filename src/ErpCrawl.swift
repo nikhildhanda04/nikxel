@@ -61,6 +61,7 @@ enum ErpCrawl {
         do { try task.run() } catch { cblog("ErpCrawl: launch error — \(error)"); return false }
         let deadline = Date().addingTimeInterval(30)
         while Date() < deadline { if portOpen() { return true }; Thread.sleep(forTimeInterval: 0.4) }
+        quit()   // spawned but the debug port never came up — don't orphan the process
         return false
     }
 
@@ -163,7 +164,7 @@ enum ErpCrawl {
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
             var seen = Set<String>()
             for item in arr {
-                guard let href = item["href"], !seen.contains(href) else { continue }
+                guard let href = item["href"], !seen.contains(href), !ErpContext.skipLink(href) else { continue }
                 seen.insert(href); links.append((label: item["label"] ?? "", href: href))
             }
         }

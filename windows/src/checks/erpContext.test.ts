@@ -22,6 +22,12 @@ test("ErpContext: store, injected block, reader prompt, accept, boundText, inges
   assert.equal(EC.accept("Project Rentop — yours — due Fri", ""), "Project Rentop — yours — due Fri");
   assert.ok(EC.accept("x".repeat(2500), "").length <= 2000);
   assert.equal(EC.accept("Who\nl1\nl2\nl3", "", 8), "Who\nl1"); // over cap: cut on a line boundary
+  assert.equal(EC.accept("مشروع رينتوب — مستحق الجمعة", "OLD"), "مشروع رينتوب — مستحق الجمعة"); // non-Latin is real content, not a refusal
+
+  // skipLink: deny logout/delete-style GET links, allow ordinary views (read-only invariant).
+  assert.equal(EC.skipLink("https://erp.x.com/web/session/logout"), true);
+  assert.equal(EC.skipLink("https://erp.x.com/app?action=delete&id=7"), true);
+  assert.equal(EC.skipLink("https://erp.x.com/odoo/contacts"), false);
 
   // boundText: caps total, joins sections.
   assert.ok(EC.boundText(["a".repeat(5000), "b".repeat(5000)], 8000).length <= 8000);

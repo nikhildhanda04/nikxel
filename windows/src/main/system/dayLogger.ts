@@ -121,6 +121,7 @@ export class DayLogger {
     this.scheduleWeek();
     this.scheduleMorning();
     this.backfillIfMissed();
+    this.upgradeDailyPages();
     // Wakes are when a missed 10pm is noticed, and when a timer that slept
     // through its fire time needs re-aiming.
     bus.on("wake", this.onWake);
@@ -399,6 +400,18 @@ export class DayLogger {
 
   private logFile(date: Date): string {
     return path.join(this.logDir, `${dayStamp(date)}.jsonl`);
+  }
+
+  /// Re-renders the last week's daily pages that predate the Send bar, so
+  /// they can be crossed out and sent too. Their .md is untouched.
+  upgradeDailyPages(): void {
+    for (let back = 0; back < 7; back++) {
+      const now = new Date(), date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12);
+      const md = this.summaryFile(date), page = md.replace(/\.md$/, ".html");
+      const text = readText(md), html = readText(page);
+      if (text == null || html == null || html.includes("nx-send")) continue;
+      try { writeAtomic(page, DayPage.html(text, this.dayStats(date), false, true)); } catch { /* leave the old page */ }
+    }
   }
 
   private summaryFile(date: Date): string {

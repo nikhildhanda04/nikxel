@@ -11,6 +11,9 @@ export interface DayItem { id: string; section: string; what: string; type: stri
 /// Resolves the parsed JSON body on 2xx, null on any failure.
 export type Poster = (path: string, body: unknown, bearer: string | null) => Promise<any | null>;
 
+/// The type an untagged bullet gets from its section.
+const SECTION_TYPES: Record<string, string> = { "meetings": "meeting", "whatsapp": "comms", "slack": "comms", "browsing & reading": "research" };
+
 export class CloudSync {
   /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
   static backendBase(): string { return process.env.NIKXEL_BACKEND || "http://localhost:3001"; }
@@ -82,7 +85,7 @@ export class CloudSync {
       if (line.startsWith("- ") || line.startsWith("* ")) {
         open = false;
         let text = line.slice(2).replace(/\*\*/g, "");
-        let type = section === "meetings" ? "meeting" : "other";
+        let type = SECTION_TYPES[section] ?? "other";
         // Any [word] tag is hidden on the daily page, so strip it here; unknown ones keep the default type.
         const tag = /^\[([a-z]+)\]\s*/.exec(text);
         if (tag) { if (CloudSync.types.has(tag[1])) type = tag[1]; text = text.slice(tag[0].length); }

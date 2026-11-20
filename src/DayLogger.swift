@@ -44,6 +44,22 @@ class DayLogger {
         scheduleWeek()
         scheduleMorning()
         backfillIfMissed()
+        upgradeDailyPages()
+    }
+
+    /// Re-renders the last week's daily pages that predate the Send bar, so
+    /// they can be crossed out and sent too. Their .md is untouched.
+    func upgradeDailyPages() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            for back in 0..<7 {
+                guard let date = Calendar.current.date(byAdding: .day, value: -back, to: Date()) else { continue }
+                let md = self.summaryFileURL(for: date), page = md.deletingPathExtension().appendingPathExtension("html")
+                guard let text = try? String(contentsOf: md, encoding: .utf8),
+                      let html = try? String(contentsOf: page, encoding: .utf8), !html.contains("nx-send") else { continue }
+                try? DayPage.html(from: text, stats: self.dayStats(for: date), daily: true).write(to: page, atomically: true, encoding: .utf8)
+            }
+        }
     }
 
     func stop() {

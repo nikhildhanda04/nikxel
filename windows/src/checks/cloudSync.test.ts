@@ -18,6 +18,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.deepEqual({ ...items[0], id: "" }, { id: "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"] });
   assert.deepEqual([items[1].type, items[1].minutes], ["other", 120]);
   assert.equal(items.find((i: any) => i.section === "meetings").type, "meeting");
+  assert.equal(items.find((i: any) => i.section === "whatsapp").type, "comms");
   assert.deepEqual(CS.dayItems(md).items, items);
   assert.equal(items[0].id.length, 12);
   assert.equal(CS.itemID("a", "X"), CS.itemID("a", "x"));

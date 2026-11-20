@@ -18,6 +18,7 @@ import Foundation
         check(items.first == CloudSync.DayItem(id: items.first?.id ?? "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"]), "item 0")
         check(items.count > 1 && items[1].type == "other" && items[1].minutes == 120, "untagged -> other, 2h")
         check(items.contains { $0.section == "meetings" && $0.type == "meeting" }, "meeting type")
+        check(items.contains { $0.section == "whatsapp" && $0.type == "comms" }, "chats -> comms")
         check(items.first?.id.count == 12 && items == CloudSync.dayItems(fromDailySummary: md).items, "stable 12-hex id")
         check(CloudSync.itemID(section: "a", what: "X") == CloudSync.itemID(section: "a", what: "x") && CloudSync.itemID(section: "a", what: "x") != CloudSync.itemID(section: "b", what: "x"), "id per section, case-insensitive")
 

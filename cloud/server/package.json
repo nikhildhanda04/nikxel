@@ -2,12 +2,15 @@
   "name": "nikxel-cloud-server",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
+    "express": "^5.3.0",
     "google-auth-library": "^11.3.4"
   }
 }

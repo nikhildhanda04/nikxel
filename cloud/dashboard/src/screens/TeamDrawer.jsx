@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { Btn, Icon, Input, Muted, Tag } from '../ui.jsx';
+import { Btn, Icon, Input, Muted, Tag, Tip } from '../ui.jsx';
+import { ARCHIVED_TIP, INACTIVE_TIP } from './TeamGrid.jsx';
 
 export const selCls = 'h-8 min-w-0 rounded-lg border border-line bg-card px-2 text-sm text-fg';
 const STAR = 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1-4.4-4.3 6.1-.9z';
@@ -60,7 +61,7 @@ export default function TeamDrawer({ p, people, err, run, close }) {
           </button>
         </div>
         {(p.archived || !p.active) && (
-          <div className="mt-2 flex gap-1.5">{p.archived && <Tag>archived</Tag>}{!p.active && <Tag>inactive in ERP</Tag>}</div>
+          <div className="mt-2 flex gap-1.5">{p.archived && <Tip tip={ARCHIVED_TIP} tap><span><Tag>archived</Tag></span></Tip>}{!p.active && <Tip tip={INACTIVE_TIP} tap><span><Tag>inactive in ERP</Tag></span></Tip>}</div>
         )}
         {p.description && <p className="mt-2 text-sm text-muted">{p.description}</p>}
         {err && <p role="alert" className="mt-3 rounded-lg bg-accent px-3 py-2 text-sm">{err}</p>}
@@ -74,17 +75,22 @@ export default function TeamDrawer({ p, people, err, run, close }) {
               const lead = m.role === 'lead';
               return (
                 <li key={m.person_id} className="flex h-10 items-center gap-1 px-2 text-sm">
+                  {/* aria-labels already say what the tips say: no aria-describedby */}
+                  <Tip tip={lead ? 'Remove lead' : 'Make lead'} describe={false}>
                   <button onClick={() => run(api.setMember(p.id, m.person_id, lead ? 'member' : 'lead'))} aria-pressed={lead}
-                    aria-label={lead ? `${m.name} is lead; make member` : `Make ${m.name} lead`} title={lead ? 'Lead' : 'Make lead'}
+                    aria-label={lead ? `${m.name} is lead; make member` : `Make ${m.name} lead`}
                     className={`grid size-7 shrink-0 place-items-center rounded-md transition-colors ${lead ? 'text-fg' : 'text-muted/60 hover:text-fg'}`}>
                     <svg viewBox="0 0 24 24" className="size-3.5" fill={lead ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d={STAR} /></svg>
                   </button>
+                  </Tip>
                   <span className={`min-w-0 flex-1 truncate ${lead ? 'font-medium' : ''}`}>{m.name}</span>
                   {lead && <span className="text-xs text-muted">lead</span>}
-                  <button onClick={() => run(api.removeMember(p.id, m.person_id))} aria-label={`Remove ${m.name}`} title="Remove"
+                  <Tip tip="Remove from team" describe={false}>
+                  <button onClick={() => run(api.removeMember(p.id, m.person_id))} aria-label={`Remove ${m.name}`}
                     className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition-colors hover:text-fg">
                     <Icon d="M6 6l12 12M18 6L6 18" className="size-3" />
                   </button>
+                  </Tip>
                 </li>
               );
             })}

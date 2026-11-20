@@ -57,8 +57,12 @@ test("TwinDistiller: accept, mergePrompt, distill", async t => {
   } catch (e) { t.skip(`twinDistiller not loadable yet (${(e as Error).message.split("\n")[0]})`); return; }
 
   assert.equal(TD.accept("  \n ", "KEEP"), "KEEP");
-  assert.ok(TD.accept("a".repeat(5000), "x", 3000).length <= 3000);
-  assert.equal(TD.accept("line one\nline two", "x", 12), "line one");
+  assert.ok(TD.accept("Who\n" + "a".repeat(5000), "x", 3000).length <= 3000);
+  assert.equal(TD.accept("Who\nl1\nl2\nl3", "x", 8), "Who\nl1");
+  assert.equal(TD.accept("I can't help with that.", "GOOD PROFILE"), "GOOD PROFILE");
+  assert.equal(TD.accept("## Who\nA dev.", "GOOD PROFILE"), "## Who\nA dev.");
+  TP.learned = "Who\nA dev.\n<!--corrections-->\nvizon -> vizion";
+  assert.ok(!TP.injectedBlock.includes("<!--corrections-->") && !TP.injectedBlock.includes("vizon") && TP.injectedBlock.includes("A dev."));
   const mp: string = TD.mergePrompt("CUR", ["m1"], ["s1"], "D1");
   for (const s of ["CUR", "m1", "s1", "D1", "<!--corrections-->", "Voice & style", "wrong -> right"]) assert.ok(mp.includes(s), s);
 
@@ -66,9 +70,9 @@ test("TwinDistiller: accept, mergePrompt, distill", async t => {
   const calls: number[] = [];
   await TD.distill([], [], "", async () => { calls.push(1); return "X"; });
   assert.equal(calls.length, 0); assert.equal(TP.learned, "OLD");
-  await TD.distill([], [], "did stuff", async (_p: string, kind: string) => { calls.push(1); return kind === "twin-distill" ? "NEW PROFILE" : "BAD"; });
-  assert.equal(calls.length, 1); assert.equal(TP.learned, "NEW PROFILE");
+  await TD.distill([], [], "did stuff", async (_p: string, kind: string) => { calls.push(1); return kind === "twin-distill" ? "Who\nNEW PROFILE" : "BAD"; });
+  assert.equal(calls.length, 1); assert.equal(TP.learned, "Who\nNEW PROFILE");
   await TD.distill(["hi"], [], "", async () => { throw new Error("boom"); });
-  assert.equal(TP.learned, "NEW PROFILE");
+  assert.equal(TP.learned, "Who\nNEW PROFILE");
   TP.learned = "";
 });

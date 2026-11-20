@@ -24,9 +24,10 @@ enum TwinProfile {
     /// <!--corrections--> region is machine data and never goes into prompts.
     static var injectedBlock: String {
         var t = learned
-        if let a = t.range(of: "<!--corrections-->"),
-           let b = t.range(of: "<!--/corrections-->", range: a.upperBound..<t.endIndex) {
-            t.removeSubrange(a.lowerBound..<b.upperBound)
+        if let a = t.range(of: "<!--corrections-->") {
+            // No close marker (cap truncation): strip to end of string.
+            let end = t.range(of: "<!--/corrections-->", range: a.upperBound..<t.endIndex)?.upperBound ?? t.endIndex
+            t.removeSubrange(a.lowerBound..<end)
         }
         t = t.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return "" }
@@ -36,9 +37,9 @@ enum TwinProfile {
     /// `wrong -> right` lines inside the <!--corrections--> region of `learned`.
     static func corrections() -> [(wrong: String, right: String)] {
         let t = learned
-        guard let a = t.range(of: "<!--corrections-->"),
-              let b = t.range(of: "<!--/corrections-->", range: a.upperBound..<t.endIndex) else { return [] }
-        return t[a.upperBound..<b.lowerBound].split(whereSeparator: \.isNewline).compactMap { line in
+        guard let a = t.range(of: "<!--corrections-->") else { return [] }
+        let end = t.range(of: "<!--/corrections-->", range: a.upperBound..<t.endIndex)?.lowerBound ?? t.endIndex
+        return t[a.upperBound..<end].split(whereSeparator: \.isNewline).compactMap { line in
             let p = line.components(separatedBy: " -> ")
             guard p.count == 2 else { return nil }
             let w = p[0].trimmingCharacters(in: .whitespaces), r = p[1].trimmingCharacters(in: .whitespaces)

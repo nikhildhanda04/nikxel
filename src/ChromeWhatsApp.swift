@@ -680,6 +680,7 @@ enum ChromeWhatsApp {
         if let h = try? FileHandle(forWritingTo: url) {
             h.seekToEndOfFile(); h.write(lines); try? h.close()
         } else { try? lines.write(to: url) }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     /// Every rendered bubble in the open chat, both directions, oldest first.

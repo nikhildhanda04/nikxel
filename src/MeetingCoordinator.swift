@@ -151,8 +151,8 @@ class MeetingCoordinator: AudioRecorderDelegate {
                 self.reportTranscribeFailure(err)
                 return
             }
-            let merged = TwinProfile.correct(Self.meetHeader(meet, at: startedAt)
-                + TranscriptMerger.merge(micSRT: micSRT, sysSRT: sysSRT, speakers: meet.spans.filter { !Self.isMe($0.name) }))
+            let merged = Self.meetHeader(meet, at: startedAt)
+                + TwinProfile.correct(TranscriptMerger.merge(micSRT: micSRT, sysSRT: sysSRT, speakers: meet.spans.filter { !Self.isMe($0.name) }))
             self.generate(transcript: merged, mode: .meeting, startedAt: startedAt, durationSec: durationSec, cleanup: {
                 let fm = FileManager.default
                 if let url = micURL { try? fm.removeItem(at: url) }

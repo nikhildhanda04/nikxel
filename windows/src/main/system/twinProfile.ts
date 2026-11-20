@@ -22,7 +22,7 @@ export const TwinProfile = {
     let t = this.learned;
     const a = t.indexOf("<!--corrections-->");
     const b = a < 0 ? -1 : t.indexOf("<!--/corrections-->", a);
-    if (b >= 0) t = t.slice(0, a) + t.slice(b + "<!--/corrections-->".length);
+    if (a >= 0) t = b >= 0 ? t.slice(0, a) + t.slice(b + "<!--/corrections-->".length) : t.slice(0, a); // no close: strip to end
     t = t.trim();
     return t ? `What Nikxel has learned about this user over time — their work, the correct names and terms they use, and how they talk and write. Match it.\n${t}` : "";
   },
@@ -32,9 +32,9 @@ export const TwinProfile = {
     const t = this.learned;
     const a = t.indexOf("<!--corrections-->");
     const b = a < 0 ? -1 : t.indexOf("<!--/corrections-->", a);
-    if (b < 0) return [];
+    if (a < 0) return [];
     const out: { wrong: string; right: string }[] = [];
-    for (const line of t.slice(a + "<!--corrections-->".length, b).split(/\r?\n/)) {
+    for (const line of t.slice(a + "<!--corrections-->".length, b < 0 ? undefined : b).split(/\r?\n/)) {
       const p = line.split(" -> ");
       if (p.length === 2 && p[0].trim()) out.push({ wrong: p[0].trim(), right: p[1].trim() });
     }

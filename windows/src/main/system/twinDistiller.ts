@@ -1,6 +1,8 @@
 import { TwinProfile } from "./twinProfile";
 import { cblog } from "../core/diag";
 
+let distillChain: Promise<void> = Promise.resolve(); // one distill at a time
+
 /// The LLM merge pass that keeps TwinProfile.learned current. Mirrors TwinDistiller.swift.
 export const TwinDistiller = {
   mergePrompt(current: string, meetingSelfLines: string[], sentMessages: string[], daySummary: string): string {
@@ -32,10 +34,13 @@ Summary of the user's day:
 ${daySummary || "(none)"}`;
   },
 
-  /// `old` when `next` is blank; else `next` cut to `cap` characters on a line boundary.
+  /// `old` when `next` is blank or not profile-shaped; else `next` cut to `cap` characters on a line boundary.
   accept(next: string, old: string, cap = 3000): string {
     const t = next.trim();
     if (!t) return old;
+    // Malformed (refusal, prose, garbage): must have a section header line or the corrections marker.
+    if (!/^[#*\s]*(Who|Work & projects|Names & terms|Voice & style|Relationships)[*\s:]*$/m.test(t)
+        && !t.includes("<!--corrections-->")) return old;
     if (t.length <= cap) return t;
     if (t[cap] === "\n") return t.slice(0, cap);
     const head = t.slice(0, cap), nl = head.lastIndexOf("\n");
@@ -45,10 +50,14 @@ ${daySummary || "(none)"}`;
   async distill(meetingSelfLines: string[], sentMessages: string[], daySummary: string,
                 runPrompt: (prompt: string, kind: string) => Promise<string>): Promise<void> {
     if (!meetingSelfLines.length && !sentMessages.length && !daySummary) return;
-    const old = TwinProfile.learned;
-    try {
-      const out = await runPrompt(this.mergePrompt(old, meetingSelfLines, sentMessages, daySummary), "twin-distill");
-      TwinProfile.learned = this.accept(out, old);
-    } catch (e) { cblog(`twin distill failed: ${e}`); }
+    const run = distillChain.then(async () => {
+      const old = TwinProfile.learned;
+      try {
+        const out = await runPrompt(this.mergePrompt(old, meetingSelfLines, sentMessages, daySummary), "twin-distill");
+        TwinProfile.learned = this.accept(out, old);
+      } catch (e) { cblog(`twin distill failed: ${e}`); }
+    });
+    distillChain = run;
+    await run;
   },
 };

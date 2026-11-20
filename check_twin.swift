@@ -54,8 +54,12 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
         check(TwinProfile.recentSentMessages(limit: 2) == ["three", "two"], "recentSentMessages newest-first, limited")
 
         check(TwinDistiller.accept(new: "  \n ", old: "KEEP") == "KEEP", "accept keeps old on empty")
-        check(TwinDistiller.accept(new: String(repeating: "a", count: 5000), old: "x", cap: 3000).count <= 3000, "accept caps length")
-        check(TwinDistiller.accept(new: "line one\nline two", old: "x", cap: 12) == "line one", "accept cuts on a line boundary")
+        check(TwinDistiller.accept(new: "Who\n" + String(repeating: "a", count: 5000), old: "x", cap: 3000).count <= 3000, "accept caps length")
+        check(TwinDistiller.accept(new: "Who\nl1\nl2\nl3", old: "x", cap: 8) == "Who\nl1", "accept cuts on a line boundary")
+        check(TwinDistiller.accept(new: "I can't help with that.", old: "GOOD PROFILE") == "GOOD PROFILE", "accept keeps old on malformed output")
+        check(TwinDistiller.accept(new: "## Who\nA dev.", old: "GOOD PROFILE") == "## Who\nA dev.", "accept takes a well-formed profile")
+        TwinProfile.learned = "Who\nA dev.\n<!--corrections-->\nvizon -> vizion"
+        check(!TwinProfile.injectedBlock.contains("<!--corrections-->") && !TwinProfile.injectedBlock.contains("vizon") && TwinProfile.injectedBlock.contains("A dev."), "unterminated corrections region is stripped")
         let mp = TwinDistiller.mergePrompt(current: "CUR", meetingSelfLines: ["m1"], sentMessages: ["s1"], daySummary: "D1")
         check(["CUR", "m1", "s1", "D1", "<!--corrections-->", "Voice & style", "wrong -> right"].allSatisfy { mp.contains($0) }, "mergePrompt carries inputs and markers")
 
@@ -64,11 +68,11 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
         TwinDistiller.distill(meetingSelfLines: [], sentMessages: [], daySummary: "") { _, _ in calls += 1; return "X" }
         check(calls == 0 && TwinProfile.learned == "OLD", "empty signals: no LLM call, profile unchanged")
         TwinDistiller.distill(meetingSelfLines: [], sentMessages: [], daySummary: "did stuff") { _, kind in
-            calls += 1; return kind == "twin-distill" ? "NEW PROFILE" : "BAD" }
-        check(calls == 1 && TwinProfile.learned == "NEW PROFILE", "distill stores the merged profile")
+            calls += 1; return kind == "twin-distill" ? "Who\nNEW PROFILE" : "BAD" }
+        check(calls == 1 && TwinProfile.learned == "Who\nNEW PROFILE", "distill stores the merged profile")
         struct Boom: Error {}
         TwinDistiller.distill(meetingSelfLines: ["hi"], sentMessages: [], daySummary: "") { _, _ in throw Boom() }
-        check(TwinProfile.learned == "NEW PROFILE", "throwing runPrompt leaves profile untouched")
+        check(TwinProfile.learned == "Who\nNEW PROFILE", "throwing runPrompt leaves profile untouched")
         TwinProfile.learned = ""
 
         if fails > 0 { exit(1) }

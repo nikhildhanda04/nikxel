@@ -2,6 +2,8 @@ import Foundation
 
 /// The LLM merge pass that keeps TwinProfile.learned current. Mirrors twinDistiller.ts.
 enum TwinDistiller {
+    private static let lock = NSLock()  // serializes read-modify-write of the profile
+
     static func mergePrompt(current: String, meetingSelfLines: [String], sentMessages: [String], daySummary: String) -> String {
         func list(_ a: [String]) -> String { a.isEmpty ? "(none)" : a.map { "- \($0)" }.joined(separator: "\n") }
         return """
@@ -33,10 +35,12 @@ enum TwinDistiller {
         """
     }
 
-    /// `old` when `new` is blank; else `new` cut to `cap` characters on a line boundary.
+    /// `old` when `new` is blank or not profile-shaped; else `new` cut to `cap` characters on a line boundary.
     static func accept(new: String, old: String, cap: Int = 3000) -> String {
         let t = new.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.isEmpty { return old }
+        // Malformed (refusal, prose, garbage): must have a section header line or the corrections marker.
+        let headers = "(?m)^[#*\\s]*(Who|Work & projects|Names & terms|Voice & style|Relationships)[*\\s:]*$"
+        if t.range(of: headers, options: .regularExpression) == nil && !t.contains("<!--corrections-->") { return old }
         if t.count <= cap { return t }
         let head = String(t.prefix(cap))
         if t[t.index(t.startIndex, offsetBy: cap)] == "\n" { return head }
@@ -47,6 +51,7 @@ enum TwinDistiller {
     static func distill(meetingSelfLines: [String], sentMessages: [String], daySummary: String,
                         runPrompt: (_ prompt: String, _ kind: String) throws -> String) {
         guard !(meetingSelfLines.isEmpty && sentMessages.isEmpty && daySummary.isEmpty) else { return }
+        lock.lock(); defer { lock.unlock() }
         let old = TwinProfile.learned
         do {
             let out = try runPrompt(mergePrompt(current: old, meetingSelfLines: meetingSelfLines,

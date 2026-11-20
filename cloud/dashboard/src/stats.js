@@ -37,7 +37,7 @@ export function byPersonDay(rows, days) {
       e.byType[typeOf(i.type)] = (e.byType[typeOf(i.type)] || 0) + m;
     }
   }
-  return [...out.values()];
+  return [...out.values()].filter((e) => e.minutes > 0); // 0-minute days (ERP-task-only) would give the chart a 0 max
 }
 
 export function byProject(rows) {
@@ -54,7 +54,7 @@ export function byProject(rows) {
     p.items.push({ date: r.date, name, ...i });
   }
   return [...out.values()]
-    .map((p) => ({ ...p, tasks: p.tasks.size, people: [...p.people].map(([name, minutes]) => ({ name, minutes })).sort(desc) }))
+    .map((p) => ({ ...p, tasks: p.tasks.size, items: p.items.sort((a, b) => b.date.localeCompare(a.date)), people: [...p.people].map(([name, minutes]) => ({ name, minutes })).sort(desc) }))
     .sort((a, b) => (a.project === NO_PROJECT) - (b.project === NO_PROJECT) || desc(a, b) || a.project.localeCompare(b.project));
 }
 

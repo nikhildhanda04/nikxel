@@ -74,3 +74,16 @@ test('ERP tasks: parsed, and counted once per project however many days mention 
     { date: '2026-11-19', user_id: 'a', name: 'A', items: [{ ...t, what: 'X — To Do (due 2026-11-22)' }, { ...t, what: 'Y — To Do' }] }]);
   assert.equal(p[0].tasks, 2);
 });
+
+test('byPersonDay: a window with only 0-minute items yields no entries (chart shows empty state)', () => {
+  assert.deepEqual(byPersonDay([{ date: '2026-11-20', user_id: 'a', name: 'A', items: [
+    { section: 'erp tasks', what: 'X — Done', type: 'planning', minutes: 0, project: 'P' }] }], 14), []);
+});
+
+test('byProject: items newest first regardless of row order', () => {
+  const it = { section: 'other', type: 'other', minutes: 5, project: 'P' };
+  const p = byProject([
+    { date: '2026-11-18', user_id: 'a', name: 'A', items: [it] },
+    { date: '2026-11-20', user_id: 'a', name: 'A', items: [it] }]);
+  assert.deepEqual(p[0].items.map((i) => i.date), ['2026-11-20', '2026-11-18']);
+});

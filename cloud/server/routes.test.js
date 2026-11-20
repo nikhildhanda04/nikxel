@@ -239,3 +239,41 @@ test('rollup by team: lead sees only their team, others 403/404', async () => {
   assert.equal((await c.api('GET', `/api/rollup?team=${P}`, { headers: A(c, 'memA') })).status, 403); // removed lead
   c.close();
 });
+
+test('a lead who joins after the import is linked by email on join and on login; hand links win', async () => {
+  process.env.GOOGLE_CLIENT_ID = 'cid'; process.env.GOOGLE_CLIENT_SECRET = 'sec'; process.env.GOOGLE_REDIRECT_URI = 'http://h/cb';
+  const c = await boot({ exchange: async () => ({ id_token: 't' }), verifier: async () => ({ sub: 'sub-login', email: 'Login@X.com', name: 'L', email_verified: true }) });
+  const body = orgBody(); body.people.push({ erp_id: 6, name: 'late', email: 'late@x.com' }, { erp_id: 7, name: 'login', email: 'login@x.com' }, { erp_id: 8, name: 'hand', email: 'hand@x.com' });
+  body.projects[0].members.push({ erp_id: 6, lead: true }, { erp_id: 7, lead: true });
+  body.projects[1].members.push({ erp_id: 8, lead: true });
+  await c.api('POST', '/api/org/import', { headers: c.deviceFor('owA', 'A'), body });
+  const hand = c.db.prepare('SELECT id FROM org_people WHERE erp_id = 8').get().id;
+  assert.equal((await c.api('PATCH', `/api/org/people/${hand}`, { headers: A(c, 'owA', 'owner'), body: { user_id: null } })).status, 200);
+  // join via invite
+  c.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run('late', 'sub-late', 'LATE@x.com', 'late', 1);
+  c.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run('hand', 'sub-hand', 'hand@x.com', 'hand', 1);
+  for (const u of ['late', 'hand']) {
+    const tok = (await c.api('POST', '/api/invites', { headers: A(c, 'owA', 'owner'), body: {} })).json.token;
+    assert.equal((await c.api('POST', '/api/orgs/join', { headers: c.cookie(u, null, null), body: { token: tok } })).status, 200);
+  }
+  assert.deepEqual((await c.api('GET', '/api/teams', { headers: A(c, 'late') })).json.map((t) => t.name), ['P']);
+  assert.deepEqual((await c.api('GET', '/api/teams', { headers: A(c, 'hand') })).json, []); // hand unlink wins
+  // already a member, not yet linked (e.g. joined before the import): linked on login
+  c.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run('login', 'sub-login', 'login@x.com', 'login', 1);
+  c.db.prepare("INSERT INTO memberships VALUES ('login','A','member')").run();
+  c.db.prepare("UPDATE org_people SET user_id = NULL WHERE erp_id = 7").run();
+  assert.equal((await c.api('GET', '/api/auth/google/callback?code=a&state=s', { headers: { cookie: 'nikxel_oauth_state=s' } })).status, 302);
+  assert.equal(c.db.prepare('SELECT user_id FROM org_people WHERE erp_id = 7').get().user_id, 'login');
+  c.close();
+});
+
+test('lead paths need a live membership; cross-org member/person ids are 404', async () => {
+  const c = await bootOrg();
+  c.db.prepare("DELETE FROM memberships WHERE user_id = 'memA'").run(); // org_people link still there
+  assert.equal((await c.api('GET', `/api/rollup?team=${c.pid('P')}`, { headers: A(c, 'memA') })).status, 403);
+  assert.equal((await c.api('GET', '/api/teams', { headers: A(c, 'memA') })).status, 403);
+  const ownB = c.cookie('owB', 'B', 'owner');
+  assert.equal((await c.api('DELETE', `/api/org/projects/${c.pid('P')}/members/${c.per(4)}`, { headers: ownB })).status, 404);
+  assert.equal((await c.api('PATCH', `/api/org/people/${c.per(5)}`, { headers: ownB, body: { user_id: null } })).status, 404);
+  c.close();
+});

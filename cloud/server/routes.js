@@ -3,7 +3,7 @@ import express from 'express';
 import { readSession, issueSession, liveSession, requireRole, verifyGoogle } from './auth.js';
 import { redeemPairingCode, createPairingCode, deviceAuth } from './pairing.js';
 import { cleanDay, ForbiddenError } from './summaries.js';
-import { importOrg, orgView, teamsFor, teamMemberUserIds } from './org.js';
+import { importOrg, orgView, teamsFor, teamMemberUserIds, linkByEmail } from './org.js';
 
 const uid = () => crypto.randomUUID();
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
@@ -50,6 +50,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
       ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, name = excluded.name`).run(uid(), g.sub, g.email, g.name ?? null, Date.now());
     const user = db.prepare('SELECT id FROM users WHERE google_sub = ?').get(g.sub);
     const m = membership(user.id);
+    if (m) linkByEmail(db, m.org_id, user.id);
     issueSession(res, { userId: user.id, orgId: m?.org_id ?? null, role: m?.role ?? null }, secret());
     res.redirect(m ? '/' : '/onboarding');
   });
@@ -89,6 +90,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
       if (!i) return null;
       db.prepare('UPDATE invites SET accepted_by = ? WHERE id = ?').run(req.session.userId, i.id);
       db.prepare('INSERT INTO memberships VALUES (?,?,?)').run(req.session.userId, i.org_id, i.role);
+      linkByEmail(db, i.org_id, req.session.userId);
       return i;
     })();
     if (!inv) return res.status(404).json({ error: 'invalid invite' });
@@ -161,6 +163,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   // No team: owner/admin, whole org. With team: owner/admin any team, a lead only the teams they lead.
   r.get('/rollup', session, (req, res) => {
     const { orgId, userId, role } = req.session;
+    if (!role) throw new ForbiddenError(); // no live membership: a stale person link grants nothing
     const boss = role === 'owner' || role === 'admin';
     let only = null;
     if (req.query.team !== undefined) {
@@ -191,7 +194,10 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
 
   r.get('/org', orgAdmin, (req, res) => res.json(orgView(db, req.session.orgId)));
 
-  r.get('/teams', session, (req, res) => res.json(teamsFor(db, req.session.orgId, req.session.userId, req.session.role)));
+  r.get('/teams', session, (req, res) => {
+    if (!req.session.role) throw new ForbiddenError();
+    res.json(teamsFor(db, req.session.orgId, req.session.userId, req.session.role));
+  });
 
   r.patch('/org/projects/:id', orgAdmin, (req, res) => {
     const p = orgRow('org_projects', req.params.id, req.session.orgId);

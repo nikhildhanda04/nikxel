@@ -56,6 +56,10 @@ export function importOrg(db, orgId, body) {
   })();
 }
 
+// Link a user to their unlinked person row by email (on join/login). Never overrides a hand link.
+export const linkByEmail = (db, orgId, userId) => db.prepare(`UPDATE org_people SET user_id = ?
+  WHERE org_id = ? AND user_id IS NULL AND linked_by_hand = 0 AND email <> '' AND email = (SELECT lower(email) FROM users WHERE id = ?)`).run(userId, orgId, userId);
+
 export function orgView(db, orgId) {
   const people = db.prepare('SELECT id, erp_id, name, email, title, manager_erp_id, note, user_id FROM org_people WHERE org_id = ? ORDER BY name')
     .all(orgId).map((p) => ({ ...p, joined: p.user_id != null }));

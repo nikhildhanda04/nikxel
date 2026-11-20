@@ -3,6 +3,7 @@ import { cblog } from "../core/diag";
 import { readText } from "../core/paths";
 import { richHtml } from "../recording/markdown";
 import { Settings } from "../core/settings";
+import { TwinProfile } from "./twinProfile";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 
 /// Talks to the company's Odoo ERP over its web JSON-RPC — no API key and no
@@ -164,7 +165,7 @@ export function shortTitle(s: string): string {
 export function taskDescription(item: string, context: string): string {
   let md = "**What to do**\n\n" + bulletize(item);
   if (context) md += `\n**Context**\n\n${context}\n`;
-  return richHtml(md);
+  return richHtml(TwinProfile.correct(md));
 }
 
 /// A run-on action item as bullet lines, split on clause breaks ("; ") and

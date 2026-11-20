@@ -177,8 +177,8 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
       this.reportTranscribeFailure(firstError);
       return;
     }
-    const merged = await MeetingCoordinator.meetHeader(meet, startedAt)
-      + TranscriptMerger.merge(micSRT, sysSRT, meet.spans.filter(s => !MeetingCoordinator.isMe(s.name)));
+    const merged = TwinProfile.correct(await MeetingCoordinator.meetHeader(meet, startedAt)
+      + TranscriptMerger.merge(micSRT, sysSRT, meet.spans.filter(s => !MeetingCoordinator.isMe(s.name))));
     await this.generate(merged, "meeting", startedAt, durationSec, () => {
       if (micPath) fs.promises.rm(micPath, { force: true }).catch(() => {});
       fs.promises.rm(sysPath, { force: true }).catch(() => {});

@@ -2,6 +2,7 @@ import type { MOMGenerator } from "../recording/momGenerator";
 import { DayLogger } from "../system/dayLogger";
 import { nikxelPath, readText, writeAtomic } from "../core/paths";
 import { Settings } from "../core/settings";
+import { TwinProfile } from "../system/twinProfile";
 import { cblog } from "../core/diag";
 import { MeetingDetector } from "./meetingDetector";
 import { WAContactLists } from "./waContactLists";
@@ -88,8 +89,9 @@ export class LLMResponder {
       // would eat a trailing marker before it was ever read.
       const { body: afterTask, task } = extractTask(raw);
       const { body, value: meet } = extractMarker("MEET", afterTask);
-      const text = this.cleanReply(body);
-      if (text === null) return null;
+      const cleaned = this.cleanReply(body);
+      if (cleaned === null) return null;
+      const text = TwinProfile.correct(cleaned);
       return { text, task, meet: parseMeet(meet) };
     } catch (e) {
       cblog(`LLMResponder: failed — ${e instanceof Error ? e.message : e}`);

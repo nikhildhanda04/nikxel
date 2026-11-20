@@ -39,6 +39,7 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
 
         TwinProfile.learned = "x\n<!--corrections-->\nVision Tools -> Vizion Tools\n<!--/corrections-->"
         check(TwinProfile.correct("We ship vision tools") == "We ship Vizion Tools", "correct is case-insensitive")
+        check(TwinProfile.correct("Ship Vision Tools") == "Ship Vizion Tools", "correct wired to learned profile")
         check(TwinProfile.correct("television revision") == "television revision", "correct respects word boundaries")
         TwinProfile.learned = "no region"
         check(TwinProfile.correct("x") == "x", "no corrections region is a no-op")

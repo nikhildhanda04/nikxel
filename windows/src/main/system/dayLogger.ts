@@ -645,7 +645,7 @@ ${report}`;
         const report = await this.buildReport(date);
         if (report === "") return;
         const prompt = this.summaryPrompt(report, date);
-        const output = await this.momGenerator.runPrompt(prompt, "daily-summary");
+        const output = TwinProfile.correct(await this.momGenerator.runPrompt(prompt, "daily-summary"));
         const file = this.summaryFile(date);
         await fs.promises.writeFile(file, output, "utf8");
         // The .md stays: it's what the WhatsApp bot's memory reads back.

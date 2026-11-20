@@ -67,22 +67,23 @@ export class CloudSync {
   /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
   static dayItems(md: string): { headline: string; items: DayItem[] } {
     const dur = /\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b/i;
-    let section = "", headline = "", open = false; // open: last top-level bullet was kept
+    let section = "", headline = "", headlineDone = false, open = false; // open: last top-level bullet was kept
     const out: DayItem[] = [];
     for (const line of md.split("\n")) {
       if (line.startsWith("## ")) { section = line.slice(3).toLowerCase().trim(); open = false; continue; }
       if (section === "summary") {
         const t = line.trim();
-        if (!headline) headline = t; else if (!t) section = "summary-done";
+        if (!t) { if (headline) headlineDone = true; } else if (!headlineDone) headline += (headline ? " " : "") + t;
         continue;
       }
-      if (!section || section === "summary-done") continue;
+      if (!section) continue;
       if (line.startsWith("- ") || line.startsWith("* ")) {
         open = false;
         let text = line.slice(2).replace(/\*\*/g, "");
         let type = section === "meetings" ? "meeting" : "other";
-        const tag = /^\[(\w+)\]/.exec(text);
-        if (tag && CloudSync.types.has(tag[1])) { type = tag[1]; text = text.slice(tag[0].length); }
+        // Any [word] tag is hidden on the daily page, so strip it here; unknown ones keep the default type.
+        const tag = /^\[([a-z]+)\]\s*/.exec(text);
+        if (tag) { if (CloudSync.types.has(tag[1])) type = tag[1]; text = text.slice(tag[0].length); }
         let minutes = 0;
         const m = dur.exec(text);
         if (m) {

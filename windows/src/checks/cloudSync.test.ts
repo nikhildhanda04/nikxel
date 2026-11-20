@@ -23,6 +23,10 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.equal(CS.itemID("a", "X"), CS.itemID("a", "x"));
   assert.notEqual(CS.itemID("a", "x"), CS.itemID("b", "x"));
 
+  const w = CS.dayItems("## Summary\nLine one\nline two.\n\nignored\n\n## What you worked on\n- [gaming] Played chess");
+  assert.equal(w.headline, "Line one line two.");
+  assert.deepEqual([w.items[0].what, w.items[0].type], ["Played chess", "other"]);
+
   let calls = 0;
   assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => { calls++; return null; }), false);
   assert.equal(calls, 0); // no token: no-op

@@ -74,23 +74,26 @@ enum CloudSync {
     /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
     static func dayItems(fromDailySummary md: String) -> (headline: String, items: [DayItem]) {
         let dur = try! NSRegularExpression(pattern: #"\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b"#, options: .caseInsensitive)
-        var section = "", headline = ""
+        var section = "", headline = "", headlineDone = false
         var out: [DayItem] = []
         var open = false // last top-level bullet was kept, so indented bullets attach to it
         for line in md.components(separatedBy: "\n") {
             if line.hasPrefix("## ") { section = line.dropFirst(3).lowercased().trimmingCharacters(in: .whitespaces); open = false; continue }
             if section == "summary" {
                 let t = line.trimmingCharacters(in: .whitespaces)
-                if headline.isEmpty { headline = t } else if t.isEmpty { section = "summary-done" }
+                if t.isEmpty { if !headline.isEmpty { headlineDone = true } } else if !headlineDone { headline += (headline.isEmpty ? "" : " ") + t }
                 continue
             }
-            guard !section.isEmpty, section != "summary-done" else { continue }
+            guard !section.isEmpty else { continue }
             if line.hasPrefix("- ") || line.hasPrefix("* ") {
                 open = false
                 var text = String(line.dropFirst(2)).replacingOccurrences(of: "**", with: "")
                 var type = section == "meetings" ? "meeting" : "other"
-                if text.hasPrefix("["), let e = text.firstIndex(of: "]"), types.contains(String(text[text.index(after: text.startIndex)..<e])) {
-                    type = String(text[text.index(after: text.startIndex)..<e]); text = String(text[text.index(after: e)...])
+                // Any [word] tag is hidden on the daily page, so strip it here; unknown ones keep the default type.
+                if let r = text.range(of: #"^\[[a-z]+\]\s*"#, options: .regularExpression) {
+                    let tag = String(text[r]).trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+                    if types.contains(tag) { type = tag }
+                    text.removeSubrange(r)
                 }
                 var minutes = 0
                 let ns = text as NSString

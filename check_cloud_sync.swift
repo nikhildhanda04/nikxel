@@ -21,6 +21,10 @@ import Foundation
         check(items.first?.id.count == 12 && items == CloudSync.dayItems(fromDailySummary: md).items, "stable 12-hex id")
         check(CloudSync.itemID(section: "a", what: "X") == CloudSync.itemID(section: "a", what: "x") && CloudSync.itemID(section: "a", what: "x") != CloudSync.itemID(section: "b", what: "x"), "id per section, case-insensitive")
 
+        let (h2, i2) = CloudSync.dayItems(fromDailySummary: "## Summary\nLine one\nline two.\n\nignored\n\n## What you worked on\n- [gaming] Played chess")
+        check(h2 == "Line one line two.", "wrapped headline: \(h2)")
+        check(i2.first?.what == "Played chess" && i2.first?.type == "other", "unknown tag stripped, type other")
+
         var calls = 0
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in calls += 1; return nil }) && calls == 0, "pushDay with no token is a no-op")
 

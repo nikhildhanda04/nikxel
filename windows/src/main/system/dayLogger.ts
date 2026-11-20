@@ -491,6 +491,7 @@ export class DayLogger {
       if (!inside || !(raw.startsWith("- ") || raw.startsWith("* "))) continue;
       const t = raw.slice(2).trim();
       if (isNone(t) || t.toLowerCase().startsWith("nothing")) continue;
+      if (/\s+[—–-]\s*\**done\**\.?\s*$/i.test(t)) continue; // ticked on the day page
       out.push(t.replace(/\s+[—–-]\s*\**(open|unclear)\**\.?\s*$/i, ""));
     }
     return out;

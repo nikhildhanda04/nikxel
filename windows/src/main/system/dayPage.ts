@@ -13,7 +13,7 @@ import type { DayStats } from "./dayLogger";
 /// The Sunday week in review uses the same page at sunrise (`morning`).
 
 /// "… — open" / "… — done." at the end of a bullet, as the prompt asks for chat tasks.
-const STATUS = /\s+[—–-]\s*(done|open|unclear)\.?\s*$/i;
+const STATUS = /\s+[—–-]\s*\**(done|open|unclear)\**\.?\s*$/i;
 /// "10:30 — …", "**00:13**: …", "**10:31, Standup**:" at the start of a meeting bullet.
 const LEAD_TIME = /^(\*\*)?(~?\d{1,2}(?::\d{2})?\s?(?:am|pm)?)(\*\*)?\s*[,—–:-]\s*/i;
 
@@ -53,7 +53,8 @@ function html(markdown: string, stats: DayStats | null = null, morning = false):
     switch (s.key) {
       case "what you worked on": body += section(s, items.length, timeline(items) + paras(s)); break;
       case "meetings": body += section(s, items.length, meetings(items) + paras(s)); break;
-      case "whatsapp": case "slack": case "open tasks": body += section(s, items.length, statusList(items) + paras(s)); break;
+      case "whatsapp": case "slack": body += section(s, items.length, statusList(items) + paras(s)); break;
+      case "open tasks": body += section(s, items.length, todoList(items) + paras(s)); break;
       default: body += section(s, count(s), generic(s.blocks));
     }
   }
@@ -143,6 +144,36 @@ function meetings(items: Item[]): string {
 
 function statusList(items: Item[]): string {
   return `<ul class="chat">${items.map(i => `<li>${withStatus(i.text)}${kids(i.kids)}</li>`).join("")}</ul>\n`;
+}
+
+/// Open tasks as checkboxes. Disabled as written, so a sent copy is
+/// read-only; the Share widget enables them and saves a tick (/task).
+/// `data-i` counts only bullets with a status, as markTask does.
+function todoList(items: Item[]): string {
+  let n = -1;
+  return `<ul class="chat">${items.map(i => {
+    const m = STATUS.exec(i.text);
+    if (!m) return `<li>${inl(i.text)}${kids(i.kids)}</li>`;
+    n++;
+    const st = m[1].toLowerCase();
+    return `<li class="todo"><label><input type="checkbox" class="nx-todo" data-i="${n}"${st === "done" ? " checked" : ""} disabled>`
+      + `<span>${inl(i.text.slice(0, m.index))}</span>${st === "unclear" ? ` <span class="st unclear">unclear</span>` : ""}</label>${kids(i.kids)}</li>`;
+  }).join("")}</ul>\n`;
+}
+
+/// Ticks (or unticks) the `index`th task under "## Open tasks": its tail
+/// becomes "— done" (or "— open"). Null when there's no such task.
+function markTask(markdown: string, index: number, done: boolean): string | null {
+  const lines = markdown.split("\n");
+  let inside = false, n = 0;
+  for (let k = 0; k < lines.length; k++) {
+    const raw = lines[k];
+    if (raw.startsWith("## ")) { inside = raw.slice(3).trim().toLowerCase() === "open tasks"; continue; }
+    if (!inside || !(raw.startsWith("- ") || raw.startsWith("* ")) || !STATUS.test(raw)) continue;
+    if (n === index) { lines[k] = raw.replace(STATUS, done ? " — done" : " — open"); return lines.join("\n"); }
+    n++;
+  }
+  return null;
 }
 
 /// A trailing "— open" becomes a pill; everything else stays as written.
@@ -247,6 +278,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .st.done { background: var(--sage); }
 .st.open { background: var(--lamp-soft); color: var(--lamp); }
 .st.unclear { background: var(--rose); }
+.todo label { display: flex; gap: 10px; align-items: baseline; cursor: pointer; }
+.todo input { flex: none; width: 17px; height: 17px; margin: 0; transform: translateY(3px); accent-color: var(--accent); cursor: pointer; }
+.todo input:checked + span { text-decoration: line-through; color: var(--faint); }
 
 .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; padding-top: 40px; }
 .panel { padding: 18px 20px; background: var(--indigo-soft); border-radius: 18px; gap: 10px; }
@@ -270,4 +304,4 @@ footer { margin-top: 28px; color: var(--faint); font-size: 12.5px; }
 }
 `;
 
-export const DayPage = { html };
+export const DayPage = { html, markTask };

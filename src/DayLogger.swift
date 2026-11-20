@@ -431,6 +431,8 @@ class DayLogger {
             guard inside, raw.hasPrefix("- ") || raw.hasPrefix("* ") else { continue }
             var t = raw.dropFirst(2).trimmingCharacters(in: .whitespaces)
             if NoteExporter.isNone(t) || t.lowercased().hasPrefix("nothing") { continue }
+            // Ticked on the day page.
+            if t.range(of: #"\s+[—–-]\s*\**done\**\.?\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil { continue }
             if let r = t.range(of: #"\s+[—–-]\s*\**(open|unclear)\**\.?\s*$"#, options: [.regularExpression, .caseInsensitive]) {
                 t = String(t[..<r.lowerBound])
             }

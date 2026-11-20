@@ -88,6 +88,19 @@ enum PageShare {
             guard PageEdit.editable(file) else { return ["error": "This summary can't be edited."] }
             DispatchQueue.main.async { EditChat.show(file) }
             return ["ok": true]
+        case "/task":
+            // A ticked box on a day page. The .md is what tomorrow's summary
+            // and the morning card read, so "— done" there drops the task.
+            let md = file.deletingPathExtension().appendingPathExtension("md"), done = q("done") == "1"
+            guard let i = q("i").flatMap(Int.init), let text = try? String(contentsOf: md, encoding: .utf8),
+                  let updated = DayPage.markTask(in: text, index: i, done: done),
+                  let html = try? String(contentsOf: file, encoding: .utf8),
+                  (try? updated.write(to: md, atomically: true, encoding: .utf8)) != nil else {
+                return ["error": "Couldn't update that task."]
+            }
+            let ticked = html.replacingOccurrences(of: "data-i=\"\(i)\"( checked)?", with: "data-i=\"\(i)\"" + (done ? " checked" : ""), options: .regularExpression)
+            try? ticked.write(to: file, atomically: true, encoding: .utf8)
+            return ["ok": true]
         case "/version":
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             return ["v": date?.timeIntervalSince1970 ?? 0]
@@ -275,6 +288,14 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       if (!v) watch();
     });
   };
+  document.querySelectorAll("input.nx-todo").forEach(function (b) {
+    b.disabled = false;
+    b.onchange = function () {
+      call("task", { i: b.getAttribute("data-i"), done: b.checked ? "1" : "0" }).then(function (r) {
+        if (r.error) { b.checked = !b.checked; alert(r.error); }
+      });
+    };
+  });
   root.querySelector(".nx-sharebtn").onclick = function () {
     pop.hidden = !pop.hidden; if (!pop.hidden) { q.focus(); load(); }
   };

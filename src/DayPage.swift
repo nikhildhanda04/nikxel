@@ -9,7 +9,7 @@ import Foundation
 enum DayPage {
 
     /// "… — open" / "… — done." at the end of a bullet, as the prompt asks for chat tasks.
-    private static let status = try! NSRegularExpression(pattern: "\\s+[—–-]\\s*(done|open|unclear)\\.?\\s*$", options: .caseInsensitive)
+    static let status = try! NSRegularExpression(pattern: "\\s+[—–-]\\s*\\**(done|open|unclear)\\**\\.?\\s*$", options: .caseInsensitive)
     /// "10:30 — …", "**00:13**: …", "**10:31, Standup**:" at the start of a meeting bullet.
     private static let leadTime = try! NSRegularExpression(pattern: "^(\\*\\*)?(~?\\d{1,2}(?::\\d{2})?\\s?(?:am|pm)?)(\\*\\*)?\\s*[,—–:-]\\s*", options: .caseInsensitive)
 
@@ -52,7 +52,8 @@ enum DayPage {
             switch s.key {
             case "what you worked on": body += section(s, items.count, timeline(items) + paras(s))
             case "meetings": body += section(s, items.count, meetings(items) + paras(s))
-            case "whatsapp", "slack", "open tasks": body += section(s, items.count, statusList(items) + paras(s))
+            case "whatsapp", "slack": body += section(s, items.count, statusList(items) + paras(s))
+            case "open tasks": body += section(s, items.count, todoList(items) + paras(s))
             default: body += section(s, s.count, NotePage.generic(s.blocks))
             }
         }
@@ -156,6 +157,38 @@ enum DayPage {
 
     private static func statusList(_ items: [Item]) -> String {
         "<ul class=\"chat\">" + items.map { "<li>\(withStatus($0.text))\(kids($0.kids))</li>" }.joined() + "</ul>\n"
+    }
+
+    /// Open tasks as checkboxes. Disabled as written, so a sent copy is
+    /// read-only; the Share widget enables them and saves a tick (/task).
+    /// `data-i` counts only bullets with a status, as markTask does.
+    private static func todoList(_ items: [Item]) -> String {
+        var n = -1
+        return "<ul class=\"chat\">" + items.map { i -> String in
+            let ns = i.text as NSString
+            guard let m = status.firstMatch(in: i.text, range: NSRange(location: 0, length: ns.length)) else {
+                return "<li>\(inl(i.text))\(kids(i.kids))</li>"
+            }
+            n += 1
+            let st = ns.substring(with: m.range(at: 1)).lowercased()
+            return "<li class=\"todo\"><label><input type=\"checkbox\" class=\"nx-todo\" data-i=\"\(n)\"\(st == "done" ? " checked" : "") disabled>"
+                + "<span>\(inl(ns.substring(to: m.range.location)))</span>\(st == "unclear" ? " <span class=\"st unclear\">unclear</span>" : "")</label>\(kids(i.kids))</li>"
+        }.joined() + "</ul>\n"
+    }
+
+    /// Ticks (or unticks) the `index`th task under "## Open tasks": its tail
+    /// becomes "— done" (or "— open"). Nil when there's no such task.
+    static func markTask(in markdown: String, index: Int, done: Bool) -> String? {
+        var lines = markdown.components(separatedBy: "\n"), inside = false, n = 0
+        for (k, raw) in lines.enumerated() {
+            if raw.hasPrefix("## ") { inside = raw.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "open tasks"; continue }
+            guard inside, raw.hasPrefix("- ") || raw.hasPrefix("* ") else { continue }
+            let ns = raw as NSString
+            guard let m = status.firstMatch(in: raw, range: NSRange(location: 0, length: ns.length)) else { continue }
+            if n == index { lines[k] = ns.replacingCharacters(in: m.range, with: done ? " — done" : " — open"); return lines.joined(separator: "\n") }
+            n += 1
+        }
+        return nil
     }
 
     /// A trailing "— open" becomes a pill; everything else stays as written.
@@ -263,6 +296,9 @@ enum DayPage {
     .st.done { background: var(--sage); }
     .st.open { background: var(--lamp-soft); color: var(--lamp); }
     .st.unclear { background: var(--rose); }
+    .todo label { display: flex; gap: 10px; align-items: baseline; cursor: pointer; }
+    .todo input { flex: none; width: 17px; height: 17px; margin: 0; transform: translateY(3px); accent-color: var(--accent); cursor: pointer; }
+    .todo input:checked + span { text-decoration: line-through; color: var(--faint); }
 
     .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; padding-top: 40px; }
     .panel { padding: 18px 20px; background: var(--indigo-soft); border-radius: 18px; gap: 10px; }

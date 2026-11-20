@@ -12,6 +12,7 @@ import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import * as PageEdit from "./pageEdit";
 import * as ERP from "./erp";
 import { NotePage } from "../recording/notePage";
+import { DayPage } from "./dayPage";
 
 /// The Share button on summary pages. The page is a local file, so it can't
 /// reach WhatsApp itself: it asks Nikxel over localhost, and Nikxel sends the
@@ -75,6 +76,17 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       if (!PageEdit.editable(file)) return { error: "This summary can't be edited." };
       PageEdit.showChat(file);
       return { ok: true };
+    case "/task": {
+      // A ticked box on a day page. The .md is what tomorrow's summary
+      // and the morning card read, so "— done" there drops the task.
+      const md = file.replace(/\.html$/i, ".md"), i = Number(q("i")), done = q("done") === "1";
+      const text = readText(md), html = readText(file);
+      const updated = text != null && Number.isInteger(i) ? DayPage.markTask(text, i, done) : null;
+      if (updated == null || html == null) return { error: "Couldn't update that task." };
+      try { writeAtomic(md, updated); } catch { return { error: "Couldn't update that task." }; }
+      try { writeAtomic(file, html.replace(new RegExp(`data-i="${i}"( checked)?`), `data-i="${i}"` + (done ? " checked" : ""))); } catch { /* the .md has it */ }
+      return { ok: true };
+    }
     case "/version":
       try { return { v: fs.statSync(file).mtimeMs / 1000 }; } catch { return { v: 0 }; }
     case "/copy": {
@@ -271,6 +283,14 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       if (!v) watch();
     });
   };
+  document.querySelectorAll("input.nx-todo").forEach(function (b) {
+    b.disabled = false;
+    b.onchange = function () {
+      call("task", { i: b.getAttribute("data-i"), done: b.checked ? "1" : "0" }).then(function (r) {
+        if (r.error) { b.checked = !b.checked; alert(r.error); }
+      });
+    };
+  });
   root.querySelector(".nx-sharebtn").onclick = function () {
     pop.hidden = !pop.hidden; if (!pop.hidden) { q.focus(); load(); }
   };

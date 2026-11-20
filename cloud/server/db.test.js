@@ -15,3 +15,18 @@ test('summaries is unique per (user, org, kind, date)', () => {
   ins.run('a','u1','o1','work','2026-11-20','[]','','admin','pending',0);
   assert.throws(() => ins.run('b','u1','o1','work','2026-11-20','[]','','admin','pending',0));
 });
+
+test('table columns match the spec exactly', () => {
+  const db = openDb(':memory:'); bootstrap(db);
+  const want = {
+    users: ['id','google_sub','email','name','created_at'],
+    orgs: ['id','name','owner_user_id','created_at'],
+    memberships: ['user_id','org_id','role'],
+    invites: ['id','org_id','token','role','created_at','accepted_by'],
+    device_tokens: ['id','user_id','org_id','token_hash','created_at','last_used'],
+    pairing_codes: ['code','user_id','org_id','expires_at'],
+    summaries: ['id','user_id','org_id','kind','date','items','notes','visibility','status','created_at'],
+  };
+  for (const [t, cols] of Object.entries(want))
+    assert.deepStrictEqual(db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name).sort(), [...cols].sort(), t);
+});

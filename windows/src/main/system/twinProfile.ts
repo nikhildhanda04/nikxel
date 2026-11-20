@@ -41,6 +41,14 @@ export const TwinProfile = {
     return out;
   },
 
+  /// The text of every `[ts] Me: ...` line in a meeting transcript (the user's own mic channel).
+  selfLines(transcript: string): string[] {
+    return transcript.split(/\r?\n/).flatMap(line => {
+      const i = line.indexOf("] Me: ");
+      return i < 0 ? [] : [line.slice(i + "] Me: ".length)];
+    });
+  },
+
   /// Applies each learned correction, case-insensitive and on word boundaries.
   correct(text: string): string {
     let out = text;

@@ -46,6 +46,14 @@ enum TwinProfile {
         }
     }
 
+    /// The text of every `[ts] Me: ...` line in a meeting transcript (the user's own mic channel).
+    static func selfLines(fromTranscript t: String) -> [String] {
+        t.components(separatedBy: .newlines).compactMap { line in
+            guard let r = line.range(of: "] Me: ") else { return nil }
+            return String(line[r.upperBound...])
+        }
+    }
+
     /// Applies each learned correction, case-insensitive and on word boundaries.
     static func correct(_ text: String) -> String {
         var out = text

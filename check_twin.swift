@@ -37,6 +37,9 @@ import Foundation
         check(TwinProfile.correct("x") == "x", "no corrections region is a no-op")
         TwinProfile.learned = ""
 
+        check(TwinProfile.selfLines(fromTranscript: "[00:00:01] Me: hello there\n[00:00:04] Priya: hi") == ["hello there"], "selfLines keeps only Me lines, prefix stripped")
+        check(TwinProfile.selfLines(fromTranscript: "[00:00:01] Priya: hi\n[00:00:03] Others: yo") == [], "selfLines empty without Me lines")
+
         if fails > 0 { exit(1) }
     }
 }

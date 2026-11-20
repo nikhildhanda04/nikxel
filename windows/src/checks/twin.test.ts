@@ -36,4 +36,7 @@ test("TwinProfile: learned store and injected block", t => {
   TP.learned = "no region";
   assert.equal(TP.correct("x"), "x");
   TP.learned = "";
+
+  assert.deepEqual(TP.selfLines("[00:00:01] Me: hello there\n[00:00:04] Priya: hi"), ["hello there"]);
+  assert.deepEqual(TP.selfLines("[00:00:01] Priya: hi\n[00:00:03] Others: yo"), []);
 });

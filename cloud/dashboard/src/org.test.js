@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterPeople, teamCards, initials, teamSummary, orgStats, sortTeams, teamsOfPerson, nameList, tipPos } from './orgView.js';
+import { filterPeople, teamCards, initials, teamSummary, orgStats, sortTeams, teamsOfPerson, nameList, tipPos, cardLabel } from './orgView.js';
 
 const people = [
   { id: 'p1', name: 'Asha Rao', email: 'asha@x.com', title: 'Engineer', joined: true },
@@ -119,4 +119,13 @@ test('tipPos: above and centered, clamped into the viewport, flips below when no
   assert.equal(tipPos(r(0, 200), { width: 120, height: 30 }, 375).left, 8);
   // no room above: below the trigger
   assert.deepEqual(tipPos(r(100, 10), { width: 80, height: 30 }, 375), { left: 70, top: 36, below: true });
+});
+
+test('cardLabel: count, every lead, the other members (capped), status', () => {
+  const card = (leads, others, x = {}) => ({ name: 'Alpha', leads, members: [...leads, ...others].map((name) => ({ name })), count: leads.length + others.length, active: true, archived: false, ...x });
+  assert.equal(cardLabel(card(['Shivay Sharan'], [])), 'Alpha — 1 member, lead Shivay Sharan');
+  assert.equal(cardLabel(card(['A', 'B'], ['C', 'D'])), 'Alpha — 4 members, leads A, B, members C, D');
+  assert.equal(cardLabel(card([], [], { active: false, archived: true })), 'Alpha — 0 members, no lead, archived, inactive in ERP');
+  const others = Array.from({ length: 12 }, (_, i) => 'm' + i);
+  assert.match(cardLabel(card([], others)), /members m0, .*m9 and 2 more$/);
 });

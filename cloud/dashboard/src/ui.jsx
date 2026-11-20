@@ -35,18 +35,16 @@ export function Chips({ label, value, set, opts }) {
 export function Tip({ tip, children, tap = false, describe = true }) {
   const [open, setOpen] = useState(false), [pos, setPos] = useState(null);
   const id = useId(), ref = useRef(null), box = useRef(null);
-  useLayoutEffect(() => {
-    if (!open) return setPos(null);
-    setPos(tipPos(ref.current.getBoundingClientRect(), box.current.getBoundingClientRect(), document.documentElement.clientWidth));
-  }, [open, tip]);
+  const place = () => setPos(tipPos(ref.current.getBoundingClientRect(), box.current.getBoundingClientRect(), document.documentElement.clientWidth));
+  useLayoutEffect(() => { if (!open) return setPos(null); place(); }, [open, tip]);
   useEffect(() => {
     if (!open) return;
     // Capture phase so Esc hides the tip before anything else (e.g. the drawer) acts on it.
     const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
     const away = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
     const hide = () => setOpen(false);
-    addEventListener('keydown', key, true); addEventListener('pointerdown', away); addEventListener('scroll', hide, true);
-    return () => { removeEventListener('keydown', key, true); removeEventListener('pointerdown', away); removeEventListener('scroll', hide, true); };
+    addEventListener('keydown', key, true); addEventListener('pointerdown', away); addEventListener('scroll', hide, true); addEventListener('resize', place);
+    return () => { removeEventListener('keydown', key, true); removeEventListener('pointerdown', away); removeEventListener('scroll', hide, true); removeEventListener('resize', place); };
   }, [open]);
   if (!tip) return children;
   const c = children.props, on = (f, g) => (e) => { f?.(e); g(e); };

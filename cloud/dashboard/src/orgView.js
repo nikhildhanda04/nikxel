@@ -60,3 +60,11 @@ export function tipPos(r, tip, vw, gap = 6, pad = 8) {
   const below = r.top - gap - tip.height < pad;
   return { left, top: below ? r.bottom + gap : r.top - gap - tip.height, below };
 }
+
+// Team card's accessible name: says what the card's hover tips show (all leads, the other members, capped).
+export function cardLabel(t) {
+  const others = t.members.slice(t.leads.length).map((m) => m.name);
+  return `${t.name} — ${t.count} member${t.count === 1 ? '' : 's'}, `
+    + (!t.leads.length ? 'no lead' : `${t.leads.length > 1 ? 'leads' : 'lead'} ${nameList(t.leads)}`)
+    + (others.length ? `, members ${nameList(others)}` : '') + (t.archived ? ', archived' : '') + (t.active ? '' : ', inactive in ERP');
+}

@@ -1,0 +1,7 @@
+{
+  "name": "nikxel-cloud-server",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" },
+  "dependencies": { "better-sqlite3": "^11.0.0" }
+}

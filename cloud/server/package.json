@@ -2,6 +2,11 @@
   "name": "nikxel-cloud-server",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test" },
-  "dependencies": { "better-sqlite3": "^11.0.0" }
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "google-auth-library": "^11.3.4"
+  }
 }

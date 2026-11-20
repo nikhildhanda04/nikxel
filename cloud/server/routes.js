@@ -149,10 +149,13 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   });
 
   r.post('/summaries', deviceAuth(db), (req, res) => {
-    const { kind, date, items, notes = '', visibility = 'private' } = req.body ?? {};
+    const { kind, date, items, notes = '' } = req.body ?? {};
+    let { visibility } = req.body ?? {};
     if (!str(kind) || !str(date) || !Array.isArray(items)) throw bad('bad summary');
     items.forEach((i) => validItem(i));
-    if (typeof notes !== 'string' || !KINDS.includes(kind) || !VIS.includes(visibility)) throw bad('bad summary');
+    if (typeof notes !== 'string' || !KINDS.includes(kind)) throw bad('bad summary');
+    if (visibility === undefined) visibility = kind === 'work' ? 'admin' : 'org'; // real client sends none
+    if (!VIS.includes(visibility)) throw bad('bad summary');
     const clean = items.map(({ id, what, minutes }) => ({ id, what, minutes })); // server owns `removed`
     const { userId, orgId } = req.device; // never from the body
     db.transaction(() => {

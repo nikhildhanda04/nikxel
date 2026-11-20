@@ -186,3 +186,13 @@ test('dev login is 404 unless DEV_LOGIN=1; /me returns session identity', async 
   assert.equal((await c.api('GET', '/api/me')).status, 401);
   c.close();
 });
+
+test('push with real client shape (no visibility) is stored; visibility derived from kind', async () => {
+  const c = await boot(); const dev = c.deviceFor('memA', 'A');
+  const post = (kind) => c.api('POST', '/api/summaries', { headers: dev, body: { kind, date: '2026-11-20', items: [{ id: 'i1', what: 'a', minutes: 5 }] } });
+  assert.equal((await post('work')).status, 200);
+  assert.equal((await post('meeting')).status, 200);
+  const v = (k) => c.db.prepare('SELECT visibility FROM summaries WHERE kind=?').get(k).visibility;
+  assert.equal(v('work'), 'admin'); assert.equal(v('meeting'), 'org');
+  c.close();
+});

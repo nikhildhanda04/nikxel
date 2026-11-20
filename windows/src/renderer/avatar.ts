@@ -989,7 +989,7 @@ function layoutCard(c: Card): CardLayout {
   const maxBodyW = M.maxWidth - M.pad * 2 - bulletIndent;
   const bodyLH = fontMetrics(bodyFont).height;
 
-  const measured = c.lines.slice(0, M.maxLines).map(raw => {
+  let measured = c.lines.slice(0, M.maxLines).map(raw => {
     const r = wrap(bodyFont, raw, maxBodyW);
     return { lines: r.lines, height: Math.ceil(r.lines.length * bodyLH), width: Math.ceil(r.width), firstLineH: Math.ceil(bodyLH) };
   });
@@ -1007,6 +1007,16 @@ function layoutCard(c: Card): CardLayout {
   const titleLH = fontMetrics(titleFont).height;
   const titleLines = wrap(titleFont, c.title, textW - iconW).lines;
   const titleH = Math.ceil(titleLines.length * titleLH);
+
+  // Keep the card inside the view. It grows away from the head toward a window
+  // edge, so a tall digest would clip its top text -- maxLines caps item count,
+  // not wrapped height. Drop trailing body lines until it fits; the "Open
+  // summary" button still opens the full list.
+  const off = M.liftAboveHead + M.tailHeight;
+  const availH = Math.min(AC.y, VIEW_H - AC.y) - halfChar() - off - 8;
+  const chromeH = titleH + M.titleGap + rowH + M.pad * 2;
+  const bodyHeight = () => measured.reduce((h, m, i) => h + m.height + (i > 0 ? M.lineGap : 0), 0);
+  while (measured.length > 1 && chromeH + bodyHeight() > availH) measured.pop();
 
   let bodyH = 0;
   measured.forEach((m, i) => { bodyH += m.height + (i > 0 ? M.lineGap : 0); });

@@ -145,6 +145,9 @@ enum PageShare {
             return ["connected": ERP.isConnected]
         case "/assign":
             guard ERP.isConnected else { return ["error": "Connect Forklyft ERP in Nikxel first."] }
+            guard ERP.hasLiveSession() else {
+                return ["error": "Your ERP session has ended. Reconnect Forklyft ERP from the Nikxel menu, then try again."]
+            }
             // The page sends the full action-item text; we make a short title
             // and a context-rich description, since the assignee may not have
             // been in the meeting. Only the title is required in Odoo.

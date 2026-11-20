@@ -124,6 +124,7 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       return { connected: ERP.isConnected() };
     case "/assign": {
       if (!ERP.isConnected()) return { error: "Connect Forklyft ERP in Nikxel first." };
+      if (!(await ERP.hasLiveSession())) return { error: "Your ERP session has ended. Reconnect Forklyft ERP from the Nikxel menu, then try again." };
       // The page sends the full action-item text; we make a short title and a
       // context-rich description, since the assignee may not have been in the
       // meeting. Only the title is required in Odoo.

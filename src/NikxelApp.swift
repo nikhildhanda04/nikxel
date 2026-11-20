@@ -196,11 +196,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func refreshERPMenu() {
-        erpConnectItem?.title = NikxelSettings.erpConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
+        erpConnectItem?.title = ERP.isConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
     }
 
     @objc func connectERP() {
-        if NikxelSettings.erpConnected {
+        if ERP.isConnected {
             NikxelView.tell(icon: "🔗", title: "Forklyft ERP is connected",
                             lines: ["Nikxel reads employees and tasks in the background. Summaries use real names and roles."])
             return

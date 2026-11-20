@@ -89,6 +89,19 @@ extension NikxelView {
         let titleH = ceil(titleStr.boundingRect(with: NSSize(width: textW - iconW, height: .greatestFiniteMagnitude),
                                                 options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
 
+        // Keep the card inside the view. It grows away from the head toward a
+        // window edge, so a tall digest would clip its top text -- maxLines caps
+        // item count, not wrapped height. Drop trailing body lines until it
+        // fits; the "Open summary" button still opens the full list.
+        let off = M.liftAboveHead + M.tailHeight
+        let availH = min(avatarCenter.y - bounds.minY, bounds.maxY - avatarCenter.y) - halfChar - off - 8
+        let chromeH = titleH + M.titleGap + rowH + M.pad * 2
+        while measured.count > 1 {
+            let bh = measured.enumerated().reduce(CGFloat(0)) { $0 + $1.element.height + ($1.offset > 0 ? M.lineGap : 0) }
+            if chromeH + bh <= availH { break }
+            measured.removeLast()
+        }
+
         var bodyH: CGFloat = 0
         for (i, m) in measured.enumerated() { bodyH += m.height + (i > 0 ? M.lineGap : 0) }
 
@@ -103,7 +116,7 @@ extension NikxelView {
             cardX = max(lo, min(cardX, hi))
         }
         cardX = max(bounds.minX, min(cardX, bounds.maxX - cardW))
-        let cardY = headY(M.liftAboveHead + M.tailHeight, height: cardH)
+        let cardY = headY(off, height: cardH)
 
         // --- Card + tail as one path, so the shadow wraps both and no seam
         //     shows where the tail meets the card ------------------------------

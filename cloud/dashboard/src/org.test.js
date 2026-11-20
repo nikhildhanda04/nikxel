@@ -23,18 +23,20 @@ test('filterPeople: joined / not joined', () => {
 });
 
 const projects = [
-  { id: 'a', name: 'Alpha', archived: false, members: [
+  { id: 'a', name: 'Alpha', active: true, archived: false, members: [
     { person_id: 'p2', name: 'Ben', role: 'member', removed: false },
     { person_id: 'p3', name: 'Cleo', role: 'member', removed: true },
     { person_id: 'p1', name: 'Asha', role: 'lead', removed: false },
   ] },
-  { id: 'b', name: 'Beta', archived: true, members: [] },
+  { id: 'b', name: 'Beta', active: true, archived: true, members: [] },
+  { id: 'c', name: 'Gamma', active: false, archived: false, members: [] },
 ];
 
-test('teamCards: Active hides archived, Archived shows only them, All shows both', () => {
+test('teamCards: Active = not archived and active in ERP; Inactive = not archived, inactive in ERP; Archived; All', () => {
   assert.deepEqual(teamCards(projects, 'active').map((p) => p.id), ['a']);
+  assert.deepEqual(teamCards(projects, 'inactive').map((p) => p.id), ['c']);
   assert.deepEqual(teamCards(projects, 'archived').map((p) => p.id), ['b']);
-  assert.deepEqual(teamCards(projects, 'all').map((p) => p.id), ['a', 'b']);
+  assert.deepEqual(teamCards(projects, 'all').map((p) => p.id), ['a', 'b', 'c']);
 });
 
 test('teamCards: excludes removed members and lists leads first', () => {

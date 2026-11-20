@@ -17,9 +17,9 @@ function Chips({ label, value, set, opts }) {
 }
 
 export default function Org() {
-  const [org, setOrg] = useState(null), [members, setMembers] = useState([]), [err, setErr] = useState({});
+  const [org, setOrg] = useState(null), [members, setMembers] = useState([]), [membersErr, setMembersErr] = useState(''), [err, setErr] = useState({});
   const load = () => api.org().then(setOrg, (e) => setErr((x) => ({ ...x, load: e.message })));
-  useEffect(() => { load(); api.members().then(setMembers, () => {}); }, []);
+  useEffect(() => { load(); api.members().then(setMembers, (e) => setMembersErr(e.message)); }, []);
   // Every mutation: run it, then refetch the org; errors show next to the thing that failed (keyed).
   const run = (key, p) => p.then(() => { setErr((x) => ({ ...x, [key]: '' })); return load(); }, (e) => setErr((x) => ({ ...x, [key]: e.message })));
 
@@ -29,13 +29,13 @@ export default function Org() {
   );
   return (
     <div>
-      <People org={org} members={members} err={err} run={run} />
+      <People org={org} members={members} membersErr={membersErr} err={err} run={run} />
       <Teams org={org} err={err} run={run} />
     </div>
   );
 }
 
-function People({ org, members, err, run }) {
+function People({ org, members, membersErr, err, run }) {
   const [q, setQ] = useState(''), [which, setWhich] = useState('all'), [copied, setCopied] = useState(''), [all, setAll] = useState(false);
   const matched = filterPeople(org.people, q, which), shown = all ? matched : matched.slice(0, ROWS);
   const managerOf = new Map(org.people.map((p) => [p.erp_id, p.name]));
@@ -55,6 +55,7 @@ function People({ org, members, err, run }) {
         <Input type="search" placeholder="Search name, email, title" aria-label="Search people" value={q} onChange={(e) => setQ(e.target.value)} className="sm:max-w-64" />
         <Chips label="Joined" value={which} set={setWhich} opts={[['all', 'All'], ['joined', 'Joined'], ['not', 'Not joined']]} />
       </div>
+      {membersErr && <Muted className="mb-3">Couldn’t load members, so linking is unavailable: {membersErr}</Muted>}
       {!shown.length ? <Muted>No one matches.</Muted> : (
         <ul className="divide-y divide-line rounded-xl border border-line bg-card">
           {shown.map((p) => (
@@ -100,9 +101,9 @@ function Teams({ org, err, run }) {
       <H>Teams <span className="text-sm font-normal text-muted tabular-nums">{teamCards(org.projects, 'active').length} active</span></H>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Input type="search" placeholder="Search projects" aria-label="Search projects" value={q} onChange={(e) => setQ(e.target.value)} className="sm:max-w-64" />
-        <Chips label="Archived" value={which} set={setWhich} opts={[['active', 'Active'], ['all', 'All'], ['archived', 'Archived']]} />
+        <Chips label="Status" value={which} set={setWhich} opts={[['active', 'Active'], ['inactive', 'Inactive'], ['archived', 'Archived'], ['all', 'All']]} />
       </div>
-      {!cards.length ? <Muted>{which === 'archived' ? 'Nothing archived.' : 'No projects match.'}</Muted> : (
+      {!cards.length ? <Muted>{s ? 'No projects match.' : `No ${which === 'all' ? '' : which + ' '}projects.`}</Muted> : (
         <div className="space-y-4">{cards.map((p) => <Card key={p.id} p={p} people={org.people} err={err['t' + p.id]} run={(x) => run('t' + p.id, x)} />)}</div>
       )}
     </section>

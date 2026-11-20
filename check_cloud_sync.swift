@@ -32,6 +32,11 @@ import Foundation
         check(pm.count == 4 && pm[2].section == "erp tasks" && pm[2].type == "planning" && pm[2].project == "Produce POS" && pm[2].what == "Sign-out button — In Progress (due 2026-11-25)", "erp tasks item")
         check(pm.count == 4 && pm[3].project == "A", "odd project name: \(pm.count == 4 ? pm[3].project : "")")
 
+        let est = CloudSync.dayItems(fromDailySummary: "## What you worked on\n- Debugged after the 2h meeting with Ravi (~45m)\n- Wrote report (~1h 20m).\n- Fixed login 30m — Done\n\n## ERP tasks\n- [[Produce POS]] Raise SLA to 2h — In Progress").items
+        check(est.count == 4 && est[0].minutes == 45 && est[0].what == "Debugged after the 2h meeting with Ravi", "trailing estimate wins: \(est.first?.minutes ?? -1) \(est.first?.what ?? "")")
+        check(est.count == 4 && est[1].minutes == 80 && est[1].what == "Wrote report.", "1h 20m estimate: \(est[1].minutes) \(est[1].what)")
+        check(est.count == 4 && est[2].minutes == 30 && est[3].minutes == 0 && est[3].what == "Raise SLA to 2h — In Progress", "erp task names not parsed: \(est.last?.minutes ?? -1) \(est.last?.what ?? "")")
+
         var calls = 0
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in calls += 1; return nil }) && calls == 0, "pushDay with no token is a no-op")
 

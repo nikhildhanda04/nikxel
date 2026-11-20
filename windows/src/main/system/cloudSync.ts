@@ -3,8 +3,8 @@ import * as crypto from "crypto";
 import { nikxelPath, writeAtomic, readText } from "../core/paths";
 
 /// Pairs this PC with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click,
-/// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
+/// (items include ERP task names, stages, deadlines and project names), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Port of CloudSync.swift.
 
 export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[]; project: string }
@@ -72,7 +72,10 @@ export class CloudSync {
   /// Top-level bullets of every "## " section but Summary; indented bullets become details.
   /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
   static dayItems(md: string): { headline: string; items: DayItem[] } {
-    const dur = /\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b/i;
+    const body = String.raw`(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)`;
+    const dur = new RegExp(String.raw`\b${body}\b`, "i");
+    // A trailing "(~45m)" estimate (optionally before a " — Done" tail or a final ".") beats any duration mentioned earlier in the text.
+    const est = new RegExp(String.raw`\(\s*~?\s*${body}\s*\)(?=\s*(?:[—–-].*)?\.?\s*$)`, "i");
     let section = "", headline = "", headlineDone = false, open = false; // open: last top-level bullet was kept
     const out: DayItem[] = [];
     for (const line of md.split("\n")) {
@@ -96,12 +99,12 @@ export class CloudSync {
         const project = pj ? pj[1].trim() : "";
         if (pj) text = text.slice(pj[0].length);
         let minutes = 0;
-        const m = dur.exec(text);
+        const m = section === "erp tasks" ? null : est.exec(text) ?? dur.exec(text);
         if (m) {
           minutes = Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0) + Number(m[3] ?? 0);
           text = text.slice(0, m.index) + text.slice(m.index + m[0].length);
         }
-        const what = text.replace(/~/g, "").replace(/\(\)/g, "").replace(/\s+/g, " ")
+        const what = text.replace(/~/g, "").replace(/\(\)/g, "").replace(/\s+/g, " ").replace(/ \.$/, ".")
           .replace(/^[ —\-–:,;]+|[ —\-–:,;]+$/g, "");
         const low = what.toLowerCase();
         if (what.length < 3 || CloudSync.isNone(low) || ["none today", "nothing", "no calls", "no tasks"].some((p) => low.startsWith(p))) continue;

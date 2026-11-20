@@ -2,8 +2,8 @@ import Foundation
 import CryptoKit
 
 /// Pairs this Mac with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click,
-/// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
+/// (items include ERP task names, stages, deadlines and project names), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Mirrors cloudSync.ts.
 enum CloudSync {
     /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
@@ -78,7 +78,10 @@ enum CloudSync {
     /// Top-level bullets of every "## " section but Summary; indented bullets become details.
     /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
     static func dayItems(fromDailySummary md: String) -> (headline: String, items: [DayItem]) {
-        let dur = try! NSRegularExpression(pattern: #"\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b"#, options: .caseInsensitive)
+        let body = #"(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)"#
+        let dur = try! NSRegularExpression(pattern: #"\b"# + body + #"\b"#, options: .caseInsensitive)
+        // A trailing "(~45m)" estimate (optionally before a " — Done" tail or a final ".") beats any duration mentioned earlier in the text.
+        let est = try! NSRegularExpression(pattern: #"\(\s*~?\s*"# + body + #"\s*\)(?=\s*(?:[—–-].*)?\.?\s*$)"#, options: .caseInsensitive)
         var section = "", headline = "", headlineDone = false
         var out: [DayItem] = []
         var open = false // last top-level bullet was kept, so indented bullets attach to it
@@ -103,18 +106,20 @@ enum CloudSync {
                 // Then an optional [[ERP project]] tag.
                 var project = ""
                 if let r = text.range(of: #"^\[\[([^\]]+?)\]\]\s*"#, options: .regularExpression) {
-                    project = String(text[r]).trimmingCharacters(in: CharacterSet(charactersIn: "[]").union(.whitespaces))
+                    project = String(text[r].dropFirst(2).prefix(while: { $0 != "]" })).trimmingCharacters(in: .whitespaces)
                     text.removeSubrange(r)
                 }
                 var minutes = 0
                 let ns = text as NSString
-                if let m = dur.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
+                let all = NSRange(location: 0, length: ns.length)
+                if section != "erp tasks", let m = est.firstMatch(in: text, range: all) ?? dur.firstMatch(in: text, range: all) {
                     func g(_ i: Int) -> Int { m.range(at: i).location == NSNotFound ? 0 : Int(ns.substring(with: m.range(at: i))) ?? 0 }
                     minutes = g(1) * 60 + g(2) + g(3)
                     text = ns.replacingCharacters(in: m.range, with: "")
                 }
                 let what = text.replacingOccurrences(of: "~", with: "").replacingOccurrences(of: "()", with: "")
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .replacingOccurrences(of: #" \.$"#, with: ".", options: .regularExpression)
                     .trimmingCharacters(in: CharacterSet(charactersIn: " —-–:,;"))
                 let low = what.lowercased()
                 if what.count < 3 || isNone(low) || low.hasPrefix("none today") || low.hasPrefix("nothing") || low.hasPrefix("no calls") || low.hasPrefix("no tasks") { continue }

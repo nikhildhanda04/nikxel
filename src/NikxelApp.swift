@@ -195,6 +195,28 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    @objc func connectDashboard() {
+        let alert = NSAlert()
+        alert.messageText = "Connect to dashboard"
+        alert.informativeText = "Enter the 6-digit pairing code from your org dashboard. Only your work summary (what you worked on and for how long) is shared — never your logs, messages or email."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 160, height: 24))
+        field.placeholderString = "123456"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runOnTop() == .alertFirstButtonReturn else { return }
+        let code = field.stringValue
+        DispatchQueue.global(qos: .utility).async {
+            let ok = CloudSync.pair(code)
+            DispatchQueue.main.async {
+                NikxelView.tell(icon: ok ? "✅" : "⚠️", title: ok ? "Connected to dashboard" : "Couldn't connect",
+                                lines: [ok ? "Your daily work summary will be shared with your org." : "Check the code and that the dashboard is reachable, then try again."],
+                                kind: ok ? .info : .warning)
+            }
+        }
+    }
+
     func refreshERPMenu() {
         erpConnectItem?.title = ERP.isConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
     }
@@ -371,6 +393,9 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         erpItem.target = self; menu.addItem(erpItem)
         self.erpConnectItem = erpItem
         refreshERPMenu()
+
+        let dashItem = NSMenuItem(title: "Connect to Dashboard…", action: #selector(connectDashboard), keyEquivalent: "")
+        dashItem.target = self; menu.addItem(dashItem)
 
         let aboutMe = NSMenuItem(title: "Tell Nikxel About You…", action: #selector(openAboutMe), keyEquivalent: "")
         aboutMe.target = self; menu.addItem(aboutMe)

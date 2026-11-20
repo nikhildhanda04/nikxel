@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Worker } from "worker_threads";
+import { CloudSync } from "./cloudSync";
 import { HOME, isWin, documentsDir, dayStamp, ensureDir, readText, nikxelPath, writeAtomic } from "../core/paths";
 import { isNone } from "../recording/markdown";
 import { ui } from "../core/ui";
@@ -659,6 +660,8 @@ ${report}`;
           (p, k) => this.momGenerator.runPrompt(p, k));
         // Fold the day's ERP picture into the sealed profile too (skips if not connected).
         await ErpCrawl.ingest((p, k) => this.momGenerator.runPrompt(p, k));
+        // Push only the derived work items to the org dashboard (no-op unless paired).
+        await CloudSync.pushDaily(output, key);
       } catch (e) {
         diag("DayLogger", `summary generation failed: ${e instanceof Error ? e.message : e}`);
       } finally {

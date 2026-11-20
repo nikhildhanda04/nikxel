@@ -25,6 +25,7 @@ import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
 import * as PageShare from "./system/pageShare";
 import * as ERP from "./system/erp";
+import { CloudSync } from "./system/cloudSync";
 import * as ErpCrawl from "./system/erpCrawl";
 import { showAboutMe } from "./system/aboutMe";
 import { OnboardingWindowController } from "./system/onboarding";
@@ -325,6 +326,7 @@ class NikxelApp {
       ERP.isConnected()
         ? item("Forklyft ERP connected ✓", () => void this.connectERP())
         : item("Connect Forklyft ERP…", () => void this.connectERP()),
+      item("Connect to Dashboard…", () => void this.connectDashboard()),
       item("Tell Nikxel About You…", () => showAboutMe()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
         () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
@@ -484,6 +486,21 @@ class NikxelApp {
     });
     this.pendingTasksCard = show;
     show();
+  }
+
+  private async connectDashboard(): Promise<void> {
+    const r = await promptText({
+      title: "Connect to dashboard",
+      message: "Enter the 6-digit pairing code from your org dashboard. Only your work summary (what you worked on and for how long) is shared — never your logs, messages or email.",
+      placeholder: "123456",
+      buttons: ["Connect", "Cancel"],
+    });
+    if (r.button !== 0) return;
+    const ok = await CloudSync.pair(r.value);
+    ui.tell({
+      icon: ok ? "✅" : "⚠️", title: ok ? "Connected to dashboard" : "Couldn't connect", kind: ok ? "info" : "warning",
+      lines: [ok ? "Your daily work summary will be shared with your org." : "Check the code and that the dashboard is reachable, then try again."],
+    });
   }
 
   private async newTemplate(): Promise<void> {

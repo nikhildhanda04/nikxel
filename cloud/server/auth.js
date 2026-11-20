@@ -4,13 +4,19 @@ import { OAuth2Client } from 'google-auth-library';
 const COOKIE = 'nikxel_session';
 const mac = (body, secret) => crypto.createHmac('sha256', secret).update(body).digest();
 
+const validSecret = (s) => typeof s === 'string' && s.length >= 16;
+export function assertSecret(secret) {
+  if (!validSecret(secret)) throw new Error('SESSION_SECRET must be a string of at least 16 characters');
+}
+
 export function signCookie(payload, secret) {
+  assertSecret(secret);
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${mac(body, secret).toString('base64url')}`;
 }
 
 export function verifyCookie(value, secret) {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || !validSecret(secret)) return null;
   const parts = value.split('.');
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
@@ -19,11 +25,15 @@ export function verifyCookie(value, secret) {
   if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return null;
   // canonical-encoding check: reject non-canonical base64url variants of a valid MAC
   if (given.toString('base64url') !== sig) return null;
-  try { return JSON.parse(Buffer.from(body, 'base64url').toString()); } catch { return null; }
+  try {
+    const p = JSON.parse(Buffer.from(body, 'base64url').toString());
+    if (p && p.exp !== undefined && !(Date.now() <= p.exp)) return null;
+    return p;
+  } catch { return null; }
 }
 
 export function issueSession(res, { userId, orgId, role }, secret) {
-  res.cookie(COOKIE, signCookie({ userId, orgId, role }, secret),
+  res.cookie(COOKIE, signCookie({ userId, orgId, role, exp: Date.now() + 7 * 24 * 3600 * 1000 }, secret),
     { httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 7 * 24 * 3600 * 1000 });
 }
 
@@ -48,6 +58,8 @@ async function defaultVerifier(idToken, clientId) {
 }
 
 export async function verifyGoogle(idToken, clientId, verifier = defaultVerifier) {
-  const { sub, email, name } = await verifier(idToken, clientId);
+  const p = await verifier(idToken, clientId);
+  if (!p || p.email_verified !== true) throw new Error('Google email not verified');
+  const { sub, email, name } = p;
   return { sub, email, name };
 }

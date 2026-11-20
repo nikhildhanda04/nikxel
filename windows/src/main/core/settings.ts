@@ -256,7 +256,7 @@ export const Settings = {
     return [TwinProfile.injectedBlock, user].filter(Boolean).join("\n\n");
   },
 
-  get captureMode(): CaptureMode { return load().captureMode === "meeting" ? "meeting" : "notes"; },
+  get captureMode(): CaptureMode { return load().captureMode === "notes" ? "notes" : "meeting"; },
   set captureMode(v: CaptureMode) { save(s => { s.captureMode = v; }); },
 
   /// WhatsApp auto-replies master switch (ChatbotEngine.isEnabled).

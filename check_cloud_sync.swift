@@ -11,32 +11,18 @@ import Foundation
         func check(_ ok: Bool, _ what: String) { if !ok { fails += 1; print("FAIL: \(what)") } else { print("ok: \(what)") } }
         if NSHomeDirectory() != tmp { print("not sandboxed"); exit(1) }
 
-        let md = """
-        # 2026-11-20 — Day in review
-
-        ## Summary
-        - 45m of not-a-work-item here
-
-        ## What you worked on
-        - **Fixed typing lag** in Nikxel — 1h 30m
-        - Shipped invoice fix (45m)
-        - Planning the Q4 roadmap ~2h
-          - sub detail 10m
-        - None today.
-
-        ## Meetings
-        - Standup 15m
-        """
-        let items = CloudSync.workItems(fromDailySummary: md)
-        check(items.count == 3, "three work items (drops sub-bullets, None, other sections): \(items.count)")
-        check(items.first?.what == "Fixed typing lag in Nikxel" && items.first?.minutes == 90, "1h 30m -> 90")
-        check(items.count > 1 && items[1].what == "Shipped invoice fix" && items[1].minutes == 45, "45m -> 45")
-        check(items.count > 2 && items[2].minutes == 120, "2h -> 120")
-        check(items == CloudSync.workItems(fromDailySummary: md) && items.first?.id.count == 12, "stable 12-hex id")
+        let md = "## Summary\nBig day on the dashboard.\n\n## What you worked on\n- [coding] **Fixed typing lag** — 1h 30m\n  - found the missing tap re-enable\n- Planning Q4 ~2h\n\n## Meetings\n- 10:30 — Standup 15m\n- None today.\n\n## WhatsApp\n- No calls today.\n- Ravi asked you to send the deck — open\n\n## Open tasks\n- Send deck — for Ravi — open"
+        let (headline, items) = CloudSync.dayItems(fromDailySummary: md)
+        check(headline == "Big day on the dashboard.", "headline")
+        check(items.count == 5, "five items: \(items.count)")
+        check(items.first == CloudSync.DayItem(id: items.first?.id ?? "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"]), "item 0")
+        check(items.count > 1 && items[1].type == "other" && items[1].minutes == 120, "untagged -> other, 2h")
+        check(items.contains { $0.section == "meetings" && $0.type == "meeting" }, "meeting type")
+        check(items.first?.id.count == 12 && items == CloudSync.dayItems(fromDailySummary: md).items, "stable 12-hex id")
+        check(CloudSync.itemID(section: "a", what: "X") == CloudSync.itemID(section: "a", what: "x") && CloudSync.itemID(section: "a", what: "x") != CloudSync.itemID(section: "b", what: "x"), "id per section, case-insensitive")
 
         var calls = 0
-        CloudSync.pushDaily(summary: md, day: "2026-11-20", post: { _, _, _ in calls += 1; return nil })
-        check(calls == 0, "pushDaily with no token is a no-op")
+        check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in calls += 1; return nil }) && calls == 0, "pushDay with no token is a no-op")
 
         check(!CloudSync.pair("123456", post: { _, _, _ in nil }), "pair fails quietly on network failure")
         let ok = CloudSync.pair("123456", post: { p, b, _ in
@@ -45,11 +31,16 @@ import Foundation
         let perm = (try? FileManager.default.attributesOfItem(atPath: tmp + "/.nikxel/cloud-token"))?[.posixPermissions] as? Int
         check(perm == 0o600, "token file is 0600")
 
+
         var sent: [String: Any]?; var bearer: String?
-        CloudSync.pushDaily(summary: md, day: "2026-11-20", post: { _, b, t in sent = b; bearer = t; return Data() })
-        check(bearer == "tok123" && Set((sent ?? [:]).keys) == ["kind", "date", "items"], "push body is only kind/date/items, bearer token")
-        let first = (sent?["items"] as? [[String: Any]])?.first
-        check(Set((first ?? [:]).keys) == ["id", "what", "minutes"], "item has only id/what/minutes")
+        let id0 = items[0].id
+        let r = CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [id0], post: { _, b, t in sent = b; bearer = t; return Data() })
+        let sentItems = sent?["items"] as? [[String: Any]] ?? []
+        check(r && bearer == "tok123" && (sent?["kind"] as? String) == "day" && (sent?["date"] as? String) == "2026-11-20", "push body kind/date, bearer")
+        check(Set(sent?.keys.map { $0 } ?? []) == ["kind", "date", "headline", "items"], "push body keys")
+        check(sentItems.count == 4 && !sentItems.contains { ($0["id"] as? String) == id0 }, "skip drops item")
+        check(Set((sentItems.first ?? [:]).keys) == ["id", "section", "what", "type", "minutes", "details"], "item keys")
+        check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in nil }), "failed POST -> false")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

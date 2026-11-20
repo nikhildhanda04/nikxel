@@ -616,8 +616,6 @@ DAILY SUMMARIES:
                                       daySummary: output, runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
                 // Fold the day's ERP picture into the sealed profile too (skips if not connected).
                 ErpCrawl.ingest(runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
-                // Push only the derived work items to the org dashboard (no-op unless paired).
-                CloudSync.pushDaily(summary: output, day: Self.dayKey(date))
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
             }

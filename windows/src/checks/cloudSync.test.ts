@@ -1,35 +1,30 @@
-// Port of check_cloud_sync.swift: pure parser, stable id, no-token no-op, pair stores token.
+// Port of check_cloud_sync.swift: day parser, stable id, no-token no-op, pair stores token, pushDay body.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-test("CloudSync: workItems, stable id, no-token no-op, pair, push body", async () => {
+test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nikxel-cs-"));
   process.env.HOME = home; process.env.USERPROFILE = home; // before paths.ts reads os.homedir()
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const CS = require("../main/system/cloudSync").CloudSync;
 
-  const md = [
-    "# 2026-11-20 — Day in review", "", "## Summary", "- 45m of not-a-work-item here", "",
-    "## What you worked on",
-    "- **Fixed typing lag** in Nikxel — 1h 30m",
-    "- Shipped invoice fix (45m)",
-    "- Planning the Q4 roadmap ~2h",
-    "  - sub detail 10m",
-    "- None today.", "", "## Meetings", "- Standup 15m",
-  ].join("\n");
-  const items = CS.workItems(md);
-  assert.equal(items.length, 3);
-  assert.deepEqual([items[0].what, items[0].minutes], ["Fixed typing lag in Nikxel", 90]);
-  assert.deepEqual([items[1].what, items[1].minutes], ["Shipped invoice fix", 45]);
-  assert.equal(items[2].minutes, 120);
-  assert.deepEqual(CS.workItems(md), items);
+  const md = "## Summary\nBig day on the dashboard.\n\n## What you worked on\n- [coding] **Fixed typing lag** — 1h 30m\n  - found the missing tap re-enable\n- Planning Q4 ~2h\n\n## Meetings\n- 10:30 — Standup 15m\n- None today.\n\n## WhatsApp\n- No calls today.\n- Ravi asked you to send the deck — open\n\n## Open tasks\n- Send deck — for Ravi — open";
+  const { headline, items } = CS.dayItems(md);
+  assert.equal(headline, "Big day on the dashboard.");
+  assert.equal(items.length, 5);
+  assert.deepEqual({ ...items[0], id: "" }, { id: "", section: "what you worked on", what: "Fixed typing lag", type: "coding", minutes: 90, details: ["found the missing tap re-enable"] });
+  assert.deepEqual([items[1].type, items[1].minutes], ["other", 120]);
+  assert.equal(items.find((i: any) => i.section === "meetings").type, "meeting");
+  assert.deepEqual(CS.dayItems(md).items, items);
   assert.equal(items[0].id.length, 12);
+  assert.equal(CS.itemID("a", "X"), CS.itemID("a", "x"));
+  assert.notEqual(CS.itemID("a", "x"), CS.itemID("b", "x"));
 
   let calls = 0;
-  await CS.pushDaily(md, "2026-11-20", async () => { calls++; return null; });
+  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => { calls++; return null; }), false);
   assert.equal(calls, 0); // no token: no-op
 
   assert.equal(await CS.pair("123456", async () => null), false);
@@ -39,8 +34,13 @@ test("CloudSync: workItems, stable id, no-token no-op, pair, push body", async (
   assert.equal(CS.token(), "tok123");
 
   let sent: any, bearer: any;
-  await CS.pushDaily(md, "2026-11-20", async (_p: string, b: any, t: any) => { sent = b; bearer = t; return {}; });
+  const r = await CS.pushDay(md, "2026-11-20", new Set([items[0].id]), async (_p: string, b: any, t: any) => { sent = b; bearer = t; return {}; });
+  assert.equal(r, true);
   assert.equal(bearer, "tok123");
-  assert.deepEqual(Object.keys(sent).sort(), ["date", "items", "kind"]);
-  assert.deepEqual(Object.keys(sent.items[0]).sort(), ["id", "minutes", "what"]);
+  assert.deepEqual(Object.keys(sent).sort(), ["date", "headline", "items", "kind"]);
+  assert.equal(sent.kind, "day");
+  assert.equal(sent.items.length, 4);
+  assert.ok(!sent.items.some((i: any) => i.id === items[0].id));
+  assert.deepEqual(Object.keys(sent.items[0]).sort(), ["details", "id", "minutes", "section", "type", "what"]);
+  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => null), false);
 });

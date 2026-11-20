@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 /// Pairs this Mac with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, items:[{id,what,minutes}]}
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details}]}, sent on the user's Send click,
 /// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Mirrors cloudSync.ts.
 enum CloudSync {
@@ -50,40 +50,75 @@ enum CloudSync {
         return true
     }
 
-    /// No token → no-op (poster never called). Network failure is silent.
-    static func pushDaily(summary: String, day: String, post: Poster = httpPost) {
-        guard let tok = token else { return }
-        let items = workItems(fromDailySummary: summary).map { ["id": $0.id, "what": $0.what, "minutes": $0.minutes] as [String: Any] }
-        guard !items.isEmpty else { return }
-        _ = post("/api/summaries", ["kind": "work", "date": day, "items": items], tok)
+    static let types: Set<String> = ["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]
+
+    /// First 12 hex of SHA-256(section + "\n" + what.lowercased()). The daily page uses it for data-id.
+    static func itemID(section: String, what: String) -> String {
+        SHA256.hash(data: Data((section + "\n" + what.lowercased()).utf8)).map { String(format: "%02x", $0) }.joined().prefix(12).description
     }
 
-    struct WorkItem: Equatable { let id: String; let what: String; let minutes: Int }
-
-    /// Top-level bullets of "## What you worked on". Minutes from "1h 30m" / "45 min" / "2h" (0 if none).
-    static func workItems(fromDailySummary md: String) -> [WorkItem] {
-        var inSection = false
-        var out: [WorkItem] = []
-        let dur = try! NSRegularExpression(pattern: #"\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b"#, options: .caseInsensitive)
-        for line in md.components(separatedBy: "\n") {
-            if line.hasPrefix("## ") { inSection = line.lowercased().contains("what you worked on"); continue }
-            guard inSection, line.hasPrefix("- ") || line.hasPrefix("* ") else { continue }
-            var text = String(line.dropFirst(2)).replacingOccurrences(of: "**", with: "")
-            var minutes = 0
-            let ns = text as NSString
-            if let m = dur.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
-                func g(_ i: Int) -> Int { m.range(at: i).location == NSNotFound ? 0 : Int(ns.substring(with: m.range(at: i))) ?? 0 }
-                minutes = g(1) * 60 + g(2) + g(3)
-                text = ns.replacingCharacters(in: m.range, with: "")
-            }
-            let what = text.replacingOccurrences(of: "~", with: "").replacingOccurrences(of: "()", with: "")
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: CharacterSet(charactersIn: " —-–:,;"))
-            if what.count < 3 || what.lowercased().hasPrefix("none") || what.lowercased().hasPrefix("nothing") { continue }
-            let norm = what.lowercased()
-            let id = SHA256.hash(data: Data(norm.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12)
-            out.append(WorkItem(id: String(id), what: what, minutes: minutes))
+    /// Sends the day (minus `skip` ids) as kind "day". False on no token, no items or failed POST.
+    static func pushDay(summary: String, day: String, skip: Set<String>, post: Poster = httpPost) -> Bool {
+        guard let tok = token else { return false }
+        let (headline, all) = dayItems(fromDailySummary: summary)
+        let items = all.filter { !skip.contains($0.id) }.map {
+            ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details] as [String: Any]
         }
-        return out
+        guard !items.isEmpty else { return false }
+        return post("/api/summaries", ["kind": "day", "date": day, "headline": headline, "items": items], tok) != nil
+    }
+
+    struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String] }
+
+    /// Top-level bullets of every "## " section but Summary; indented bullets become details.
+    /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
+    static func dayItems(fromDailySummary md: String) -> (headline: String, items: [DayItem]) {
+        let dur = try! NSRegularExpression(pattern: #"\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b"#, options: .caseInsensitive)
+        var section = "", headline = ""
+        var out: [DayItem] = []
+        var open = false // last top-level bullet was kept, so indented bullets attach to it
+        for line in md.components(separatedBy: "\n") {
+            if line.hasPrefix("## ") { section = line.dropFirst(3).lowercased().trimmingCharacters(in: .whitespaces); open = false; continue }
+            if section == "summary" {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if headline.isEmpty { headline = t } else if t.isEmpty { section = "summary-done" }
+                continue
+            }
+            guard !section.isEmpty, section != "summary-done" else { continue }
+            if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                open = false
+                var text = String(line.dropFirst(2)).replacingOccurrences(of: "**", with: "")
+                var type = section == "meetings" ? "meeting" : "other"
+                if text.hasPrefix("["), let e = text.firstIndex(of: "]"), types.contains(String(text[text.index(after: text.startIndex)..<e])) {
+                    type = String(text[text.index(after: text.startIndex)..<e]); text = String(text[text.index(after: e)...])
+                }
+                var minutes = 0
+                let ns = text as NSString
+                if let m = dur.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
+                    func g(_ i: Int) -> Int { m.range(at: i).location == NSNotFound ? 0 : Int(ns.substring(with: m.range(at: i))) ?? 0 }
+                    minutes = g(1) * 60 + g(2) + g(3)
+                    text = ns.replacingCharacters(in: m.range, with: "")
+                }
+                let what = text.replacingOccurrences(of: "~", with: "").replacingOccurrences(of: "()", with: "")
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " —-–:,;"))
+                let low = what.lowercased()
+                if what.count < 3 || isNone(low) || low.hasPrefix("none today") || low.hasPrefix("nothing") || low.hasPrefix("no calls") || low.hasPrefix("no tasks") { continue }
+                out.append(DayItem(id: itemID(section: section, what: what), section: section, what: what, type: type, minutes: minutes, details: []))
+                open = true
+            } else if open, line.hasPrefix(" ") || line.hasPrefix("\t") {
+                var d = line.trimmingCharacters(in: .whitespaces)
+                guard d.hasPrefix("- ") || d.hasPrefix("* ") else { continue }
+                d = String(d.dropFirst(2)).replacingOccurrences(of: "**", with: "")
+                let last = out.removeLast()
+                out.append(DayItem(id: last.id, section: last.section, what: last.what, type: last.type, minutes: last.minutes, details: last.details + [d]))
+            }
+        }
+        return (headline, out)
+    }
+
+    /// Same rule as NoteExporter.isNone (kept local so this file stands alone).
+    private static func isNone(_ low: String) -> Bool {
+        low == "none" || low == "none." || low.hasPrefix("none —") || low.hasPrefix("none -")
     }
 }

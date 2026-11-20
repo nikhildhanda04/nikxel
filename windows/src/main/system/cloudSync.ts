@@ -3,11 +3,11 @@ import * as crypto from "crypto";
 import { nikxelPath, writeAtomic, readText } from "../core/paths";
 
 /// Pairs this PC with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, items:[{id,what,minutes}]}
+/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details}]}, sent on the user's Send click,
 /// plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Port of CloudSync.swift.
 
-export interface WorkItem { id: string; what: string; minutes: number }
+export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[] }
 /// Resolves the parsed JSON body on 2xx, null on any failure.
 export type Poster = (path: string, body: unknown, bearer: string | null) => Promise<any | null>;
 
@@ -46,37 +46,64 @@ export class CloudSync {
     return CloudSync.token() === r.deviceToken;
   }
 
-  /// No token → no-op (poster never called). Network failure is silent.
-  static async pushDaily(summary: string, day: string, post: Poster = CloudSync.httpPost): Promise<void> {
-    const tok = CloudSync.token();
-    if (!tok) return;
-    const items = CloudSync.workItems(summary).map(({ id, what, minutes }) => ({ id, what, minutes }));
-    if (items.length === 0) return;
-    await post("/api/summaries", { kind: "work", date: day, items }, tok);
+  static readonly types = new Set(["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]);
+
+  /// First 12 hex of SHA-256(section + "\n" + what.toLowerCase()). The daily page uses it for data-id.
+  static itemID(section: string, what: string): string {
+    return crypto.createHash("sha256").update(section + "\n" + what.toLowerCase()).digest("hex").slice(0, 12);
   }
 
-  /// Top-level bullets of "## What you worked on". Minutes from "1h 30m" / "45 min" / "2h" (0 if none).
-  static workItems(md: string): WorkItem[] {
+  /// Sends the day (minus `skip` ids) as kind "day". False on no token, no items or failed POST.
+  static async pushDay(summary: string, day: string, skip: Set<string>, post: Poster = CloudSync.httpPost): Promise<boolean> {
+    const tok = CloudSync.token();
+    if (!tok) return false;
+    const { headline, items: all } = CloudSync.dayItems(summary);
+    const items = all.filter((i) => !skip.has(i.id));
+    if (items.length === 0) return false;
+    return (await post("/api/summaries", { kind: "day", date: day, headline, items }, tok)) !== null;
+  }
+
+  /// Top-level bullets of every "## " section but Summary; indented bullets become details.
+  /// Minutes from "1h 30m" / "45 min" / "2h" (0 if none). Headline = first paragraph of Summary.
+  static dayItems(md: string): { headline: string; items: DayItem[] } {
     const dur = /\b(?:(\d+)\s*h(?:ours?|rs?)?(?:\s*(\d+)\s*m(?:in(?:ute)?s?)?)?|(\d+)\s*m(?:in(?:ute)?s?)?)\b/i;
-    let inSection = false;
-    const out: WorkItem[] = [];
+    let section = "", headline = "", open = false; // open: last top-level bullet was kept
+    const out: DayItem[] = [];
     for (const line of md.split("\n")) {
-      if (line.startsWith("## ")) { inSection = line.toLowerCase().includes("what you worked on"); continue; }
-      if (!inSection || !(line.startsWith("- ") || line.startsWith("* "))) continue;
-      let text = line.slice(2).replace(/\*\*/g, "");
-      let minutes = 0;
-      const m = dur.exec(text);
-      if (m) {
-        minutes = Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0) + Number(m[3] ?? 0);
-        text = text.slice(0, m.index) + text.slice(m.index + m[0].length);
+      if (line.startsWith("## ")) { section = line.slice(3).toLowerCase().trim(); open = false; continue; }
+      if (section === "summary") {
+        const t = line.trim();
+        if (!headline) headline = t; else if (!t) section = "summary-done";
+        continue;
       }
-      const what = text.replace(/~/g, "").replace(/\(\)/g, "").replace(/\s+/g, " ")
-        .replace(/^[ —\-–:,;]+|[ —\-–:,;]+$/g, "");
-      const low = what.toLowerCase();
-      if (what.length < 3 || low.startsWith("none") || low.startsWith("nothing")) continue;
-      const id = crypto.createHash("sha256").update(low).digest("hex").slice(0, 12);
-      out.push({ id, what, minutes });
+      if (!section || section === "summary-done") continue;
+      if (line.startsWith("- ") || line.startsWith("* ")) {
+        open = false;
+        let text = line.slice(2).replace(/\*\*/g, "");
+        let type = section === "meetings" ? "meeting" : "other";
+        const tag = /^\[(\w+)\]/.exec(text);
+        if (tag && CloudSync.types.has(tag[1])) { type = tag[1]; text = text.slice(tag[0].length); }
+        let minutes = 0;
+        const m = dur.exec(text);
+        if (m) {
+          minutes = Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0) + Number(m[3] ?? 0);
+          text = text.slice(0, m.index) + text.slice(m.index + m[0].length);
+        }
+        const what = text.replace(/~/g, "").replace(/\(\)/g, "").replace(/\s+/g, " ")
+          .replace(/^[ —\-–:,;]+|[ —\-–:,;]+$/g, "");
+        const low = what.toLowerCase();
+        if (what.length < 3 || CloudSync.isNone(low) || ["none today", "nothing", "no calls", "no tasks"].some((p) => low.startsWith(p))) continue;
+        out.push({ id: CloudSync.itemID(section, what), section, what, type, minutes, details: [] });
+        open = true;
+      } else if (open && /^\s+[-*] /.test(line)) {
+        out[out.length - 1].details.push(line.trim().slice(2).replace(/\*\*/g, ""));
+      }
     }
-    return out;
+    return { headline, items: out };
+  }
+
+  /// Same rule as NoteExporter.isNone (kept local so this file stands alone).
+  private static isNone(low: string): boolean {
+    return low === "none" || low === "none." || low.startsWith("none —") || low.startsWith("none -");
   }
 }

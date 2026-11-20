@@ -132,7 +132,7 @@ test('logout clears cookie', async () => {
   c.close();
 });
 
-const I = (id, o = {}) => ({ id, section: 'Work', what: 'w' + id, type: 'coding', minutes: 30, details: [], ...o });
+const I = (id, o = {}) => ({ id, section: 'Work', what: 'w' + id, type: 'coding', minutes: 30, details: [], project: '', ...o });
 const push = (c, dev, items, o = {}) => c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'day', date: '2026-11-20', headline: 'H', items, ...o } });
 
 test('send replaces the day; rollup shows it with name', async () => {
@@ -144,6 +144,9 @@ test('send replaces the day; rollup shows it with name', async () => {
   const roll = (await c.api('GET', '/api/rollup', { headers: A(c, 'admA', 'admin') })).json;
   assert.equal(roll.length, 1); assert.equal(roll[0].name, 'memA'); assert.equal(roll[0].headline, 'H2');
   assert.equal((await c.api('GET', '/api/rollup', { headers: A(c) })).status, 403);
+  await push(c, dev, [I('p', { project: 'Produce POS' })]);
+  assert.equal((await c.api('GET', '/api/summaries/mine', { headers: A(c) })).json[0].items[0].project, 'Produce POS');
+  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c, 'admA', 'admin') })).json[0].items[0].project, 'Produce POS');
   assert.equal((await c.api('GET', '/api/rollup', { headers: c.cookie('owB', 'B', 'owner') })).json.length, 0);
   c.close();
 });

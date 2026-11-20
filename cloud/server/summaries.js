@@ -21,7 +21,8 @@ export function cleanDay(body) {
       if (typeof i.minutes !== 'number' || !Number.isFinite(i.minutes) || i.minutes < 0) throw bad('bad minutes');
       const section = typeof i.section === 'string' ? i.section.slice(0, 200) : '';
       const details = Array.isArray(i.details) ? i.details.filter((d) => typeof d === 'string').slice(0, 20).map((d) => d.slice(0, 1000)) : [];
-      return { id: i.id, section, what: i.what.slice(0, 1000), type: TYPES.includes(i.type) ? i.type : 'other', minutes: i.minutes, details };
+      const project = typeof i.project === 'string' ? i.project.trim().slice(0, 200) : '';
+      return { id: i.id, section, project, what: i.what.slice(0, 1000), type: TYPES.includes(i.type) ? i.type : 'other', minutes: i.minutes, details };
     }),
   };
 }

@@ -18,6 +18,12 @@ test('cleanDay maps unknown type to other, trims details, keeps only wire keys',
   const d = cleanDay(day([it({ type: 'gaming', secret: 1, details: [...Array(25).fill('d'), 7, null] })]));
   assert.equal(d.items[0].type, 'other');
   assert.equal(d.items[0].details.length, 20);
-  assert.deepEqual(Object.keys(d.items[0]).sort(), ['details', 'id', 'minutes', 'section', 'type', 'what']);
+  assert.deepEqual(Object.keys(d.items[0]).sort(), ['details', 'id', 'minutes', 'project', 'section', 'type', 'what']);
   assert.deepEqual(cleanDay(day([it({ details: ['a', 1, 'b'] })])).items[0].details, ['a', 'b']);
+});
+test('cleanDay keeps project, defaults to empty, slices to 200', () => {
+  assert.equal(cleanDay(day([it({ project: ' Produce POS ' })])).items[0].project, 'Produce POS');
+  assert.equal(cleanDay(day([it()])).items[0].project, '');
+  assert.equal(cleanDay(day([it({ project: 42 })])).items[0].project, '');
+  assert.equal(cleanDay(day([it({ project: 'p'.repeat(300) })])).items[0].project.length, 200);
 });

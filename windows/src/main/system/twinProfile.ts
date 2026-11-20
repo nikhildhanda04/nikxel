@@ -49,6 +49,17 @@ export const TwinProfile = {
     });
   },
 
+  /// The user's own sent WhatsApp texts, newest first, from wa_sent.jsonl.
+  recentSentMessages(limit = 40): string[] {
+    let t: string;
+    try { t = fs.readFileSync(nikxelPath("wa_sent.jsonl"), "utf8"); } catch { return []; }
+    const texts: string[] = [];
+    for (const line of t.split(/\r?\n/)) {
+      try { const o = JSON.parse(line); if (typeof o.text === "string") texts.push(o.text); } catch { /* skip */ }
+    }
+    return texts.slice(-limit).reverse();
+  },
+
   /// Applies each learned correction, case-insensitive and on word boundaries.
   correct(text: string): string {
     let out = text;

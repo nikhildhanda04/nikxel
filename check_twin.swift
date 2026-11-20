@@ -40,6 +40,11 @@ import Foundation
         check(TwinProfile.selfLines(fromTranscript: "[00:00:01] Me: hello there\n[00:00:04] Priya: hi") == ["hello there"], "selfLines keeps only Me lines, prefix stripped")
         check(TwinProfile.selfLines(fromTranscript: "[00:00:01] Priya: hi\n[00:00:03] Others: yo") == [], "selfLines empty without Me lines")
 
+        let sentDir = NSHomeDirectory() + "/.nikxel"
+        try? FileManager.default.createDirectory(atPath: sentDir, withIntermediateDirectories: true)
+        try? "{\"t\":1,\"text\":\"one\"}\n{\"t\":2,\"text\":\"two\"}\n{\"t\":3,\"text\":\"three\"}\n".write(toFile: sentDir + "/wa_sent.jsonl", atomically: true, encoding: .utf8)
+        check(TwinProfile.recentSentMessages(limit: 2) == ["three", "two"], "recentSentMessages newest-first, limited")
+
         if fails > 0 { exit(1) }
     }
 }

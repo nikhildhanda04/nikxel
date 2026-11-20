@@ -39,4 +39,9 @@ test("TwinProfile: learned store and injected block", t => {
 
   assert.deepEqual(TP.selfLines("[00:00:01] Me: hello there\n[00:00:04] Priya: hi"), ["hello there"]);
   assert.deepEqual(TP.selfLines("[00:00:01] Priya: hi\n[00:00:03] Others: yo"), []);
+
+  fs.mkdirSync(path.join(home, ".nikxel"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".nikxel", "wa_sent.jsonl"),
+    '{"t":1,"text":"one"}\n{"t":2,"text":"two"}\n{"t":3,"text":"three"}\n');
+  assert.deepEqual(TP.recentSentMessages(2), ["three", "two"]);
 });

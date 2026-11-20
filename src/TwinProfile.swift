@@ -65,4 +65,17 @@ enum TwinProfile {
         }
         return out
     }
+
+    static var sentFile: String { NSHomeDirectory() + "/.nikxel/wa_sent.jsonl" }
+
+    /// The user's own sent WhatsApp texts, newest first, from wa_sent.jsonl.
+    static func recentSentMessages(limit: Int = 40) -> [String] {
+        guard let t = try? String(contentsOfFile: sentFile, encoding: .utf8) else { return [] }
+        let texts: [String] = t.split(whereSeparator: \.isNewline).compactMap { line in
+            guard let d = line.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+            return o["text"] as? String
+        }
+        return Array(texts.suffix(limit).reversed())
+    }
 }

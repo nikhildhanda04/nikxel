@@ -1,7 +1,9 @@
 // Runnable check for TwinProfile — the learned-profile store and its injected block.
 //   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/ctw \
-//     src/TwinProfile.swift check_twin.swift && /tmp/ctw
+//     src/TwinProfile.swift src/TwinDistiller.swift check_twin.swift && /tmp/ctw
 import Foundation
+
+func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's logger (ChatbotEngine.swift)
 
 @main struct Check {
     static func main() {
@@ -49,6 +51,24 @@ import Foundation
         try? FileManager.default.createDirectory(atPath: sentDir, withIntermediateDirectories: true)
         try? "{\"t\":1,\"text\":\"one\"}\n{\"t\":2,\"text\":\"two\"}\n{\"t\":3,\"text\":\"three\"}\n".write(toFile: sentDir + "/wa_sent.jsonl", atomically: true, encoding: .utf8)
         check(TwinProfile.recentSentMessages(limit: 2) == ["three", "two"], "recentSentMessages newest-first, limited")
+
+        check(TwinDistiller.accept(new: "  \n ", old: "KEEP") == "KEEP", "accept keeps old on empty")
+        check(TwinDistiller.accept(new: String(repeating: "a", count: 5000), old: "x", cap: 3000).count <= 3000, "accept caps length")
+        check(TwinDistiller.accept(new: "line one\nline two", old: "x", cap: 12) == "line one", "accept cuts on a line boundary")
+        let mp = TwinDistiller.mergePrompt(current: "CUR", meetingSelfLines: ["m1"], sentMessages: ["s1"], daySummary: "D1")
+        check(["CUR", "m1", "s1", "D1", "<!--corrections-->", "Voice & style", "wrong -> right"].allSatisfy { mp.contains($0) }, "mergePrompt carries inputs and markers")
+
+        TwinProfile.learned = "OLD"
+        var calls = 0
+        TwinDistiller.distill(meetingSelfLines: [], sentMessages: [], daySummary: "") { _, _ in calls += 1; return "X" }
+        check(calls == 0 && TwinProfile.learned == "OLD", "empty signals: no LLM call, profile unchanged")
+        TwinDistiller.distill(meetingSelfLines: [], sentMessages: [], daySummary: "did stuff") { _, kind in
+            calls += 1; return kind == "twin-distill" ? "NEW PROFILE" : "BAD" }
+        check(calls == 1 && TwinProfile.learned == "NEW PROFILE", "distill stores the merged profile")
+        struct Boom: Error {}
+        TwinDistiller.distill(meetingSelfLines: ["hi"], sentMessages: [], daySummary: "") { _, _ in throw Boom() }
+        check(TwinProfile.learned == "NEW PROFILE", "throwing runPrompt leaves profile untouched")
+        TwinProfile.learned = ""
 
         if fails > 0 { exit(1) }
     }

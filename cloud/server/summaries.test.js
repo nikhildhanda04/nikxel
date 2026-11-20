@@ -4,9 +4,9 @@ import { mergeItems, adminView, redact, ownerEdit, release, ForbiddenError } fro
 
 test('mergeItems preserves removed flags on re-push', () => {
   const existing = [{id:'1',what:'A',minutes:60,removed:true},{id:'2',what:'B',minutes:30,removed:false}];
-  const incoming = [{id:'1',what:'A',minutes:90},{id:'2',what:'B',minutes:45},{id:'3',what:'C',minutes:15}];
+  const incoming = [{id:'1',what:'A',minutes:90,removed:false},{id:'2',what:'B',minutes:45},{id:'3',what:'C',minutes:15}];
   const out = mergeItems(existing, incoming);
-  assert.equal(out.find(i=>i.id==='1').removed, true);   // stays redacted
+  assert.equal(out.find(i=>i.id==='1').removed, true);   // stays redacted even if client sends removed:false
   assert.equal(out.find(i=>i.id==='1').minutes, 90);     // facts updated
   assert.equal(out.find(i=>i.id==='3').removed, false);  // new item visible
 });
@@ -28,9 +28,10 @@ test('redact only while pending', () => {
   redact(s,'1','member'); assert.equal(s.items[0].removed, true);
   assert.throws(() => redact({status:'released',items:[{id:'1',removed:false}]},'1','member'), ForbiddenError);
 });
-test('re-push into released day keeps it released (accepted simplification)', () => {
+test('mergeItems adds a new item and preserves the existing one', () => {
   const merged = mergeItems([{id:'1',what:'A',minutes:1,removed:false}], [{id:'1',what:'A',minutes:1},{id:'2',what:'N',minutes:5}]);
-  assert.equal(merged.length, 2); // does not throw; status handled by caller, stays released
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].id, '1'); // existing first, new appended
 });
 test('release is pending->released and idempotent', () => {
   const s = {status:'pending',items:[]};

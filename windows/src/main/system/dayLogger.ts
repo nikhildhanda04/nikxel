@@ -409,7 +409,7 @@ export class DayLogger {
       const now = new Date(), date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12);
       const md = this.summaryFile(date), page = md.replace(/\.md$/, ".html");
       const text = readText(md), html = readText(page);
-      if (text == null || html == null || html.includes("nx-send")) continue;
+      if (text == null || html == null || html.includes("nx-pv")) continue;
       try { writeAtomic(page, DayPage.html(text, this.dayStats(date), false, true)); } catch { /* leave the old page */ }
     }
   }

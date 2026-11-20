@@ -97,6 +97,16 @@ test("daily page: tags hidden, every sent item carries its dayItems id, send bar
   assert.match(html, /class="nx-todo"/, "open-task checkbox still renders");
 });
 
+test("daily page embeds exactly the day pushDay sends, for the preview", () => {
+  const html = DayPage.html(tagged, null, false, true);
+  const json = /<script type="application\/json" id="nx-day">(.*?)<\/script>/.exec(html);
+  assert.ok(json, "embedded day");
+  assert.deepEqual(JSON.parse(json[1]), CloudSync.dayItems(tagged), "same headline and items, tags kept as types");
+  assert.match(html, /<dialog class="nx-pv"/);
+  assert.match(html, /class="nx-prev"/);
+  assert.doesNotMatch(DayPage.html(tagged, null, false, false), /id="nx-day"|<dialog class="nx-pv"/, "not on weekly pages");
+});
+
 test("not daily: no ids, no send bar, tags still hidden", () => {
   const html = DayPage.html(tagged, null, false, false);
   assert.doesNotMatch(html, /data-id=/);

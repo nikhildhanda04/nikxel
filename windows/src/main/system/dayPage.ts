@@ -39,8 +39,79 @@ function tree(markdown: string, key: string): Item[] {
   return roots;
 }
 
+/// The day as dayItems will send it, plus the dialog that previews it the
+/// way the dashboard shows it (Going / Not going). Daily pages only.
+function previewBlock(markdown: string): string {
+  const day = CloudSync.dayItems(markdown);
+  return `<script type="application/json" id="nx-day">${JSON.stringify(day).replace(/</g, "\\u003c")}</script>\n`
+    + previewDialog + "\n<script>" + previewJS + "</script>";
+}
+
+/// Same markup and script in src/DayPage.swift.
+const previewDialog = String.raw`<dialog class="nx-pv" aria-label="Preview"><div class="pv-head"><b>How your day will look on the dashboard</b><small>Only what's under “Going” is sent. Close this, click items on the page to cross them out, then preview again.</small><div class="pv-tabs"></div></div><div class="pv-body"></div><div class="pv-foot"><button type="button" class="pv-close">Keep editing</button><button type="button" class="pv-send">Send to dashboard</button></div></dialog>`;
+
+const previewJS = String.raw`
+(function () {
+  // Preview: the day as the dashboard will show it, from what isn't crossed out.
+  var bar = document.querySelector(".nx-send"), dlg = document.querySelector(".nx-pv"), src = document.getElementById("nx-day");
+  if (!bar || !dlg || !src) return;
+  var day = JSON.parse(src.textContent), show = "going";
+  var T = { coding: "Coding", shipped: "Shipped", meeting: "Meeting", research: "Research", learning: "Learning", writing: "Writing", review: "Review", planning: "Planning", comms: "Comms", other: "Other" };
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function dur(m) { var h = Math.floor(m / 60); return h && m % 60 ? h + "h " + (m % 60) + "m" : h ? h + "h" : m + "m"; }
+  function type(t) { return T[t] ? t : "other"; }
+  function crossed() { var x = {}; document.querySelectorAll("[data-id].x").forEach(function (el) { x[el.getAttribute("data-id")] = 1; }); return x; }
+  function item(i) {
+    var m = /\s+[—–-]\s*\**(open|done|unclear)\**\.?\s*$/i.exec(i.what), what = m ? i.what.slice(0, m.index) : i.what, t = type(i.type);
+    return '<li><span class="pv-chip pv-' + t + '">' + T[t] + '</span><span class="pv-what">' + esc(what)
+      + (m ? ' <span class="st ' + m[1].toLowerCase() + '">' + m[1].toLowerCase() + '</span>' : '') + '</span>'
+      + (i.minutes ? '<span class="pv-min">' + dur(i.minutes) + '</span>' : '')
+      + (i.details.length ? '<details><summary>' + i.details.length + ' more</summary><ul>' + i.details.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join("") + '</ul></details>' : '')
+      + '</li>';
+  }
+  function groups(list) {
+    var order = [];
+    list.forEach(function (i) { if (order.indexOf(i.section) < 0) order.push(i.section); });
+    return order.map(function (s) {
+      return '<h3>' + esc(s.charAt(0).toUpperCase() + s.slice(1)) + '</h3><ul class="pv-items">'
+        + list.filter(function (i) { return i.section === s; }).map(item).join("") + '</ul>';
+    }).join("");
+  }
+  function render() {
+    var x = crossed(), going = day.items.filter(function (i) { return !x[i.id]; }), gone = day.items.filter(function (i) { return x[i.id]; });
+    var head = day.headline && !x.headline, mins = {}, total = 0, date = document.querySelector(".date");
+    going.forEach(function (i) { if (i.minutes) { var t = type(i.type); mins[t] = (mins[t] || 0) + i.minutes; total += i.minutes; } });
+    var nGoing = going.length + (head ? 1 : 0), nGone = gone.length + (day.headline && x.headline ? 1 : 0);
+    dlg.querySelector(".pv-tabs").innerHTML =
+      '<button type="button" data-v="going" aria-pressed="' + (show === "going") + '">Going · ' + nGoing + '</button>'
+      + '<button type="button" data-v="gone" aria-pressed="' + (show === "gone") + '">Not going · ' + nGone + '</button>';
+    var html;
+    if (show === "going") {
+      html = !nGoing ? '<p class="pv-empty">Nothing will be shared.</p>'
+        : '<div class="pv-card"><p class="pv-date">' + esc(date ? date.textContent : "") + '</p>'
+          + (head ? '<p class="pv-hl">' + esc(day.headline) + '</p>' : '')
+          + (total ? '<div class="pv-bar" aria-hidden="true">' + Object.keys(mins).map(function (t) { return '<i class="pv-' + t + '" style="flex:' + mins[t] + '"></i>'; }).join("") + '</div>'
+            + '<p class="pv-legend">' + Object.keys(mins).map(function (t) { return dur(mins[t]) + " " + T[t].toLowerCase(); }).join(" · ") + '</p>' : '')
+          + groups(going) + '</div>';
+    } else {
+      html = !nGone ? '<p class="pv-empty">Nothing is crossed out — everything on this page goes.</p>'
+        : '<div class="pv-gone">' + (day.headline && x.headline ? '<h3>Summary</h3><p class="pv-what">' + esc(day.headline) + '</p>' : '') + groups(gone) + '</div>';
+    }
+    dlg.querySelector(".pv-body").innerHTML = html;
+  }
+  bar.querySelector(".nx-prev").onclick = function () { show = "going"; render(); dlg.showModal(); };
+  dlg.addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.v) { show = b.dataset.v; render(); }
+    else if (b.classList.contains("pv-close")) dlg.close();
+    else if (b.classList.contains("pv-send")) { dlg.close(); bar.querySelector("button").click(); bar.scrollIntoView({ block: "center" }); }
+  });
+})();
+`;
+
 /// `daily` (the 10pm page only): each sent item gets its CloudSync id as data-id, plus the Send bar.
 function html(markdown: string, stats: DayStats | null = null, morning = false, daily = false): string {
+  const preview = daily ? previewBlock(markdown) : "";
   markdown = markdown.replace(/^(\s*[-*] )\[[a-z]+\] /gm, "$1"); // the type tags are for the dashboard
   const { title, sections } = parse(markdown);
   const find = (k: string) => sections.find(s => s.key === k);
@@ -77,7 +148,8 @@ function html(markdown: string, stats: DayStats | null = null, morning = false, 
 ${hero(title, find("summary"), morning, daily)}
 ${stats ? tiles(stats) : ""}
 ${body}
-${daily ? `<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><span class="nx-sent"></span></div>` : ""}
+${daily ? `<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><button class="nx-prev">Preview what's shared</button><span class="nx-sent"></span></div>` : ""}
+${preview}
 <footer>Written by Nikxel from ${morning ? "this week's daily summaries" : "today's activity"} on this computer. Nothing here left it.</footer>
 </main>
 ${PageShare.widget(false)}</body></html>`;
@@ -317,6 +389,36 @@ pre code { background: none; padding: 0; }
 .nx-send p { flex: 1 1 240px; color: var(--muted); font-size: 14.5px; }
 .nx-send button { font: 600 14px/1 var(--sans); color: var(--bg); background: var(--accent); border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; }
 .nx-send button:disabled { opacity: .6; cursor: default; }
+.nx-send .nx-prev { color: var(--accent); background: var(--indigo-soft); }
+.nx-pv { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 20px; background: var(--bg); color: var(--ink); }
+.nx-pv::backdrop { background: rgba(12, 12, 32, .5); }
+.pv-head { position: sticky; top: 0; z-index: 1; display: grid; gap: 10px; padding: 18px 20px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.pv-head b { font: 600 18px/1.3 var(--serif); }
+.pv-head small { color: var(--muted); font-size: 13.5px; }
+.pv-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-tabs button, .pv-foot button { font: 600 13.5px/1 var(--sans); padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+.pv-tabs button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.pv-body { padding: 16px 20px; }
+.pv-card { display: grid; gap: 10px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.pv-date { font: 500 12px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.pv-hl { font: 500 18px/1.45 var(--serif); }
+.pv-bar { display: flex; gap: 2px; height: 10px; border-radius: 99px; overflow: hidden; }
+.pv-bar i { background: var(--pv); }
+.pv-legend { color: var(--muted); font-size: 13px; }
+.nx-pv h3 { margin: 12px 0 2px; font: 600 15px/1.3 var(--serif); }
+.pv-items > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.pv-what { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.pv-min { font: 500 13px/1 var(--mono); color: var(--muted); }
+.pv-chip { flex: none; font: 600 10.5px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: #fff; background: var(--pv); border-radius: 6px; padding: 4px 7px; }
+.pv-items details { flex-basis: 100%; color: var(--muted); font-size: 14px; }
+.pv-items summary { cursor: pointer; }
+.pv-items details ul { display: grid; gap: 4px; margin-top: 4px; padding-left: 18px; list-style: disc; }
+.pv-gone .pv-what { text-decoration: line-through; color: var(--faint); }
+.pv-empty { color: var(--muted); }
+.pv-foot { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; background: var(--bg); border-top: 1px solid var(--line); }
+.pv-foot .pv-send { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.pv-coding { --pv: #4b46b8; } .pv-shipped { --pv: #2f8a57; } .pv-meeting { --pv: #c9821c; } .pv-research { --pv: #2b7fa8; } .pv-learning { --pv: #8a4fb8; }
+.pv-writing { --pv: #b8513f; } .pv-review { --pv: #5f7d2a; } .pv-planning { --pv: #a8457a; } .pv-comms { --pv: #2f9a96; } .pv-other { --pv: #7a7a92; }
 .nx-sent { font: 500 13px/1.3 var(--mono); color: var(--muted); }
 .nx-sent:empty { display: none; }
 

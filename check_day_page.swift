@@ -23,8 +23,16 @@ import Foundation
         let ticked = DayPage.markTask(in: md, index: 0, done: true) ?? ""
         check(ticked.contains("Ravi — done") && html.contains("data-id=\"\(task)\"") && DayPage.html(from: ticked, daily: true).contains("data-id=\"\(task)\""), "ticking keeps the task's data-id")
 
+        if let r = html.range(of: #"(?<=id="nx-day">).*?(?=</script>)"#, options: .regularExpression),
+           let day = try? JSONSerialization.jsonObject(with: Data(html[r].utf8)) as? [String: Any],
+           let items = day["items"] as? [[String: Any]] {
+            let sent = CloudSync.dayItems(fromDailySummary: md)
+            check(day["headline"] as? String == sent.headline && items.map { $0["id"] as? String } == sent.items.map { $0.id }
+                  && items.map { $0["type"] as? String } == sent.items.map { $0.type }, "embedded day = what pushDay sends")
+        } else { check(false, "embedded day") }
+        check(html.contains("<dialog class=\"nx-pv\"") && html.contains("class=\"nx-prev\""), "preview dialog + button")
         let plain = DayPage.html(from: md)
-        check(!plain.contains("data-id=") && !plain.contains("class=\"nx-send\"") && !plain.contains("[coding]"), "not daily: no ids, no bar, no tags")
+        check(!plain.contains("data-id=") && !plain.contains("class=\"nx-send\"") && !plain.contains("<dialog class=\"nx-pv\"") && !plain.contains("id=\"nx-day\"") && !plain.contains("[coding]"), "not daily: no ids, no bar, no tags")
         check(plain.contains("class=\"nx-todo\""), "not daily: checkbox")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }

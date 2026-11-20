@@ -1,4 +1,5 @@
 // Dev seed: node seed.js  (idempotent; DB_PATH defaults to ./dev.db)
+// Re-seeding updates only rows the seed created (matching id); real pushed days on the same (user, org, kind, date) are left alone.
 import { openDb, bootstrap } from './db.js';
 
 const db = openDb(process.env.DB_PATH || new URL('./dev.db', import.meta.url).pathname);
@@ -40,13 +41,16 @@ const days = {
     ['2026-11-20', 'Lens polish', [it('a', W, 'Lens onboarding flow', 'other', 95, VL), it('b', M, 'Visual Lens demo', 'meeting', 35, VL), erp('e1', 'Interview synthesis — Done', VL)]],
   ],
 };
+const UPSERT = `INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(user_id, org_id, kind, date) DO UPDATE SET items=excluded.items, notes=excluded.notes, created_at=excluded.created_at
+  WHERE summaries.id = excluded.id`;
 db.transaction(() => {
   db.prepare('INSERT OR IGNORE INTO orgs VALUES (?,?,?,?)').run(ORG, 'Nikxel Dev', 'dev-jake', now);
   for (const [id, name, role] of people) {
     db.prepare('INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)').run(id, 'sub-' + id, id + '@dev.local', name, now);
     db.prepare('INSERT OR IGNORE INTO memberships VALUES (?,?,?)').run(id, ORG, role);
     for (const [date, headline, items] of days[id] ?? [])
-      db.prepare('INSERT OR REPLACE INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(`${id}-day-${date}`, id, ORG, 'day', date,
+      db.prepare(UPSERT).run(`${id}-day-${date}`, id, ORG, 'day', date,
         JSON.stringify(items), headline, 'admin', 'sent', now);
   }
 })();

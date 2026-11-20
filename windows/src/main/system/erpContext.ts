@@ -43,6 +43,19 @@ ${capturedText}`;
     return nl < 0 ? head : head.slice(0, nl);
   },
 
+  /// Capture → read → store, with the capture and the LLM call injected (so it
+  /// runs without a browser in tests). Empty capture keeps the old facts; a
+  /// blank/refusal read keeps them too (via `accept`). The browser-backed
+  /// capture and the connection guard live in ErpCrawl.ingest.
+  async ingestWith(capture: () => Promise<string[]>,
+                   runPrompt: (prompt: string, kind: string) => Promise<string>): Promise<void> {
+    const sections = await capture();
+    if (!sections.length) return;
+    let out = "";
+    try { out = await runPrompt(this.readerPrompt(this.boundText(sections)), "erp-ingest"); } catch { /* keep old */ }
+    this.facts = this.accept(out, this.facts);
+  },
+
   /// Captured sections joined and truncated to `cap` chars (on a line
   /// boundary) — the bound on what the reader LLM ever sees in one run.
   boundText(sections: string[], cap = 8000): string {

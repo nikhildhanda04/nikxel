@@ -3,6 +3,7 @@ import * as os from "os";
 import { nikxelPath, expandTilde, HOME, resourcePath, writeAtomic, readText } from "./paths";
 import * as path from "path";
 import { TwinProfile } from "../system/twinProfile";
+import { ErpContext } from "../system/erpContext";
 
 /// Port of NikxelSettings.swift. Backed by ~/.nikxel/settings.json — the same
 /// file and keys as the Mac app, so it stays easy to open and edit by hand.
@@ -252,8 +253,8 @@ export const Settings = {
   get userContextBlock(): string {
     const c = trimmed(load().userContext);
     const user = c ? `About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n${c}` : "";
-    // Learned first, the user's own words last so they win.
-    return [TwinProfile.injectedBlock, user].filter(Boolean).join("\n\n");
+    // Learned + ERP facts first, the user's own words last so they win.
+    return [TwinProfile.injectedBlock, ErpContext.injectedBlock, user].filter(Boolean).join("\n\n");
   },
 
   get captureMode(): CaptureMode { return load().captureMode === "notes" ? "notes" : "meeting"; },

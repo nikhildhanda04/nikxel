@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-test("ErpContext: store, injected block, reader prompt, accept, boundText", t => {
+test("ErpContext: store, injected block, reader prompt, accept, boundText, ingest", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nikxel-erp-"));
   process.env.HOME = home; process.env.USERPROFILE = home; // before paths.ts reads os.homedir()
   let EC: any;
@@ -43,6 +43,20 @@ test("ErpContext: store, injected block, reader prompt, accept, boundText", t =>
   assert.equal((fs.statSync(f).mode & 0o777), 0o600);
   EC.facts = "";
   assert.ok(!fs.existsSync(f));
+
+  // ingestWith: keeps old facts on empty capture; stores new facts otherwise.
+  EC.facts = "OLD FACTS";
+  await EC.ingestWith(async () => [], async () => "NEW");
+  assert.equal(EC.facts, "OLD FACTS");
+  await EC.ingestWith(async () => ["Project Rentop — yours"], async () => "Project Rentop — yours — due Fri");
+  assert.ok(EC.facts.includes("Rentop"));
+
+  // userContextBlock puts ERP facts before the user's own context (so the user wins).
+  const Settings = require("../main/core/settings").Settings;
+  Settings.userContext = "ZZUSER"; EC.facts = "AAERP";
+  const b: string = Settings.userContextBlock;
+  assert.ok(b.indexOf("AAERP") >= 0 && b.indexOf("AAERP") < b.indexOf("ZZUSER"));
+  EC.facts = "";
 
   fs.rmSync(home, { recursive: true, force: true });
 });

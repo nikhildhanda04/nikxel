@@ -612,6 +612,8 @@ DAILY SUMMARIES:
                 }
                 TwinDistiller.distill(meetingSelfLines: [], sentMessages: TwinProfile.recentSentMessages(),
                                       daySummary: output, runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
+                // Fold the day's ERP picture into the sealed profile too (skips if not connected).
+                ErpCrawl.ingest(runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
             }

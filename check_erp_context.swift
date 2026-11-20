@@ -50,6 +50,14 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
         ErpContext.facts = ""
         check(!FileManager.default.fileExists(atPath: f), "empty removes file")
 
+        // ingestWith: keeps old facts on empty capture; stores new facts otherwise.
+        ErpContext.facts = "OLD FACTS"
+        ErpContext.ingestWith(capture: { [] }, runPrompt: { _, _ in "NEW" })
+        check(ErpContext.facts == "OLD FACTS", "ingest keeps old facts on empty capture")
+        ErpContext.ingestWith(capture: { ["Project Rentop — yours"] }, runPrompt: { _, _ in "Project Rentop — yours — due Fri" })
+        check(ErpContext.facts.contains("Rentop"), "ingest stores new facts")
+        ErpContext.facts = ""
+
         if fails > 0 { exit(1) }
     }
 }

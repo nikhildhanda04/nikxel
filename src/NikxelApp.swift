@@ -213,7 +213,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.refreshERPMenu()
                     if ok {
                         NikxelView.tell(icon: "✅", title: "Forklyft ERP connected",
-                                        lines: ["Nikxel now knows who's who. Meeting summaries will name people and let you assign tasks."])
+                                        lines: ["Nikxel now knows who's who, and reads and summarizes your ERP into your work context.",
+                                                "Meeting summaries will name people and let you assign tasks."])
+                        let momGen = self.meetingCoordinator.momGen
+                        DispatchQueue.global(qos: .utility).async {
+                            ErpCrawl.ingest(runPrompt: { try momGen.runPrompt($0, kind: $1) })
+                        }
                     } else {
                         NikxelView.tell(icon: "⚠️", title: "ERP not connected",
                                         lines: ["Sign-in didn't finish. Try again from the menu."])

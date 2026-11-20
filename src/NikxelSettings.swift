@@ -462,8 +462,8 @@ enum NikxelSettings {
     static var userContextBlock: String {
         let c = userContext.trimmingCharacters(in: .whitespacesAndNewlines)
         let user = c.isEmpty ? "" : "About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n\(c)"
-        // Learned first, the user's own words last so they win.
-        return [TwinProfile.injectedBlock, user].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        // Learned + ERP facts first, the user's own words last so they win.
+        return [TwinProfile.injectedBlock, ErpContext.injectedBlock, user].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }
 

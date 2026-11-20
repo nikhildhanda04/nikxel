@@ -25,6 +25,7 @@ import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
 import * as PageShare from "./system/pageShare";
 import * as ERP from "./system/erp";
+import * as ErpCrawl from "./system/erpCrawl";
 import { showAboutMe } from "./system/aboutMe";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
@@ -401,10 +402,11 @@ class NikxelApp {
       type: ok ? "info" : "warning", title: "Nikxel", noLink: true,
       message: ok ? "Forklyft ERP connected" : "ERP not connected",
       detail: ok
-        ? "You can now Assign action items to the ERP from any meeting summary."
+        ? "You can now Assign action items to the ERP from any meeting summary. Nikxel also reads and summarizes your ERP into your work context."
         : "Sign-in didn't complete. Open the menu and try “Connect Forklyft ERP…” again.",
       buttons: ["OK"],
     });
+    if (ok) void ErpCrawl.ingest((p, k) => this.meetingCoordinator.momGen.runPrompt(p, k));
   }
 
   private async editActiveTemplate(): Promise<void> {

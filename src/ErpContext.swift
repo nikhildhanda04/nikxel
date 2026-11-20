@@ -52,6 +52,17 @@ enum ErpContext {
         return String(head[..<nl])
     }
 
+    /// Capture → read → store, with the capture and the LLM call injected (so
+    /// it runs without a browser in tests). Empty capture keeps the old facts;
+    /// a blank/refusal read keeps them too (via `accept`). The browser-backed
+    /// capture and the connection guard live in ErpCrawl.ingest.
+    static func ingestWith(capture: () -> [String], runPrompt: (_ prompt: String, _ kind: String) throws -> String) {
+        let sections = capture()
+        guard !sections.isEmpty else { return }
+        let out = (try? runPrompt(readerPrompt(capturedText: boundText(sections: sections)), "erp-ingest")) ?? ""
+        facts = accept(new: out, old: facts)
+    }
+
     /// Captured sections joined and truncated to `cap` chars (on a line
     /// boundary) — the bound on what the reader LLM ever sees in one run.
     static func boundText(sections: [String], cap: Int = 8000) -> String {

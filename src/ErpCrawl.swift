@@ -33,6 +33,13 @@ enum ErpCrawl {
         return sections
     }
 
+    /// Crawl the connected ERP and fold the result into the sealed ERP facts.
+    /// Skips (keeping old facts) unless there's a live session. Call off-main.
+    static func ingest(runPrompt: (_ prompt: String, _ kind: String) throws -> String) {
+        guard ERP.isConnected, ERP.hasLiveSession() else { cblog("ErpCrawl: ingest skipped — no live ERP session"); return }
+        ErpContext.ingestWith(capture: capture, runPrompt: runPrompt)
+    }
+
     // MARK: - Browser lifecycle (headless, isolated profile, own port)
 
     private static func launch() -> Bool {

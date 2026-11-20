@@ -1,6 +1,7 @@
 import { BrowserWindow, session } from "electron";
 import { cblog } from "../core/diag";
-import { BASE, PARTITION } from "./erp";
+import { BASE, PARTITION, isConnected, hasLiveSession } from "./erp";
+import { ErpContext } from "./erpContext";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 
 /// Reads the signed-in user's ERP by opening a hidden on-demand window on the
@@ -19,6 +20,13 @@ const KEEP_MIN = 400; // below this a page is an empty state / error, not conten
 const ODOO_APPS = ["project", "contacts", "to-do", "crm", "sale", "purchase", "stock", "timesheets"];
 
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+
+/// Crawl the connected ERP and fold the result into the sealed ERP facts.
+/// Skips (keeping old facts) unless there's a live session.
+export async function ingest(runPrompt: (prompt: string, kind: string) => Promise<string>): Promise<void> {
+  if (!isConnected() || !(await hasLiveSession())) { cblog("ErpCrawl: ingest skipped — no live ERP session"); return; }
+  await ErpContext.ingestWith(capture, runPrompt);
+}
 
 /// Bounded sweep of the user's ERP → the captured section texts. [] on any
 /// failure (not authenticated, blocked, logged out).

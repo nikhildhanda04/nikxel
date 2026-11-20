@@ -12,6 +12,7 @@ import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { TwinDistiller } from "./twinDistiller";
 import { TwinProfile } from "./twinProfile";
+import * as ErpCrawl from "./erpCrawl";
 import { DayPage } from "./dayPage";
 import { desktopRequest } from "./desktopHelper";
 import * as Slack from "./slack";
@@ -656,6 +657,8 @@ ${report}`;
         if (line) this.onSummaryReady?.(line, page);
         await TwinDistiller.distill([], TwinProfile.recentSentMessages(), output,
           (p, k) => this.momGenerator.runPrompt(p, k));
+        // Fold the day's ERP picture into the sealed profile too (skips if not connected).
+        await ErpCrawl.ingest((p, k) => this.momGenerator.runPrompt(p, k));
       } catch (e) {
         diag("DayLogger", `summary generation failed: ${e instanceof Error ? e.message : e}`);
       } finally {

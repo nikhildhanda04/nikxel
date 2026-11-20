@@ -610,6 +610,8 @@ DAILY SUMMARIES:
                 if let line = Self.digestLine(stats) {
                     DispatchQueue.main.async { self.onSummaryReady?(line, pageURL) }
                 }
+                TwinDistiller.distill(meetingSelfLines: [], sentMessages: TwinProfile.recentSentMessages(),
+                                      daySummary: output, runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
             }

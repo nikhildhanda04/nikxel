@@ -12,6 +12,8 @@ import { Transcriber, TranscriberError } from "./transcriber";
 import { TranscriptMerger } from "./transcriptMerger";
 import { MOMGenerator } from "./momGenerator";
 import { MeetResult, MeetSpeakers } from "./meetSpeakers";
+import { TwinDistiller } from "../system/twinDistiller";
+import { TwinProfile } from "../system/twinProfile";
 import { GoogleSync } from "../google/googleSync";
 
 /// Port of MeetingCoordinator.swift.
@@ -237,6 +239,10 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     // always asks first.
     if (mode === "meeting") {
       GoogleSync.offer(outPath).catch(e => diag("MeetingCoordinator", `GoogleSync.offer failed: ${e}`));
+      // Learn from what the user said; fire-and-forget, distill swallows its own failures.
+      TwinDistiller.distill(TwinProfile.selfLines(transcript), TwinProfile.recentSentMessages(), "",
+        (p, k) => this.momGen.runPrompt(p, k))
+        .catch(e => diag("MeetingCoordinator", `twin distill failed: ${e}`));
     }
   }
 

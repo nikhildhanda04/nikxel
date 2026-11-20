@@ -212,7 +212,16 @@ class MeetingCoordinator: AudioRecorderDelegate {
                     // Meetings only -- a lecture or podcast has no owners and
                     // nothing to put in anyone's calendar. No-ops unless the
                     // user has connected Google, and always asks first.
-                    if mode == .meeting { GoogleSync.offer(noteURL: outURL) }
+                    if mode == .meeting {
+                        GoogleSync.offer(noteURL: outURL)
+                        // Learn from what the user said. Blocking LLM call, so
+                        // off main; distill swallows its own failures.
+                        DispatchQueue.global(qos: .utility).async {
+                            TwinDistiller.distill(meetingSelfLines: TwinProfile.selfLines(fromTranscript: transcript),
+                                                  sentMessages: TwinProfile.recentSentMessages(), daySummary: "",
+                                                  runPrompt: { try self.momGen.runPrompt($0, kind: $1) })
+                        }
+                    }
                 }
             }
         }

@@ -10,6 +10,8 @@ import { diag, cblog } from "../core/diag";
 import { bus } from "../core/bus";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
+import { TwinDistiller } from "./twinDistiller";
+import { TwinProfile } from "./twinProfile";
 import { DayPage } from "./dayPage";
 import { desktopRequest } from "./desktopHelper";
 import * as Slack from "./slack";
@@ -652,6 +654,8 @@ ${report}`;
         await fs.promises.writeFile(page, DayPage.html(output, stats), "utf8");
         const line = DayLogger.digestLine(stats);
         if (line) this.onSummaryReady?.(line, page);
+        await TwinDistiller.distill([], TwinProfile.recentSentMessages(), output,
+          (p, k) => this.momGenerator.runPrompt(p, k));
       } catch (e) {
         diag("DayLogger", `summary generation failed: ${e instanceof Error ? e.message : e}`);
       } finally {

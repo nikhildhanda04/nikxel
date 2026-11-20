@@ -11,6 +11,7 @@ import TeamGrid from './TeamGrid.jsx';
 export default function Org({ route = 'org' }) {
   const [org, setOrg] = useState(null), [members, setMembers] = useState([]), [membersErr, setMembersErr] = useState(''), [err, setErr] = useState({});
   const [f, setF] = useState({ q: '', which: 'active', noLead: false, sort: 'size' }); // Teams toolbar; survives drawer open/close
+  const closing = useRef(false); // close already in flight (double click / Esc+click)
   const fromGrid = useRef(false); // drawer opened from the grid this session: close = Back (no extra history entry); deep link: replace
   const load = () => api.org().then(setOrg, (e) => setErr((x) => ({ ...x, load: e.message })));
   useEffect(() => { load(); api.members().then(setMembers, (e) => setMembersErr(e.message)); }, []);
@@ -24,7 +25,8 @@ export default function Org({ route = 'org' }) {
   const [, sub, id] = route.split('/');
   const tab = sub === 'people' ? 'people' : 'teams';
   const open = sub === 'team' ? teamCards(org.projects, 'all').find((p) => encodeURIComponent(p.id) === id) : null; // any status; unknown id: just the grid
-  const closeDrawer = () => { if (fromGrid.current) { fromGrid.current = false; history.back(); } else location.replace('#org'); };
+  if (!open) { fromGrid.current = false; closing.current = false; } // flag only lives while a grid-opened drawer is up
+  const closeDrawer = () => { if (closing.current) return; closing.current = true; if (fromGrid.current) history.back(); else location.replace('#org'); };
   const noLead = () => { setF((x) => ({ ...x, which: 'active', noLead: true })); location.hash = 'org'; };
 
   return (

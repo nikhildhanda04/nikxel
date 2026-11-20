@@ -77,7 +77,8 @@ class LLMResponder {
             // would eat a trailing marker before it was ever read.
             let (afterTask, task) = Self.extractTask(raw)
             let (body, meet) = Self.extractMarker("MEET", from: afterTask)
-            guard let text = cleanReply(body) else { return nil }
+            guard let cleaned = cleanReply(body) else { return nil }
+            let text = TwinProfile.correct(cleaned)
             return Reply(text: text, task: task, meet: Self.parseMeet(meet))
         } catch {
             cblog("LLMResponder: failed — \(error)")

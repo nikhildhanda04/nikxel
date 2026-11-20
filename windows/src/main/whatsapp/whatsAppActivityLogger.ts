@@ -100,6 +100,7 @@ export class WhatsAppActivityLogger {
         this.lastPreview.set(chat.name, chat.preview);
         this.appendJSONL("chats", { t: Date.now() / 1000, name: chat.name, preview: chat.preview });
       }
+      await ChromeWhatsApp.logSentFromOpenThread();
       await this.reloadIfBloated();
     });
   }

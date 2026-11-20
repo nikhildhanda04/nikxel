@@ -1,6 +1,7 @@
 import { app, BrowserWindow, session } from "electron";
 import * as fs from "fs";
-import { resourcePath } from "../core/paths";
+import { resourcePath, nikxelPath, appendLine } from "../core/paths";
+import { TwinProfile } from "../system/twinProfile";
 import { Settings } from "../core/settings";
 import { cblog } from "../core/diag";
 import { openUrl } from "../core/open";
@@ -660,6 +661,19 @@ export const ChromeWhatsApp = {
   async readMessages(count = 6, userOwnName: string = Settings.waOwnName): Promise<string[]> {
     const thread = await ChromeWhatsApp.readThread(userOwnName);
     return thread.filter(m => !m.outgoing).map(m => m.text).slice(-count);
+  },
+
+  /// Appends the user's own sent bubbles from the open chat to ~/.nikxel/wa_sent.jsonl,
+  /// skipping texts already in the log's recent tail.
+  // ponytail: captures sent messages only from the chat currently open in the bot's browser; broader backfill is a follow-up if voice signal is thin.
+  async logSentFromOpenThread(userOwnName: string = Settings.waOwnName): Promise<void> {
+    const sent = (await ChromeWhatsApp.readThread(userOwnName)).filter(m => m.outgoing).map(m => m.text);
+    const seen = new Set(TwinProfile.recentSentMessages(200));
+    for (const text of sent) {
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      appendLine(nikxelPath("wa_sent.jsonl"), JSON.stringify({ t: Date.now() / 1000, text }));
+    }
   },
 
   /// Every rendered bubble in the open chat, both directions, oldest first.

@@ -662,6 +662,27 @@ enum ChromeWhatsApp {
         Array(readThread(userOwnName: userOwnName).filter { !$0.outgoing }.map(\.text).suffix(count))
     }
 
+    /// Appends the user's own sent bubbles from the open chat to ~/.nikxel/wa_sent.jsonl,
+    /// skipping texts already in the log's recent tail.
+    // ponytail: captures sent messages only from the chat currently open in the bot's browser; broader backfill is a follow-up if voice signal is thin.
+    static func logSentFromOpenThread(userOwnName: String = NikxelSettings.waOwnName) {
+        let sent = readThread(userOwnName: userOwnName).filter { $0.outgoing }.map(\.text)
+        guard !sent.isEmpty else { return }
+        var seen = Set(TwinProfile.recentSentMessages(limit: 200))
+        var lines = Data()
+        for text in sent where !text.isEmpty && seen.insert(text).inserted {
+            guard let d = try? JSONSerialization.data(withJSONObject: ["t": Date().timeIntervalSince1970, "text": text]) else { continue }
+            lines.append(d); lines.append(0x0A)
+        }
+        guard !lines.isEmpty else { return }
+        let url = URL(fileURLWithPath: TwinProfile.sentFile)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(lines); try? h.close()
+        } else { try? lines.write(to: url) }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
     /// Every rendered bubble in the open chat, both directions, oldest first.
     static func readThread(userOwnName: String = NikxelSettings.waOwnName) -> [WAMessage] {
         guard let c = ensureCDP() else { return [] }

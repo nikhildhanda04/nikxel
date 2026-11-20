@@ -600,7 +600,7 @@ DAILY SUMMARIES:
             if report.isEmpty { return }
             do {
                 let prompt = self.summaryPrompt(report: report, date: date)
-                let output = try self.momGenerator.runPrompt(prompt, kind: "daily-summary")
+                let output = TwinProfile.correct(try self.momGenerator.runPrompt(prompt, kind: "daily-summary"))
                 let fileURL = self.summaryFileURL(for: date)
                 try output.write(to: fileURL, atomically: true, encoding: .utf8)
                 // The .md stays: it's what the WhatsApp bot's memory reads back.
@@ -610,6 +610,8 @@ DAILY SUMMARIES:
                 if let line = Self.digestLine(stats) {
                     DispatchQueue.main.async { self.onSummaryReady?(line, pageURL) }
                 }
+                TwinDistiller.distill(meetingSelfLines: [], sentMessages: TwinProfile.recentSentMessages(),
+                                      daySummary: output, runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
             } catch {
                 NSLog("DayLogger: summary generation failed: \(error)")
             }

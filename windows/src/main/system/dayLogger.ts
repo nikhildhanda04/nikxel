@@ -10,6 +10,8 @@ import { diag, cblog } from "../core/diag";
 import { bus } from "../core/bus";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
+import { TwinDistiller } from "./twinDistiller";
+import { TwinProfile } from "./twinProfile";
 import { DayPage } from "./dayPage";
 import { desktopRequest } from "./desktopHelper";
 import * as Slack from "./slack";
@@ -643,7 +645,7 @@ ${report}`;
         const report = await this.buildReport(date);
         if (report === "") return;
         const prompt = this.summaryPrompt(report, date);
-        const output = await this.momGenerator.runPrompt(prompt, "daily-summary");
+        const output = TwinProfile.correct(await this.momGenerator.runPrompt(prompt, "daily-summary"));
         const file = this.summaryFile(date);
         await fs.promises.writeFile(file, output, "utf8");
         // The .md stays: it's what the WhatsApp bot's memory reads back.
@@ -652,6 +654,8 @@ ${report}`;
         await fs.promises.writeFile(page, DayPage.html(output, stats), "utf8");
         const line = DayLogger.digestLine(stats);
         if (line) this.onSummaryReady?.(line, page);
+        await TwinDistiller.distill([], TwinProfile.recentSentMessages(), output,
+          (p, k) => this.momGenerator.runPrompt(p, k));
       } catch (e) {
         diag("DayLogger", `summary generation failed: ${e instanceof Error ? e.message : e}`);
       } finally {

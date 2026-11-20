@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import { nikxelPath, expandTilde, HOME, resourcePath, writeAtomic, readText } from "./paths";
 import * as path from "path";
+import { TwinProfile } from "../system/twinProfile";
 
 /// Port of NikxelSettings.swift. Backed by ~/.nikxel/settings.json — the same
 /// file and keys as the Mac app, so it stays easy to open and edit by hand.
@@ -250,10 +251,12 @@ export const Settings = {
   /// in every prompt. Mirrors NikxelSettings.userContextBlock.
   get userContextBlock(): string {
     const c = trimmed(load().userContext);
-    return c ? `About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n${c}` : "";
+    const user = c ? `About the user (context they gave Nikxel about themselves — keep it in mind and keep everything in line with it):\n${c}` : "";
+    // Learned first, the user's own words last so they win.
+    return [TwinProfile.injectedBlock, user].filter(Boolean).join("\n\n");
   },
 
-  get captureMode(): CaptureMode { return load().captureMode === "meeting" ? "meeting" : "notes"; },
+  get captureMode(): CaptureMode { return load().captureMode === "notes" ? "notes" : "meeting"; },
   set captureMode(v: CaptureMode) { save(s => { s.captureMode = v; }); },
 
   /// WhatsApp auto-replies master switch (ChatbotEngine.isEnabled).

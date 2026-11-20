@@ -83,6 +83,7 @@ class WhatsAppActivityLogger {
                     "preview": chat.preview
                 ])
             }
+            ChromeWhatsApp.logSentFromOpenThread()
             self.reloadIfBloated()
         }
     }

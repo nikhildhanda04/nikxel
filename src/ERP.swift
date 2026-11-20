@@ -263,7 +263,7 @@ enum ERP {
     static func taskDescription(item: String, context: String) -> String {
         var md = "**What to do**\n\n" + bulletize(item)
         if !context.isEmpty { md += "\n**Context**\n\n\(context)\n" }
-        return NoteExporter.richHTML(from: md)
+        return NoteExporter.richHTML(from: TwinProfile.correct(md))
     }
 
     /// A run-on action item as bullet lines, split on clause breaks ("; ") and

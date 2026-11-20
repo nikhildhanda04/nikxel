@@ -9,7 +9,7 @@ enum CaptureMode: String {
     static var current: CaptureMode {
         get {
             let raw = UserDefaults.standard.string(forKey: userDefaultsKey) ?? ""
-            return CaptureMode(rawValue: raw) ?? .notes
+            return CaptureMode(rawValue: raw) ?? .meeting
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: userDefaultsKey) }
     }

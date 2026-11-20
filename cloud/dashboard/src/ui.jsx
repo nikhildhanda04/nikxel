@@ -8,7 +8,7 @@ export const Muted = ({ children, className = '' }) => <p className={`text-sm te
 export const H = ({ children }) => <h2 className="font-heading text-xl font-semibold tracking-tight mb-4">{children}</h2>;
 // Small gray tag, like lafda's topic pills. `dot` adds a colored dot in front.
 export const Tag = ({ dot, children, className = '' }) => (
-  <span className={`inline-flex h-6 items-center gap-1.5 rounded-md bg-accent px-2 text-xs text-muted whitespace-nowrap ${className}`}>
+  <span className={`inline-flex h-6 items-center gap-1.5 rounded-md bg-accent px-2 text-xs text-pill-fg whitespace-nowrap ${className}`}>
     {dot && <span className="size-1.5 shrink-0 rounded-full" style={{ background: dot }} />}<span className="truncate">{children}</span>
   </span>
 );

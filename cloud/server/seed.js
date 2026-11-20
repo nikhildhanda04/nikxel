@@ -6,26 +6,24 @@ bootstrap(db);
 const now = Date.now();
 const ORG = 'dev-org';
 const people = [['dev-jake', 'Jake', 'owner'], ['dev-asha', 'Asha', 'admin'], ['dev-ben', 'Ben', 'member'], ['dev-cleo', 'Cleo', 'member']];
-const it = (id, what, minutes) => ({ id, what, minutes, removed: false });
-const work = {
-  'dev-jake': [['2026-11-19', 'released', [['a', 'Reviewed pairing flow', 45], ['b', 'Wrote dashboard screens', 120], ['c', 'Fixed session expiry bug', 30]]],
-               ['2026-11-20', 'pending', [['a', 'Seed script for dev', 40], ['b', 'Vite proxy setup', 25], ['c', 'Tailwind styling pass', 60]]]],
-  'dev-asha': [['2026-11-19', 'released', [['a', 'Customer onboarding calls', 90], ['b', 'Updated invite docs', 35], ['c', 'Triage support inbox', 50]]],
-               ['2026-11-20', 'pending', [['a', 'Plan Q4 roadmap', 75], ['b', 'Review PRs', 40], ['c', 'Pricing page copy', 55]]]],
-  'dev-ben': [['2026-11-19', 'released', [['a', 'Implemented CSV export', 100], ['b', 'Wrote unit tests', 60], ['c', 'Code review', 30], ['d', 'Standup notes', 10]]],
-              ['2026-11-20', 'pending', [['a', 'Refactor summary merge', 85], ['b', 'Debug sync failure', 50], ['c', 'Update changelog', 20]]]],
-  'dev-cleo': [['2026-11-19', 'released', [['a', 'Designed empty states', 70], ['b', 'User interview synthesis', 80], ['c', 'Icon cleanup', 25]]]],
+const it = (id, section, what, type, minutes, details = []) => ({ id, section, what, type, minutes, details });
+const days = {
+  'dev-jake': [['2026-11-19', 'Pairing review and dashboard screens', [it('a', 'Nikxel', 'Reviewed pairing flow', 'review', 45, ['Checked code expiry']), it('b', 'Dashboard', 'Wrote dashboard screens', 'coding', 120, ['Rollup table', 'Role gating']), it('c', 'Nikxel', 'Fixed session expiry bug', 'shipped', 30)]],
+               ['2026-11-20', 'Dev tooling day', [it('a', 'Dashboard', 'Seed script for dev', 'coding', 40), it('b', 'Dashboard', 'Vite proxy setup', 'coding', 25), it('c', 'Dashboard', 'Tailwind styling pass', 'writing', 60)]]],
+  'dev-asha': [['2026-11-19', 'Onboarding and support', [it('a', 'Customers', 'Customer onboarding calls', 'meeting', 90), it('b', 'Docs', 'Updated invite docs', 'writing', 35), it('c', 'Support', 'Triage support inbox', 'comms', 50)]],
+               ['2026-11-20', 'Roadmap planning', [it('a', 'Roadmap', 'Plan Q4 roadmap', 'planning', 75, ['Draft milestones']), it('b', 'Nikxel', 'Review PRs', 'review', 40), it('c', 'Website', 'Pricing page copy', 'writing', 55)]]],
+  'dev-ben': [['2026-11-19', 'CSV export shipped', [it('a', 'Export', 'Implemented CSV export', 'shipped', 100, ['Streaming writer']), it('b', 'Export', 'Wrote unit tests', 'coding', 60), it('c', 'Nikxel', 'Code review', 'review', 30), it('d', 'Team', 'Standup notes', 'meeting', 10)]],
+              ['2026-11-20', 'Sync debugging', [it('a', 'Sync', 'Refactor summary sync', 'coding', 85), it('b', 'Sync', 'Debug sync failure', 'research', 50, ['Traced retry loop']), it('c', 'Docs', 'Update changelog', 'writing', 20)]]],
+  'dev-cleo': [['2026-11-19', 'Design and research', [it('a', 'Design', 'Designed empty states', 'other', 70), it('b', 'Research', 'User interview synthesis', 'learning', 80), it('c', 'Design', 'Icon cleanup', 'other', 25)]]],
 };
 db.transaction(() => {
   db.prepare('INSERT OR IGNORE INTO orgs VALUES (?,?,?,?)').run(ORG, 'Nikxel Dev', 'dev-jake', now);
   for (const [id, name, role] of people) {
     db.prepare('INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)').run(id, 'sub-' + id, id + '@dev.local', name, now);
     db.prepare('INSERT OR IGNORE INTO memberships VALUES (?,?,?)').run(id, ORG, role);
-    for (const [date, status, items] of work[id] ?? [])
-      db.prepare('INSERT OR IGNORE INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(`${id}-work-${date}`, id, ORG, 'work', date,
-        JSON.stringify(items.map(([i, w, m]) => it(i, w, m))), '', 'admin', status, now);
+    for (const [date, headline, items] of days[id] ?? [])
+      db.prepare('INSERT OR IGNORE INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(`${id}-day-${date}`, id, ORG, 'day', date,
+        JSON.stringify(items), headline, 'admin', 'sent', now);
   }
-  db.prepare('INSERT OR IGNORE INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run('dev-ben-meeting', 'dev-ben', ORG, 'meeting', '2026-11-20',
-    JSON.stringify([it('a', 'Weekly sync', 30)]), 'Agreed to ship dashboard v1 Friday. Ben owns export bug.', 'admin', 'pending', now);
 })();
 for (const [id, name, role] of people) console.log(id.padEnd(10), name.padEnd(6), role);

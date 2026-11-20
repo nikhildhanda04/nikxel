@@ -2,23 +2,12 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { readSession, issueSession, liveSession, requireRole, verifyGoogle } from './auth.js';
 import { redeemPairingCode, createPairingCode, deviceAuth } from './pairing.js';
-import { mergeItems, adminView, redact, ownerEdit, release, ForbiddenError } from './summaries.js';
+import { cleanDay, ForbiddenError } from './summaries.js';
 
 const uid = () => crypto.randomUUID();
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const notFound = () => Object.assign(new Error('not found'), { status: 404 });
 const str = (v) => typeof v === 'string' && v.trim() !== '';
-const num = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-
-function validItem(i, partial = false) {
-  if (!i || typeof i !== 'object') throw bad('bad item');
-  if (!partial && !str(i.id)) throw bad('bad item id');
-  if (i.what !== undefined || !partial) if (!str(i.what)) throw bad('bad what');
-  if (i.minutes !== undefined || !partial) if (!num(i.minutes)) throw bad('bad minutes');
-}
-
-const KINDS = ['work', 'meeting', 'project'], VIS = ['admin', 'org'];
-const parse = (row) => row && { ...row, items: JSON.parse(row.items) };
 
 async function defaultExchange(code) {
   const r = await fetch('https://oauth2.googleapis.com/token', {
@@ -38,15 +27,6 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     req.session = liveSession(db, s); next();
   };
   const membership = (userId) => db.prepare('SELECT org_id, role FROM memberships WHERE user_id = ?').get(userId);
-  // Own row only; a missing row and someone else's row look identical (404).
-  const ownRow = (req) => {
-    const row = parse(db.prepare('SELECT * FROM summaries WHERE id = ? AND user_id = ? AND org_id = ?')
-      .get(req.params.id, req.session.userId, req.session.orgId));
-    if (!row) throw notFound();
-    return row;
-  };
-  const save = (row) => db.prepare('UPDATE summaries SET items = ?, status = ? WHERE id = ?').run(JSON.stringify(row.items), row.status, row.id);
-
   const STATE = 'nikxel_oauth_state';
   r.get('/auth/google', (req, res) => {
     const state = crypto.randomBytes(16).toString('hex');
@@ -163,57 +143,24 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
   });
 
   r.post('/summaries', deviceAuth(db), (req, res) => {
-    const { kind, date, items, notes = '' } = req.body ?? {};
-    let { visibility } = req.body ?? {};
-    if (!str(kind) || !str(date) || !Array.isArray(items)) throw bad('bad summary');
-    items.forEach((i) => validItem(i));
-    if (typeof notes !== 'string' || !KINDS.includes(kind)) throw bad('bad summary');
-    if (visibility === undefined) visibility = kind === 'work' ? 'admin' : 'org'; // real client sends none
-    if (!VIS.includes(visibility)) throw bad('bad summary');
-    const clean = items.map(({ id, what, minutes }) => ({ id, what, minutes })); // server owns `removed`
+    if (req.body?.kind !== 'day') throw bad('bad summary');
+    const { date, headline, items } = cleanDay(req.body);
     const { userId, orgId } = req.device; // never from the body
-    db.transaction(() => {
-      const ex = parse(db.prepare('SELECT * FROM summaries WHERE user_id=? AND org_id=? AND kind=? AND date=?').get(userId, orgId, kind, date));
-      if (!ex) {
-        db.prepare('INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(uid(), userId, orgId, kind, date,
-          JSON.stringify(mergeItems([], clean)), notes, visibility, 'pending', Date.now());
-      } else if (ex.status === 'pending') { // released summaries are frozen: no re-push edits
-        db.prepare('UPDATE summaries SET items=?, notes=?, visibility=? WHERE id=?').run(JSON.stringify(mergeItems(ex.items, clean)), notes, visibility, ex.id);
-      }
-    })();
+    db.prepare(`INSERT INTO summaries VALUES (?,?,?,'day',?,?,?,'admin','sent',?)
+      ON CONFLICT(user_id, org_id, kind, date) DO UPDATE SET items = excluded.items, notes = excluded.notes, created_at = excluded.created_at`)
+      .run(uid(), userId, orgId, date, JSON.stringify(items), headline, Date.now());
     res.json({ ok: true });
   });
 
   r.get('/summaries/mine', session, (req, res) => {
-    res.json(db.prepare('SELECT * FROM summaries WHERE user_id = ? AND org_id = ? ORDER BY date DESC').all(req.session.userId, req.session.orgId).map(parse));
-  });
-
-  r.post('/summaries/:id/redact', session, (req, res) => {
-    if (!str(req.body?.itemId)) throw bad('itemId required');
-    const row = ownRow(req);
-    save(redact(row, req.body.itemId, req.session.role));
-    res.json(row);
-  });
-
-  r.post('/summaries/:id/release', session, (req, res) => {
-    const row = ownRow(req);
-    save(release(row, req.session.role));
-    res.json(row);
-  });
-
-  r.patch('/summaries/:id/items/:itemId', requireRole(db, 'owner'), (req, res) => {
-    validItem(req.body, true);
-    const { what, minutes } = req.body;
-    const row = ownRow(req);
-    save(ownerEdit(row, req.params.itemId, { what, minutes }, req.session.role));
-    res.json(row);
+    res.json(db.prepare("SELECT id, date, notes, items, created_at FROM summaries WHERE user_id = ? AND org_id = ? AND kind = 'day' ORDER BY date DESC").all(req.session.userId, req.session.orgId)
+      .map(({ notes, items, ...x }) => ({ ...x, headline: notes, items: JSON.parse(items) })));
   });
 
   r.get('/rollup', requireRole(db, 'owner', 'admin'), (req, res) => {
-    const rows = db.prepare("SELECT * FROM summaries WHERE org_id = ? AND kind = 'work'").all(req.session.orgId);
-    res.json(rows.map((x) => adminView(parse(x))).filter(Boolean).map((v) => ({
-      date: v.date, user_id: v.user_id, items: v.items.map(({ id, what, minutes }) => ({ id, what, minutes })),
-    })));
+    res.json(db.prepare(`SELECT s.date, s.user_id, COALESCE(u.name, u.email) AS name, s.notes, s.items FROM summaries s JOIN users u ON u.id = s.user_id
+      WHERE s.org_id = ? AND s.kind = 'day' ORDER BY s.date DESC, name`).all(req.session.orgId)
+      .map(({ notes, items, ...x }) => ({ ...x, headline: notes, items: JSON.parse(items) })));
   });
 
   return r;

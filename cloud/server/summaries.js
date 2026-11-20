@@ -1,48 +1,26 @@
-// Pure summary-integrity logic. No DB. redact/ownerEdit/release mutate and return the summary.
+// Pure summary validation. No DB.
 export class ForbiddenError extends Error {
   constructor(msg = 'forbidden') { super(msg); this.name = 'ForbiddenError'; }
 }
 
-export function mergeItems(existing, incoming) {
-  const byId = new Map(incoming.map(i => [i.id, i]));
-  const seen = new Set(existing.map(i => i.id));
-  const merged = existing.map(e => {
-    const n = byId.get(e.id);
-    return n ? { ...e, what: n.what, minutes: n.minutes, removed: e.removed } : e;
-  });
-  for (const n of incoming) {
-    if (!seen.has(n.id)) { seen.add(n.id); merged.push({ ...n, removed: false }); }
-  }
-  return merged;
-}
+const TYPES = ['coding', 'shipped', 'meeting', 'research', 'learning', 'writing', 'review', 'planning', 'comms', 'other'];
+const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+const str = (v, max) => typeof v === 'string' && v.trim() !== '' && v.length <= max;
 
-export function adminView(summary) {
-  if (summary.status !== 'released') return null;
-  return { ...summary, items: summary.items.filter(i => i.removed === false) };
-}
-
-function find(summary, itemId) {
-  const item = summary.items.find(i => i.id === itemId);
-  if (!item) throw new Error('item not found');
-  return item;
-}
-
-export function redact(summary, itemId, byRole) {
-  if (summary.status !== 'pending') throw new ForbiddenError('summary already released');
-  find(summary, itemId).removed = true;
-  return summary;
-}
-
-export function ownerEdit(summary, itemId, patch, byRole) {
-  if (byRole !== 'owner') throw new ForbiddenError('only the owner can edit');
-  if (summary.status !== 'pending') throw new ForbiddenError('summary already released');
-  const item = find(summary, itemId);
-  if (patch.what !== undefined) item.what = patch.what;
-  if (patch.minutes !== undefined) item.minutes = patch.minutes;
-  return summary;
-}
-
-export function release(summary, byRole) {
-  if (summary.status === 'pending') summary.status = 'released';
-  return summary;
+// Validate a pushed day; returns only the wire fields. Throws status 400.
+export function cleanDay(body) {
+  const { date, headline = '', items } = body ?? {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw bad('bad date');
+  if (typeof headline !== 'string' || headline.length > 1000) throw bad('bad headline');
+  if (!Array.isArray(items) || items.length > 500) throw bad('bad items');
+  return {
+    date, headline,
+    items: items.map((i) => {
+      if (!i || typeof i !== 'object' || !str(i.id, 200) || !str(i.what, 1000)) throw bad('bad item');
+      if (typeof i.minutes !== 'number' || !Number.isFinite(i.minutes) || i.minutes < 0) throw bad('bad minutes');
+      const section = typeof i.section === 'string' ? i.section.slice(0, 200) : '';
+      const details = Array.isArray(i.details) ? i.details.filter((d) => typeof d === 'string').slice(0, 20).map((d) => d.slice(0, 1000)) : [];
+      return { id: i.id, section, what: i.what, type: TYPES.includes(i.type) ? i.type : 'other', minutes: i.minutes, details };
+    }),
+  };
 }

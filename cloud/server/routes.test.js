@@ -27,83 +27,9 @@ async function boot(opts = {}) {
     return { status: r.status, json, res: r };
   };
   const deviceFor = (u, o) => ({ authorization: 'Bearer ' + redeemPairingCode(db, createPairingCode(db, u, o)).deviceToken });
-  const seed = (id, userId, orgId, status, items, kind = 'work', date = '2026-11-20') =>
-    db.prepare('INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?)').run(id, userId, orgId, kind, date, JSON.stringify(items), '', 'private', status, now);
-  const item = (id, minutes = 30, removed = false) => ({ id, what: 'w' + id, minutes, removed });
-  return { db, server, api, cookie, deviceFor, seed, item, close: () => server.close() };
+  return { db, server, api, cookie, deviceFor, close: () => server.close() };
 }
 const A = (c, u = 'memA', r = 'member') => c.cookie(u, 'A', r);
-
-test('member PATCH of item facts is rejected (403)', async () => {
-  const c = await boot(); c.seed('s1', 'memA', 'A', 'pending', [c.item('i1')]);
-  const r = await c.api('PATCH', '/api/summaries/s1/items/i1', { headers: A(c), body: { minutes: 999 } });
-  assert.equal(r.status, 403);
-  assert.equal(JSON.parse(c.db.prepare('SELECT items FROM summaries WHERE id=?').get('s1').items)[0].minutes, 30);
-  c.close();
-});
-
-test('owner PATCH edits facts while pending; validates body; owns row', async () => {
-  const c = await boot(); c.seed('s1', 'owA', 'A', 'pending', [c.item('i1')]); c.seed('s2', 'memA', 'A', 'pending', [c.item('i1')]);
-  const h = A(c, 'owA', 'owner');
-  assert.equal((await c.api('PATCH', '/api/summaries/s1/items/i1', { headers: h, body: { minutes: -1 } })).status, 400);
-  assert.equal((await c.api('PATCH', '/api/summaries/s1/items/i1', { headers: h, body: { what: '' } })).status, 400);
-  assert.equal((await c.api('PATCH', '/api/summaries/s1/items/nope', { headers: h, body: { minutes: 5 } })).status, 404);
-  assert.equal((await c.api('PATCH', '/api/summaries/s2/items/i1', { headers: h, body: { minutes: 5 } })).status, 404); // not own row
-  const r = await c.api('PATCH', '/api/summaries/s1/items/i1', { headers: h, body: { minutes: 45 } });
-  assert.equal(r.status, 200);
-  assert.equal(JSON.parse(c.db.prepare('SELECT items FROM summaries WHERE id=?').get('s1').items)[0].minutes, 45);
-  c.close();
-});
-
-test('admin rollup excludes pending and other orgs', async () => {
-  const c = await boot();
-  c.seed('a1', 'memA', 'A', 'released', [c.item('i1'), c.item('i2', 10, true)]);
-  c.seed('a2', 'memA2', 'A', 'pending', [c.item('i1')]);
-  c.seed('b1', 'owB', 'B', 'released', [c.item('i1')]);
-  const r = await c.api('GET', '/api/rollup', { headers: A(c, 'admA', 'admin') });
-  assert.equal(r.status, 200);
-  assert.equal(r.json.length, 1);
-  assert.deepEqual(r.json[0], { date: '2026-11-20', user_id: 'memA', items: [{ id: 'i1', what: 'wi1', minutes: 30 }] }); // no notes/visibility/status/removed
-  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c) })).status, 403);
-  assert.equal((await c.api('GET', '/api/rollup')).status, 401);
-  const m = await c.api('GET', '/api/members', { headers: A(c, 'admA', 'admin') });
-  assert.deepEqual(m.json.map((x) => x.user_id).sort(), ['admA', 'memA', 'memA2', 'owA']);
-  c.close();
-});
-
-test('push merges and preserves redactions', async () => {
-  const c = await boot(); const dev = c.deviceFor('memA', 'A');
-  const push = (items, extra = {}) => c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-20', items, notes: '', visibility: 'admin', ...extra } });
-  assert.equal((await push([{ id: 'i1', what: 'a', minutes: 10 }, { id: 'i2', what: 'b', minutes: 5 }])).status, 200);
-  assert.equal((await c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: 'd', items: [{ id: 'x', what: 'a', minutes: 'ten' }] } })).status, 400);
-  const mine = (await c.api('GET', '/api/summaries/mine', { headers: A(c) })).json;
-  assert.equal(mine.length, 1); assert.equal(mine[0].status, 'pending');
-  assert.equal((await c.api('POST', `/api/summaries/${mine[0].id}/redact`, { headers: A(c), body: { itemId: 'i1' } })).status, 200);
-  assert.equal((await c.api('POST', `/api/summaries/${mine[0].id}/redact`, { headers: A(c), body: { itemId: 'zz' } })).status, 404);
-  await push([{ id: 'i1', what: 'a2', minutes: 11 }, { id: 'i3', what: 'c', minutes: 1 }]);
-  const after = (await c.api('GET', '/api/summaries/mine', { headers: A(c) })).json;
-  assert.equal(after.length, 1);
-  const by = Object.fromEntries(after[0].items.map((i) => [i.id, i]));
-  assert.equal(by.i1.removed, true); assert.equal(by.i1.minutes, 11); assert.equal(by.i3.removed, false);
-  // body can't redirect org/user
-  await c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'work', date: '2026-11-21', items: [], visibility: 'admin', org_id: 'B', user_id: 'owB' } });
-  assert.equal(c.db.prepare("SELECT org_id,user_id FROM summaries WHERE date='2026-11-21'").get().org_id, 'A');
-  assert.equal((await c.api('POST', '/api/summaries', { body: {} })).status, 401);
-  c.close();
-});
-
-test('release makes a summary appear in the rollup; only owner of row may', async () => {
-  const c = await boot(); c.seed('s1', 'memA', 'A', 'pending', [c.item('i1')]);
-  const admin = A(c, 'admA', 'admin');
-  assert.equal((await c.api('GET', '/api/rollup', { headers: admin })).json.length, 0);
-  assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c, 'memA2') })).status, 404);
-  assert.equal((await c.api('POST', '/api/summaries/s1/redact', { headers: A(c, 'memA2'), body: { itemId: 'i1' } })).status, 404);
-  assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c, 'admA', 'admin') })).status, 404);
-  assert.equal((await c.api('POST', '/api/summaries/s1/release', { headers: A(c) })).status, 200);
-  assert.equal((await c.api('GET', '/api/rollup', { headers: admin })).json.length, 1);
-  assert.equal((await c.api('POST', '/api/summaries/s1/redact', { headers: A(c), body: { itemId: 'i1' } })).status, 403);
-  c.close();
-});
 
 test('orgs, invites, join, pairing', async () => {
   const c = await boot();
@@ -162,17 +88,6 @@ test('google verify failure is 401', async () => {
   c.close();
 });
 
-test('push whitelists item keys, server owns removed, validates kind/visibility', async () => {
-  const c = await boot(); const dev = c.deviceFor('memA', 'A');
-  const body = (o) => ({ headers: dev, body: { kind: 'work', date: '2026-11-20', visibility: 'admin', items: [{ id: 'i1', what: 'a', minutes: 1, removed: true, secret: 'x' }], ...o } });
-  assert.equal((await c.api('POST', '/api/summaries', body({ kind: 'bogus' }))).status, 400);
-  assert.equal((await c.api('POST', '/api/summaries', body({ visibility: 'private' }))).status, 400);
-  assert.equal((await c.api('POST', '/api/summaries', body({}))).status, 200);
-  const it = JSON.parse(c.db.prepare('SELECT items FROM summaries').get().items)[0];
-  assert.deepEqual(it, { id: 'i1', what: 'a', minutes: 1, removed: false });
-  c.close();
-});
-
 test('dev login is 404 unless DEV_LOGIN=1; /me returns session identity', async () => {
   const c = await boot();
   delete process.env.DEV_LOGIN;
@@ -184,16 +99,6 @@ test('dev login is 404 unless DEV_LOGIN=1; /me returns session identity', async 
   const me = await c.api('GET', '/api/me', { headers: A(c, 'owA', 'owner') });
   assert.deepEqual(me.json, { userId: 'owA', orgId: 'A', role: 'owner', name: 'owA' });
   assert.equal((await c.api('GET', '/api/me')).status, 401);
-  c.close();
-});
-
-test('push with real client shape (no visibility) is stored; visibility derived from kind', async () => {
-  const c = await boot(); const dev = c.deviceFor('memA', 'A');
-  const post = (kind) => c.api('POST', '/api/summaries', { headers: dev, body: { kind, date: '2026-11-20', items: [{ id: 'i1', what: 'a', minutes: 5 }] } });
-  assert.equal((await post('work')).status, 200);
-  assert.equal((await post('meeting')).status, 200);
-  const v = (k) => c.db.prepare('SELECT visibility FROM summaries WHERE kind=?').get(k).visibility;
-  assert.equal(v('work'), 'admin'); assert.equal(v('meeting'), 'org');
   c.close();
 });
 
@@ -224,5 +129,32 @@ test('logout clears cookie', async () => {
   const r = await c.api('POST', '/api/auth/logout');
   assert.equal(r.status, 200);
   assert.match(r.res.headers.get('set-cookie'), /nikxel_session=;/);
+  c.close();
+});
+
+const I = (id, o = {}) => ({ id, section: 'Work', what: 'w' + id, type: 'coding', minutes: 30, details: [], ...o });
+const push = (c, dev, items, o = {}) => c.api('POST', '/api/summaries', { headers: dev, body: { kind: 'day', date: '2026-11-20', headline: 'H', items, ...o } });
+
+test('send replaces the day; rollup shows it with name', async () => {
+  const c = await boot(); const dev = c.deviceFor('memA', 'A');
+  assert.equal((await push(c, dev, [I('a'), I('b')])).status, 200);
+  assert.equal((await push(c, dev, [I('a')], { headline: 'H2' })).status, 200);
+  const mine = (await c.api('GET', '/api/summaries/mine', { headers: A(c) })).json;
+  assert.equal(mine.length, 1); assert.deepEqual(mine[0].items, [I('a')]);
+  const roll = (await c.api('GET', '/api/rollup', { headers: A(c, 'admA', 'admin') })).json;
+  assert.equal(roll.length, 1); assert.equal(roll[0].name, 'memA'); assert.equal(roll[0].headline, 'H2');
+  assert.equal((await c.api('GET', '/api/rollup', { headers: A(c) })).status, 403);
+  assert.equal((await c.api('GET', '/api/rollup', { headers: c.cookie('owB', 'B', 'owner') })).json.length, 0);
+  c.close();
+});
+
+test('push rejects non-day kind/bad body; body cannot redirect org/user; old routes gone', async () => {
+  const c = await boot(); const dev = c.deviceFor('memA', 'A');
+  assert.equal((await push(c, dev, [I('a')], { kind: 'work' })).status, 400);
+  assert.equal((await push(c, dev, [I('a')], { date: 'nope' })).status, 400);
+  assert.equal((await push(c, dev, [I('a')], { org_id: 'B', user_id: 'owB' })).status, 200);
+  assert.deepEqual(c.db.prepare('SELECT org_id,user_id FROM summaries').get(), { org_id: 'A', user_id: 'memA' });
+  assert.equal((await c.api('POST', '/api/summaries', { body: {} })).status, 401);
+  assert.equal((await c.api('POST', '/api/summaries/x/release', { headers: A(c) })).status, 404);
   c.close();
 });

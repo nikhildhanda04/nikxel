@@ -20,7 +20,7 @@ export const api = {
   setRole: (userId, role) => call('PATCH', `/members/${encodeURIComponent(userId)}`, { role }),
   pairingCode: () => call('GET', '/pairing-code'),
   mine: () => call('GET', '/summaries/mine'),
-  rollup: () => call('GET', '/rollup'),
+  rollup: ({ team } = {}) => call('GET', '/rollup' + (team ? '?team=' + encodeURIComponent(team) : '')),
   org: () => call('GET', '/org'),
   teams: () => call('GET', '/teams'),
   patchProject: (id, patch) => call('PATCH', `/org/projects/${encodeURIComponent(id)}`, patch),

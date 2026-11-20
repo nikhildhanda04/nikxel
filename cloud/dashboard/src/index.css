@@ -5,17 +5,21 @@
   --bg: #fff; --card: #fff; --fg: #0a0a0a; --muted: #737373; --line: #e5e5e5; --accent: #f5f5f5; --hi: rgb(255 255 255 / .7); --pill-fg: #525252;
   --t-coding: #5b5bd6; --t-shipped: #3a9a64; --t-meeting: #c98a2b; --t-research: #3b8cb8; --t-learning: #8d62b8;
   --t-writing: #c0624f; --t-review: #6f8a3c; --t-planning: #b25a89; --t-comms: #3a9a96; --t-other: #a3a3a3;
+  /* chart series (people/projects), validated categorical order; Others uses --t-other */
+  --s-1: #2a78d6; --s-2: #eb6834; --s-3: #1baf7a; --s-4: #eda100; --s-5: #e87ba4;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0a0a0a; --card: #171717; --fg: #fafafa; --muted: #a1a1a1; --line: #ffffff1a; --accent: #262626; --hi: rgb(255 255 255 / .08); --pill-fg: #a1a1a1;
   --t-coding: #9d9cf0; --t-shipped: #74c495; --t-meeting: #e0b26a; --t-research: #7fbcdc; --t-learning: #bc9ae0;
   --t-writing: #e39a89; --t-review: #a9c47a; --t-planning: #df98bd; --t-comms: #7ccbc6; --t-other: #8a8a8a;
+  --s-1: #3987e5; --s-2: #d95926; --s-3: #199e70; --s-4: #c98500; --s-5: #d55181;
   color-scheme: dark;
 } }
 :root[data-theme="dark"] {
   --bg: #0a0a0a; --card: #171717; --fg: #fafafa; --muted: #a1a1a1; --line: #ffffff1a; --accent: #262626; --hi: rgb(255 255 255 / .08); --pill-fg: #a1a1a1;
   --t-coding: #9d9cf0; --t-shipped: #74c495; --t-meeting: #e0b26a; --t-research: #7fbcdc; --t-learning: #bc9ae0;
   --t-writing: #e39a89; --t-review: #a9c47a; --t-planning: #df98bd; --t-comms: #7ccbc6; --t-other: #8a8a8a;
+  --s-1: #3987e5; --s-2: #d95926; --s-3: #199e70; --s-4: #c98500; --s-5: #d55181;
   color-scheme: dark;
 }
 :root[data-theme="light"] { color-scheme: light; }

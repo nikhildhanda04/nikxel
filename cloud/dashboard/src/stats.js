@@ -63,3 +63,39 @@ export function typeTotals(rows) {
   for (const r of rows) for (const i of r.items || []) if (i.minutes > 0) t[typeOf(i.type)] = (t[typeOf(i.type)] || 0) + i.minutes;
   return Object.entries(t).map(([type, minutes]) => ({ type, minutes })).sort(desc);
 }
+
+export const OTHERS = 'Others';
+
+// [{label, minutes}] -> top (max-1) + Others, each with a whole-number pct; pcts sum to 100 (largest remainder).
+// An entry already labelled Others always joins the fold, so Others is one slice, last.
+export function pieSlices(totals, max = 6) {
+  const t = totals.filter((x) => x.minutes > 0 && x.label !== OTHERS).sort(desc);
+  const given = totals.filter((x) => x.minutes > 0 && x.label === OTHERS);
+  const keep = t.length + (given.length ? 1 : 0) <= max ? t.length : max - 1;
+  const rest = [...t.slice(keep), ...given];
+  const s = rest.length ? [...t.slice(0, keep), { ...given[0], label: OTHERS, minutes: rest.reduce((n, x) => n + x.minutes, 0) }] : t;
+  const sum = s.reduce((n, x) => n + x.minutes, 0);
+  const out = s.map((x) => ({ ...x, pct: Math.floor((x.minutes / sum) * 100), r: ((x.minutes / sum) * 100) % 1 }));
+  let left = 100 - out.reduce((n, x) => n + x.pct, 0);
+  for (const x of [...out].sort((a, b) => b.r - a.r)) if (left-- > 0) x.pct++;
+  return out.map(({ r, ...x }) => x);
+}
+
+// Minutes per person per calendar day over `days` days ending at the newest date: [{id, name, total, points}],
+// biggest total first; past topN the rest fold into one Others series.
+export function lineSeries(rows, days, topN = 5) {
+  const data = byPersonDay(rows, days);
+  if (!data.length) return [];
+  const range = dayRange(rows.reduce((d, r) => (r.date > d ? r.date : d), ''), days); // same window as byPersonDay
+  const people = new Map();
+  for (const d of data) {
+    if (!people.has(d.user_id)) people.set(d.user_id, { id: d.user_id, name: d.name, total: 0, points: Array(days).fill(0) });
+    const p = people.get(d.user_id);
+    p.total += d.minutes;
+    p.points[range.indexOf(d.date)] += d.minutes;
+  }
+  const s = [...people.values()].sort((a, b) => desc({ minutes: a.total }, { minutes: b.total }) || a.name.localeCompare(b.name));
+  if (s.length <= topN) return s;
+  const rest = s.slice(topN);
+  return [...s.slice(0, topN), { id: OTHERS, name: OTHERS, total: rest.reduce((n, x) => n + x.total, 0), points: range.map((_, i) => rest.reduce((n, x) => n + x.points[i], 0)) }];
+}

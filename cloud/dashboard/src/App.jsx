@@ -24,19 +24,20 @@ const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } }
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
+  const [teams, setTeams] = useState([]); // teams the viewer can see: every team for owner/admin, the ones they lead otherwise
   const route = useHash();
-  const load = () => api.me().then(setMe, () => setMe(null));
+  const load = () => api.me().then(async (m) => { setTeams(m?.orgId ? await api.teams().catch(() => []) : []); setMe(m); }, () => setMe(null));
   useEffect(() => { load(); }, []);
 
   if (me === undefined) return null;
   if (me === null) return <Shell><Login onDone={load} /></Shell>;
   if (!me.orgId) return <Shell><Onboarding onDone={load} /></Shell>;
 
-  const admin = me.role === 'admin' || me.role === 'owner';
-  const tabs = [['mine', 'My days'], ...(admin ? [['team', 'Team'], ['projects', 'Projects'], ['people', 'People'], ['org', 'Org']] : []), ['connect', 'Connect']];
+  const admin = me.role === 'admin' || me.role === 'owner', lead = admin || teams.length > 0;
+  const tabs = [['mine', 'My days'], ...(lead ? [['team', 'Team'], ['projects', 'Projects']] : []), ...(admin ? [['people', 'People'], ['org', 'Org']] : []), ['connect', 'Connect']];
   const [base, sub] = route.split('/'); // #projects/<encoded name>
   const tab = tabs.some(([k]) => k === base) ? base : 'mine';
-  const screen = { mine: <Mine />, connect: <Connect />, team: <Team />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} />, people: <People me={me} />, org: <Org /> }[tab];
+  const screen = { mine: <Mine />, connect: <Connect />, team: <Team teams={teams} admin={admin} />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} teams={teams} admin={admin} />, people: <People me={me} />, org: <Org /> }[tab];
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (

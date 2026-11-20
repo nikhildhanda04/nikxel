@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { byPersonDay, byProject, typeTotals, dayRange, parseTask } from './stats.js';
+import { byPersonDay, byProject, typeTotals, dayRange, parseTask, pieSlices, lineSeries } from './stats.js';
 
 const rows = [
   { date: '2026-11-20', user_id: 'a', name: 'Asha', items: [
@@ -86,4 +86,47 @@ test('byProject: items newest first regardless of row order', () => {
     { date: '2026-11-18', user_id: 'a', name: 'A', items: [it] },
     { date: '2026-11-20', user_id: 'a', name: 'A', items: [it] }]);
   assert.deepEqual(p[0].items.map((i) => i.date), ['2026-11-20', '2026-11-18']);
+});
+
+test('pieSlices: top 5 + Others, percentages sum to 100', () => {
+  const t = [7, 3, 50, 9, 11, 13, 1, 6].map((m, i) => ({ label: 'p' + i, minutes: m }));
+  const s = pieSlices(t);
+  assert.equal(s.length, 6);
+  assert.deepEqual(s.map((x) => x.label), ['p2', 'p5', 'p4', 'p3', 'p0', 'Others']);
+  assert.equal(s[5].minutes, 3 + 1 + 6);
+  assert.equal(s.reduce((n, x) => n + x.pct, 0), 100);
+  const thirds = pieSlices([{ label: 'a', minutes: 1 }, { label: 'b', minutes: 1 }, { label: 'c', minutes: 1 }]);
+  assert.equal(thirds.reduce((n, x) => n + x.pct, 0), 100);
+  assert.equal(pieSlices(t.slice(0, 6)).length, 6); // fits: no Others
+  assert.ok(!pieSlices(t.slice(0, 6)).some((x) => x.label === 'Others'));
+  assert.deepEqual(pieSlices([]), []);
+  // an input already called Others joins the fold and stays last
+  const o = pieSlices([{ label: 'Others', minutes: 90 }, { label: 'a', minutes: 10 }, { label: 'b', minutes: 5 }]);
+  assert.deepEqual(o.map((x) => [x.label, x.minutes]), [['a', 10], ['b', 5], ['Others', 90]]);
+  const o2 = pieSlices([...t, { label: 'Others', minutes: 4 }]);
+  assert.equal(o2.length, 6); assert.equal(o2[5].label, 'Others'); assert.equal(o2[5].minutes, 14);
+  assert.deepEqual(pieSlices([{ label: 'z', minutes: 0 }]), []);
+});
+
+const day = (date, user_id, minutes) => ({ date, user_id, name: user_id.toUpperCase(), items: [{ section: 'other', type: 'coding', minutes }] });
+
+test('lineSeries: one series per person, 14 points, zeros filled', () => {
+  const s = lineSeries([day('2026-11-20', 'a', 60), day('2026-11-18', 'b', 30), day('2026-11-10', 'c', 10), day('2026-11-20', 'b', 5)], 14);
+  assert.equal(s.length, 3);
+  for (const x of s) assert.equal(x.points.length, 14);
+  assert.deepEqual(s.map((x) => x.name), ['A', 'B', 'C']); // biggest total first
+  assert.equal(s[0].points[13], 60);
+  assert.equal(s[0].points[12], 0);
+  assert.equal(s[1].points[11], 30);
+  assert.equal(s[1].total, 35);
+  assert.equal(s[2].points[3], 10);
+});
+
+test('lineSeries: 7 people with topN 5 -> 6 series, last is Others', () => {
+  const rows = [70, 60, 50, 40, 30, 20, 10].map((m, i) => day('2026-11-20', 'u' + i, m));
+  const s = lineSeries(rows, 14, 5);
+  assert.equal(s.length, 6);
+  assert.equal(s[5].name, 'Others');
+  assert.equal(s[5].points[13], 30);
+  assert.deepEqual(lineSeries([], 14), []);
 });

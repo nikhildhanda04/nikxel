@@ -7,9 +7,13 @@ import { Item, fmtMin, fmtDate } from './Day.jsx';
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const href = (p) => '#projects/' + encodeURIComponent(p);
 
-export default function Projects({ name }) {
+// Owner/admin see the whole org; a lead sees the merged days of the teams they lead (a person on two teams counted once).
+const load = (teams, admin) => admin ? api.rollup() : Promise.all(teams.map((t) => api.rollup({ team: t.id }))).then((all) =>
+  [...new Map(all.flat().map((r) => [r.date + '|' + r.user_id, r])).values()].sort((a, b) => b.date.localeCompare(a.date) || (a.name || '').localeCompare(b.name || '')));
+
+export default function Projects({ name, teams, admin }) {
   const [rows, setRows] = useState(null), [err, setErr] = useState('');
-  useEffect(() => { api.rollup().then(setRows, (e) => setErr(e.message)); }, []);
+  useEffect(() => { load(teams, admin).then(setRows, (e) => setErr(e.message)); }, []);
   if (!rows) return <Muted>{err || 'Loading…'}</Muted>;
   const projects = byProject(rows);
   if (name === undefined) return <List projects={projects} />;

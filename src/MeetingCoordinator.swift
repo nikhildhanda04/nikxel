@@ -16,6 +16,8 @@ class MeetingCoordinator: AudioRecorderDelegate {
     /// two runs overwrote each other's logs.
     private(set) var isProcessing = false
 
+    var isRecording: Bool { recorder.isRecording }
+
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
         recorder.delegate = self

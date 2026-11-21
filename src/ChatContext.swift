@@ -71,6 +71,14 @@ enum ChatContext {
         return String(s.prefix(cap))
     }
 
+    enum Click { case chat, none }
+
+    /// A press-and-release on the avatar: under 4 pt of travel with no second click opens (or closes) the chat.
+    /// 4 pt or more was a drag; a second click is the recording double-click.
+    static func clickDecision(moved: Double, secondClick: Bool) -> Click {
+        moved < 4 && !secondClick ? .chat : .none
+    }
+
     static func prompt(context: String, history: [(q: String, a: String)], question: String, today: Date) -> String {
         var p = """
         You are the user's desk avatar. Today is \(dayString(today)). Answer using only the notes below. \

@@ -41,6 +41,11 @@ import Foundation
         let p = ChatContext.prompt(context: "CTX", history: [(q: "first?", a: "one")], question: "second?", today: today)
         check(p.contains(day(0)) && p.contains("first?") && p.contains("one") && p.hasSuffix("second?"), "prompt")
 
+        check(ChatContext.clickDecision(moved: 0, secondClick: false) == .chat, "click: still press opens chat")
+        check(ChatContext.clickDecision(moved: 3.9, secondClick: false) == .chat, "click: 3.9 pt opens chat")
+        check(ChatContext.clickDecision(moved: 5, secondClick: false) == .none, "click: 5 pt is a drag")
+        check(ChatContext.clickDecision(moved: 0, secondClick: true) == .none, "click: second click is a double-click")
+
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

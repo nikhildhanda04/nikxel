@@ -12,6 +12,7 @@ import {
 import { StateMachine } from "./core/stateMachine";
 import { CardKind, ui } from "./core/ui";
 import { createAvatarWindow } from "./avatar/avatarWindow";
+import * as AvatarChat from "./system/avatarChat";
 import { InputHandler } from "./avatar/inputHandler";
 import { GoogleCalendarWatcher } from "./google/googleCalendarWatcher";
 import { ChatTaskBlock, GoogleSync } from "./google/googleSync";
@@ -81,6 +82,7 @@ class NikxelApp {
     this.meetingCoordinator = new MeetingCoordinator(sm);
     this.avatar = createAvatarWindow(sm, {
       onDoubleClick: () => this.meetingCoordinator.toggleRecording(false),
+      onClick: avatar => AvatarChat.toggle(avatar, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
     });
     this.inputHandler = new InputHandler(sm, () => this.avatar.recordKeystroke());
     // Puff BEFORE the window shows, so the first frame already has the avatar

@@ -56,6 +56,13 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         meetingCoordinator = MeetingCoordinator(stateMachine: stateMachine)
         meetingCoordinator.nikxelView = window.nikxelView
         window.onDoubleClick = { [weak self] in self?.meetingCoordinator.toggleRecording(force: false) }
+        window.onSingleClick = { [weak self] in
+            guard let self, let view = self.window.nikxelView else { return }
+            let f = self.window.frame, a = view.avatarCenter, h = view.halfChar
+            let mc = self.meetingCoordinator!
+            AvatarChat.toggle(near: NSRect(x: f.minX + a.x - h, y: f.minY + a.y - h, width: 2 * h, height: 2 * h),
+                              agent: mc.momGen, recording: { mc.isRecording })
+        }
 
         calendarWatcher = GoogleCalendarWatcher(stateMachine: stateMachine)
         calendarWatcher.onReminder = { [weak self] text in self?.showReminder(text: text) }

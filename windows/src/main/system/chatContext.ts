@@ -71,3 +71,9 @@ export function prompt(context: string, history: { q: string; a: string }[], que
   for (const h of history) p += `\nUser: ${h.q}\nYou: ${h.a}\n`;
   return p + `\nUser: ${question}`;
 }
+
+/// A press-and-release on the avatar: under 4 px of travel with no second click opens (or closes) the chat.
+/// 4 px or more was a drag; a second click is the recording double-click.
+export function clickDecision(moved: number, secondClick: boolean): "chat" | "none" {
+  return moved < 4 && !secondClick ? "chat" : "none";
+}

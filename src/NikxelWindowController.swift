@@ -9,6 +9,10 @@ class NikxelWindow: NSWindow {
     private var prevDragTime: TimeInterval = 0
 
     var onDoubleClick: (() -> Void)?
+    /// A still press-and-release on the avatar with no second click after it (the chat box).
+    var onSingleClick: (() -> Void)?
+    private var pressStart: NSPoint?
+    private var pendingClick: DispatchWorkItem?
 
     init(stateMachine: StateMachine) {
         self.stateMachine = stateMachine
@@ -42,6 +46,7 @@ class NikxelWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     override func mouseDown(with event: NSEvent) {
+        pressStart = nil
         // Reminder bubble hit-test takes priority over drag/double-click so a tap
         // on a bubble completes the reminder without engaging the recording toggle.
         if let view = nikxelView {
@@ -75,8 +80,11 @@ class NikxelWindow: NSWindow {
             }
         }
 
+        pressStart = NSEvent.mouseLocation  // screen coords: the window moves under a drag
         if event.clickCount >= 2 {
             dragging = false
+            // The first click's chat toggle is still waiting: a double-click leaves the box as it is.
+            pendingClick?.cancel(); pendingClick = nil
             onDoubleClick?()
             return
         }
@@ -123,6 +131,16 @@ class NikxelWindow: NSWindow {
 
     override func mouseUp(with event: NSEvent) {
         dragging = false
+        if let p = pressStart {
+            pressStart = nil
+            let m = NSEvent.mouseLocation
+            if ChatContext.clickDecision(moved: Double(hypot(m.x - p.x, m.y - p.y)), secondClick: event.clickCount >= 2) == .chat {
+                let w = DispatchWorkItem { [weak self] in self?.onSingleClick?() }
+                pendingClick?.cancel()
+                pendingClick = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
+            }
+        }
         // Don't disturb the recording (headphone) animation when releasing a drag.
         if stateMachine.state == .recording { return }
         stateMachine.setState(.idle)

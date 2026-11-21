@@ -51,6 +51,7 @@ type ToMain =
   | { type: "dragStart" }
   | { type: "mouseUp" }
   | { type: "doubleClick" }
+  | { type: "click"; moved: number; second: boolean }
   | { type: "cardTap"; id: number }
   | { type: "cardButton"; id: number; index: number }
   | { type: "cardGone"; id: number }
@@ -429,6 +430,8 @@ let avatarHiddenByPuff = false;
 // Pointer, in window coords. From main's poll and from our own mouse events.
 let pointer = { x: -1e6, y: -1e6 };
 let pressOnAvatar = false;
+// Where the press started, in screen px: main moves the window under a drag.
+let pressAt: { x: number; y: number } | null = null;
 let localDragging = false;
 let interactive = false;
 
@@ -1279,6 +1282,7 @@ window.addEventListener("mousedown", e => {
   if (!hitTestAvatar(p)) return;
 
   pressOnAvatar = true;
+  pressAt = { x: e.screenX, y: e.screenY };
   if (e.detail >= 2) {
     localDragging = false;
     post({ type: "doubleClick" });
@@ -1295,7 +1299,13 @@ function endPress(): void {
   post({ type: "mouseUp" });
 }
 
-window.addEventListener("mouseup", e => { if (e.button === 0) endPress(); });
+// Main decides (clickDecision) and waits 0.25 s for a double-click before opening the chat.
+window.addEventListener("mouseup", e => {
+  if (e.button !== 0) return;
+  if (pressOnAvatar && pressAt) post({ type: "click", moved: Math.hypot(e.screenX - pressAt.x, e.screenY - pressAt.y), second: e.detail >= 2 });
+  pressAt = null;
+  endPress();
+});
 window.addEventListener("blur", () => { if (localDragging) endPress(); });
 // The page must never scroll, select or show a context menu.
 window.addEventListener("contextmenu", e => e.preventDefault());

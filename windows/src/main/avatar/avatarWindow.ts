@@ -6,6 +6,7 @@ import { bus } from "../core/bus";
 import { Settings, Sprites } from "../core/settings";
 import { preloadPath, rendererPath, resourcePath, isWin } from "../core/paths";
 import { diag } from "../core/diag";
+import { clickDecision } from "../system/chatContext";
 
 /// Port of NikxelWindowController.swift (the window, drag, clicks) plus the
 /// main-process half of NikxelView.swift. Drawing and hit testing live in the
@@ -71,6 +72,7 @@ export type FromRenderer =
   | { type: "dragStart" }
   | { type: "mouseUp" }
   | { type: "doubleClick" }
+  | { type: "click"; moved: number; second: boolean }
   | { type: "cardTap"; id: number }
   | { type: "cardButton"; id: number; index: number }
   | { type: "cardGone"; id: number }
@@ -91,7 +93,7 @@ async function loadSprites(): Promise<{ sprite: Uint8Array | null; fallback: Uin
 
 export function createAvatarWindow(
   sm: StateMachine,
-  handlers: { onDoubleClick: () => void },
+  handlers: { onDoubleClick: () => void; onClick: (avatar: Rectangle) => void },
 ): AvatarSurface & { window: BrowserWindow; recordKeystroke(): void } {
   // Starts with the avatar centred on the primary display.
   const primary = screen.getPrimaryDisplay().bounds;
@@ -159,6 +161,7 @@ export function createAvatarWindow(
   let bubblesBelow = false;
   let wantVisible = true;
   let interactive = false;
+  let pendingClick: ReturnType<typeof setTimeout> | undefined;
   /// Last values of the persistent overlays, replayed if the renderer reloads.
   const sticky: { reminderText: string | null; recording: number | null; meeting: boolean; texter: string | null } =
     { reminderText: null, recording: null, meeting: false, texter: null };
@@ -351,7 +354,18 @@ export function createAvatarWindow(
       case "mouseUp":
         mouseUp();
         break;
+      case "click":
+        if (clickDecision(evt.moved, evt.second) === "chat") {
+          clearTimeout(pendingClick);
+          pendingClick = setTimeout(() => {
+            const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
+            runSafely("onClick", () => handlers.onClick({ x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h }));
+          }, 250);
+        }
+        break;
       case "doubleClick":
+        // The first click's chat toggle is still waiting: a double-click leaves the box as it is.
+        clearTimeout(pendingClick);
         stopDrag();
         runSafely("onDoubleClick", handlers.onDoubleClick);
         break;

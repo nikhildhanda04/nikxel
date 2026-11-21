@@ -4,7 +4,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { localBlocks, projectBlocks, build, prompt, Block } from "../main/system/chatContext";
+import { localBlocks, projectBlocks, build, prompt, clickDecision, Block } from "../main/system/chatContext";
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const today = new Date();
@@ -39,4 +39,11 @@ test("ChatContext: local blocks, cap rule, prompt", () => {
 
   const p = prompt("CTX", [{ q: "first?", a: "one" }], "second?", today);
   assert.ok(p.includes(day(0)) && p.includes("first?") && p.includes("one") && p.endsWith("second?"));
+});
+
+test("clickDecision: under 4 pt with no second click opens the chat", () => {
+  assert.equal(clickDecision(0, false), "chat");
+  assert.equal(clickDecision(3.9, false), "chat");
+  assert.equal(clickDecision(5, false), "none");
+  assert.equal(clickDecision(0, true), "none");
 });

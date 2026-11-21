@@ -54,14 +54,16 @@ export function build(blocks: Block[], cap: number): string {
   const render = (b: Block) => `### ${b.kind} · ${b.date} · ${b.name}\n${b.text}`;
   const joined = () => bs.map(render).join("\n\n");
   const cutoff = ymd(daysAgo(new Date(), 2));
-  let s = joined();
-  while ([...s].length > cap && bs.length > 1) {
+  // Each block's length once and a running total (plus "\n\n" between blocks): joining per drop was quadratic.
+  const lens = bs.map(b => [...render(b)].length);
+  let total = lens.reduce((a, n) => a + n, 0) + 2 * Math.max(bs.length - 1, 0);
+  while (total > cap && bs.length > 1) {
     let i = bs.length - 1;
     for (let j = bs.length - 1; j >= 0; j--) if (bs[j].kind === "daily" && bs[j].date < cutoff) { i = j; break; }
-    bs.splice(i, 1);
-    s = joined();
+    total -= lens[i] + 2;
+    bs.splice(i, 1); lens.splice(i, 1);
   }
-  return [...s].slice(0, cap).join("");
+  return [...joined()].slice(0, cap).join("");
 }
 
 export function prompt(context: string, history: { q: string; a: string }[], question: string, today: Date): string {

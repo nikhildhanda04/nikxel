@@ -80,12 +80,17 @@ export class CloudSync {
     return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
   }
 
-  static httpGet: Getter = async (p, bearer) => {
-    try {
-      const res = await fetch(CloudSync.backendBase() + p, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {}, signal: AbortSignal.timeout(20000) });
-      return res.ok ? await res.json() : null;
-    } catch { return null; }
-  };
+  /// httpGet with its own timeout: the chat box's feed fetch gives up after a few seconds (the cache covers it).
+  static getter(ms: number): Getter {
+    return async (p, bearer) => {
+      try {
+        const res = await fetch(CloudSync.backendBase() + p, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {}, signal: AbortSignal.timeout(ms) });
+        return res.ok ? await res.json() : null;
+      } catch { return null; }
+    };
+  }
+
+  static httpGet: Getter = CloudSync.getter(20000);
 
   static projectsFile(): string { return nikxelPath("projects.json"); }
 

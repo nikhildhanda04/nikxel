@@ -38,10 +38,12 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
   });
   current = win;
   const history: { q: string; a: string }[] = [];
+  // Fetched once as the box opens, while the user types; every question reuses it.
+  const feedP = CloudSync.projectFeed(CloudSync.getter(3000));
 
   ipcMain.handle(`chat:send:${id}`, async (_e, text: string) => {
     const today = new Date();
-    const { feed, offline } = await CloudSync.projectFeed();
+    const { feed, offline } = await feedP;
     const context = build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP);
     let reply: string, error = false;
     try {

@@ -4,7 +4,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { localBlocks, projectBlocks, build, prompt, clickDecision, Block } from "../main/system/chatContext";
+import { localBlocks, projectBlocks, build, prompt, clickDecision, Block, CAP } from "../main/system/chatContext";
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const today = new Date();
@@ -46,4 +46,10 @@ test("clickDecision: under 4 pt with no second click opens the chat", () => {
   assert.equal(clickDecision(3.9, false), "chat");
   assert.equal(clickDecision(5, false), "none");
   assert.equal(clickDecision(0, true), "none");
+});
+
+test("build: 350 x 10k blocks fit under the cap", () => {
+  const big: Block[] = Array.from({ length: 350 }, (_, i) => ({ kind: i % 3 === 0 ? "daily" : "meeting", date: day(i % 14), name: `b${i}`, text: "y".repeat(10_000) }));
+  const out = build(big, CAP);
+  assert.ok(out.length <= CAP && out.length > CAP - 10_100);
 });

@@ -29,6 +29,9 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private var history: [(q: String, a: String)] = []
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
+    // Fetched once as the box opens, while the user types; every question reuses it.
+    private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
+    private let feedReady = DispatchGroup()
     private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
 
     private init(agent: MOMGenerator, recording: @escaping () -> Bool) {
@@ -70,6 +73,12 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         fx.addSubview(web)
         web.loadHTMLString(AvatarChat.page, baseURL: nil)
 
+        feedReady.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.feed = CloudSync.projectFeed(get: CloudSync.getter(timeout: 3))
+            self.feedReady.leave()
+        }
+
         // A recording can start or stop while the box is open; the mic follows it.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -105,7 +114,8 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
             let history = self.history, agent = self.agent, today = Date()
             DispatchQueue.global(qos: .userInitiated).async {
                 let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/nikxel")
-                let (feed, offline) = CloudSync.projectFeed()
+                self.feedReady.wait()
+                let (feed, offline) = self.feed
                 let context = ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
                                                 cap: ChatContext.cap)
                 var answer: String?

@@ -35,6 +35,9 @@ import Foundation
         check(out.count <= 200 && !out.contains(day(10)) && out.contains("### meeting · \(day(3)) · m") && out.contains("### daily · \(day(0))"), "old daily dropped first, within cap")
         check(out.range(of: "### daily")!.lowerBound < out.range(of: "### meeting")!.lowerBound, "newest first")
         check(ChatContext.build([mtg, dly], cap: 50).count <= 50, "never over cap")
+        let big = (0..<350).map { ChatContext.Block(kind: $0 % 3 == 0 ? "daily" : "meeting", date: day($0 % 14), name: "b\($0)", text: String(repeating: "y", count: 10_000)) }
+        let bigOut = ChatContext.build(big, cap: ChatContext.cap)
+        check(bigOut.count <= ChatContext.cap && bigOut.count > ChatContext.cap - 10_100, "350 x 10k blocks fit under the cap")
         let pb = ChatContext.projectBlocks([["id": "p", "name": "POS", "days": [["date": "2026-11-20", "meetings": [["title": "Sync", "body": "b", "name": "Ravi"]], "items": [["what": "Fixed login", "section": "x", "name": NSNull()]]]]]])
         check(pb.count == 1 && pb[0].kind == "project" && pb[0].name == "POS" && pb[0].text.contains("Sync") && pb[0].text.contains("Fixed login"), "project block")
 

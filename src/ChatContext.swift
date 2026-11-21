@@ -62,13 +62,15 @@ enum ChatContext {
         func render(_ b: Block) -> String { "### \(b.kind) · \(b.date) · \(b.name)\n\(b.text)" }
         func joined() -> String { bs.map(render).joined(separator: "\n\n") }
         let cutoff = dayString(Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? Date())
-        var s = joined()
-        while s.count > cap && bs.count > 1 {
+        // Each block's length once and a running total (plus "\n\n" between blocks): joining per drop was quadratic.
+        var lens = bs.map { render($0).count }
+        var total = lens.reduce(0, +) + 2 * max(bs.count - 1, 0)
+        while total > cap && bs.count > 1 {
             let i = bs.lastIndex { $0.kind == "daily" && $0.date < cutoff } ?? bs.count - 1
-            bs.remove(at: i)
-            s = joined()
+            total -= lens[i] + 2
+            bs.remove(at: i); lens.remove(at: i)
         }
-        return String(s.prefix(cap))
+        return String(joined().prefix(cap))
     }
 
     enum Click { case chat, none }

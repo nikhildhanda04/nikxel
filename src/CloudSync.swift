@@ -84,9 +84,12 @@ enum CloudSync {
     /// Blocking GET (callers are off the main thread). Returns the 2xx body, nil on any failure.
     typealias Getter = (_ path: String, _ bearer: String?) -> Data?
 
-    static let httpGet: Getter = { path, bearer in
+    static let httpGet: Getter = getter(timeout: 20)
+
+    /// httpGet with its own timeout: the chat box's feed fetch gives up after a few seconds (the cache covers it).
+    static func getter(timeout: TimeInterval) -> Getter { { path, bearer in
         guard let url = URL(string: backendBase + path) else { return nil }
-        var req = URLRequest(url: url, timeoutInterval: 20)
+        var req = URLRequest(url: url, timeoutInterval: timeout)
         if let b = bearer { req.setValue("Bearer \(b)", forHTTPHeaderField: "Authorization") }
         var out: Data?
         let sem = DispatchSemaphore(value: 0)
@@ -96,7 +99,7 @@ enum CloudSync {
         }.resume()
         sem.wait()
         return out
-    }
+    } }
 
     struct Project: Equatable { let id, name: String }
     private static var projectsFile: String { NSHomeDirectory() + "/.nikxel/projects.json" }

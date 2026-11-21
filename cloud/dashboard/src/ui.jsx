@@ -1,4 +1,3 @@
-
 // lafda's "Sign in" pill: hairline border, secondary fill, inset top highlight.
 export const pillCls = 'inline-flex h-8 items-center gap-1.5 rounded-full border border-fg/15 bg-accent px-3.5 text-sm font-medium shadow-[inset_0_1px_0_0_var(--hi)] transition-colors hover:border-fg/30 disabled:opacity-40';
 export const Btn = ({ primary, className = '', ...p }) => (

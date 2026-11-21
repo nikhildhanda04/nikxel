@@ -34,6 +34,8 @@ export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
   const [joinErr, setJoinErr] = useState('');
   const route = useHash();
+  const [hashes, setHashes] = useState(0); // re-check a saved invite on every hash change (useHash's listener has already stored it)
+  useEffect(() => { const f = () => setHashes((n) => n + 1); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
   const load = () => api.me().then(setMe, () => setMe(null));
   useEffect(() => { load(); }, []);
   useEffect(() => { // a saved invite: join once signed in with no org, otherwise just drop it
@@ -42,7 +44,7 @@ export default function App() {
     joinToken.clear();
     if (me.orgId) return;
     api.joinOrg(t).then(() => { location.hash = 'install'; load(); }, (e) => setJoinErr(e.message));
-  }, [me]);
+  }, [me, hashes]);
 
   if (me === undefined) return null;
   if (me === null) return <Shell><Login onDone={load} /></Shell>;

@@ -591,7 +591,7 @@ Output this exact Markdown structure:
 - The meetings that mattered, one bullet each: "<Day>: <who/what> — <outcome>". Skip routine stand-ups unless something came out of them. If none, write "- None this week."
 
 ## Open tasks
-- Things people asked of the user during the week (WhatsApp, Slack, meetings) that the daily summaries left open or unclear and that no later day shows done. End each with " — open" or " — unclear". If none, write "- Nothing left open."
+- Things people asked of the user during the week (WhatsApp, Slack, meetings) that the daily summaries left open and that no later day shows done. One short line each, merged across days, usually 0-6. End each with " — open". If none, write "- Nothing left open."
 
 ## Patterns
 - 2-4 observations from across the days: when focus was best, what kept interrupting, late nights, a day that got lost. Only what the summaries support.
@@ -1187,7 +1187,12 @@ You are generating an end-of-day journal entry for the user, based on raw activi
 
 The session prompts are the most informative signal: they tell you LITERALLY what bug or feature the user was working on, in their own words. Use them as the spine of the narrative.
 
-For WhatsApp chats and Slack messages: look for signs a task/ask was assigned to the user in a message ("can you...", "please...", "need you to...", a deadline, a request) and note who sent it and what it was. Only flag it as "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on — otherwise mark it open/unclear. Don't force a task interpretation onto ordinary chit-chat.
+What counts as a task for the user (WhatsApp, Slack, meetings) — be strict, the user wants a short list of real asks, not everything that was said:
+- A task is a clear request for the USER to do a specific thing ("can you send the deck", "please fix the login bug", "need the invoice by Friday"), from a named person, aimed at the user: a one-to-one chat, or in a group addressed to them by name or replying to them. In a meeting, an Action Item owned by the user ("Me").
+- NOT tasks: chit-chat, greetings, FYIs and status updates, questions already answered in the chat, group messages aimed at someone else or at everyone, forwards, links shared without an ask, things the user asked OTHER people to do, ideas and "we should…" with no one agreeing to do it, and anything the user already did.
+- WhatsApp data is short preview snapshots, not full conversations. If you can't tell whether something is really an ask for the user, leave it out — a missed vague ask costs less than a list full of noise.
+- The same ask seen twice (two snapshots, or a chat and a meeting) is ONE task.
+- Only call a task "done" if there's later evidence in the same data (a reply, a relevant commit, a later message) that it was acted on.
 
 \(NikxelSettings.languageInstruction)
 \(roleGuidance().isEmpty ? "" : "\n\(roleGuidance())\n")\(NikxelSettings.userContextBlock.isEmpty ? "" : "\n\(NikxelSettings.userContextBlock)\n")
@@ -1213,18 +1218,20 @@ Output this exact Markdown structure:
 
 ## WhatsApp
 - Calls: one bullet per call (who, missed/incoming/outgoing, when). If none, write "- No calls today."
-- Tasks assigned in chats: one bullet per task you can identify — "<Who> asked you to <what> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
+- Tasks assigned in chats: one bullet per real task (rules above) — "<Who> asked you to <what> (~<time>) — <done/open>". If none, write "- No tasks assigned today."
 - Anything else notable from chats worth a quick mention. If nothing, write "- Nothing else notable."
 
 ## Slack
 - Only if there is a "Slack messages" section in the data; otherwise leave this whole section out.
-- Tasks asked of you: one bullet per task — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open/unclear>". If none, write "- No tasks assigned today."
+- Tasks asked of you: one bullet per real task (rules above) — "<Who> asked you to <what> in <#channel or DM> (~<time>) — <done/open>". If none, write "- No tasks assigned today."
 - The main threads or decisions in channels you took part in, briefly. Skip channel chatter you weren't part of.
 
 ## Open tasks
-- The running list of everything still owed: each item from "Still open from before" UNLESS today's data shows it done (a reply, a commit, a message saying it's done) -- then drop it -- plus every task asked of the user today (WhatsApp, Slack, meetings) that isn't done yet.
-- One bullet each: "<what> — for <who> (asked <weekday or date>) — open". Use "— unclear" instead when you can't tell. Keep the original asked-date for carried items.
-- Only things asked of the user. Never list something the user asked someone else to do.
+- What the user still owes people — short and real. Usually 0-6 items; a long list means you are including things that aren't tasks (rules above).
+- Start from "Still open from before": keep an item unless today's data shows it done (a reply, a commit, a message saying it's done) -- then drop it. Also drop a carried item asked more than 7 days ago that nothing in today's data mentions again.
+- Add each real task asked of the user today (WhatsApp, Slack, meeting Action Items owned by the user) that isn't done yet. Merge duplicates into one item, keeping the earliest asked-date.
+- One short line each, starting with a verb: "<what> — for <who> (asked <weekday or date>) — open". Under ~12 words before the dash. Keep the original asked-date for carried items.
+- Only things asked of the user. Never list something the user asked someone else to do, and never add a task the data doesn't show someone asking for.
 - If nothing is open, write "- Nothing open."
 
 ## Browsing & Reading

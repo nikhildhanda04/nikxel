@@ -1299,7 +1299,7 @@ function endPress(): void {
   post({ type: "mouseUp" });
 }
 
-// Main decides (clickDecision) and waits 0.25 s for a double-click before opening the chat.
+// Main decides (clickDecision) and waits out the double-click interval before opening the chat.
 window.addEventListener("mouseup", e => {
   if (e.button !== 0) return;
   if (pressOnAvatar && pressAt) post({ type: "click", moved: Math.hypot(e.screenX - pressAt.x, e.screenY - pressAt.y), second: e.detail >= 2 });

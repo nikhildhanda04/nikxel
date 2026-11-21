@@ -4,7 +4,7 @@
 declare global {
   interface Window {
     nikxelChat: {
-      send(text: string): Promise<{ text: string; offline: boolean }>;
+      send(text: string): Promise<{ text: string; offline: boolean; error: boolean }>;
       voice(pcm: Uint8Array): Promise<string>;
       close(): Promise<void>;
       onRecording(cb: (on: boolean) => void): void;
@@ -93,6 +93,7 @@ async function run(text: string): Promise<void> {
   const r = await api.send(text);
   settle(w, r.text);
   document.getElementById("offline")!.classList.toggle("on", r.offline);
+  if (r.error && !input.value) input.value = text;  // keep the question to try again
   busy = false; sync(); input.focus();
 }
 

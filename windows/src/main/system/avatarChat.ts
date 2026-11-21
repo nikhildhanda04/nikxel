@@ -43,15 +43,16 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
     const today = new Date();
     const { feed, offline } = await CloudSync.projectFeed();
     const context = build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP);
-    let reply: string;
+    let reply: string, error = false;
     try {
       reply = (await agent.runPrompt(prompt(context, history, text, today), "chat", "haiku", 30)).trim();
       history.push({ q: text, a: reply });
     } catch (e) {
+      error = true;
       reply = e instanceof MOMError && e.kind === "agentNotFound" ? "Connect Claude in Settings to use chat." : "⚠︎ " + (e as Error).message;
     }
     cblog(`AvatarChat: ${context.length} chars of context`);
-    return { text: reply, offline };
+    return { text: reply, offline, error };
   });
   // 16 kHz mono 16-bit PCM from the page's mic, as whisper.cpp wants it.
   ipcMain.handle(`chat:voice:${id}`, async (_e, pcm: Uint8Array) => {

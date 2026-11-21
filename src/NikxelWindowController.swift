@@ -138,7 +138,8 @@ class NikxelWindow: NSWindow {
                 let w = DispatchWorkItem { [weak self] in self?.onSingleClick?() }
                 pendingClick?.cancel()
                 pendingClick = w
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
+                // Wait the system double-click interval, so a slow double-click never opens the box.
+                DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: w)
             }
         }
         // Don't disturb the recording (headphone) animation when releasing a drag.

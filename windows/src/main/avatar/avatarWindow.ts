@@ -360,7 +360,7 @@ export function createAvatarWindow(
           pendingClick = setTimeout(() => {
             const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
             runSafely("onClick", () => handlers.onClick({ x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h }));
-          }, 250);
+          }, 500);  // the OS default double-click interval, so a slow double-click never opens the box
         }
         break;
       case "doubleClick":

@@ -16,6 +16,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         current = c
         c.place(near: avatar)
         c.window.makeKeyAndOrderFront(nil)
+        c.window.makeFirstResponder(c.web)  // type and Esc at once, without clicking in first
     }
 
     /// Borderless panels can't take the keyboard unless they say so.
@@ -122,7 +123,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
                 cblog("AvatarChat: \(context.count) chars of context, \(answer == nil ? "failed" : "answered")")
                 DispatchQueue.main.async {
                     if let a = answer { self.history.append((q: text, a: a)) }
-                    self.resolve(id, ["text": reply, "offline": offline])
+                    self.resolve(id, ["text": reply, "offline": offline, "error": answer == nil])
                 }
             }
         case "mic":
@@ -240,6 +241,7 @@ function run(text) {
   var w = typing("thinking…"); busy = true; sync();
   api.send(text).then(function (r) {
     settle(w, r.text); document.getElementById("offline").classList.toggle("on", !!r.offline);
+    if (r.error && !input.value) input.value = text;  // keep the question to try again
     busy = false; sync(); input.focus();
   });
 }

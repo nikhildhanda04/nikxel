@@ -116,6 +116,11 @@ We've mapped out the switch and will handle it end to end.
   const clientPage = NotePage.html(md);
   assert.match(clientPage, /<h1>Your billing moves to Stripe this week[^<]*<\/h1>/);
   assert.match(clientPage, /<!--nikxel-share-->/);
+
+  // Share to project: on every meeting page, never on the client page.
+  assert.match(page, /class="nx-project"/);
+  assert.match(NotePage.html(note), /class="nx-project"/);
+  assert.doesNotMatch(clientPage, /class="nx-project"/);
 });
 
 test("HTML in the Markdown is escaped", () => {

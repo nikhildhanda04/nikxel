@@ -5,7 +5,6 @@ import { richHtml } from "../recording/markdown";
 import { Settings } from "../core/settings";
 import { TwinProfile } from "./twinProfile";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
-import { OrgSnapshot, snapshot } from "./orgImport";
 
 /// Talks to the company's Odoo ERP over its web JSON-RPC — no API key and no
 /// resident browser. A visible Electron window opens exactly once, for the
@@ -138,18 +137,6 @@ export async function tasksTouched(day: Date): Promise<TouchedTask[]> {
   return rows
     .filter((r): r is Record<string, unknown> => !!r && typeof (r as any).name === "string" && !!(r as any).name)
     .map(r => ({ name: r.name as string, project: m2o(r.project_id), stage: m2o(r.stage_id), deadline: typeof r.date_deadline === "string" ? r.date_deadline : "" }));
-}
-
-/// People, projects and who worked on what (task assignees, last 90 days) for "Build org from ERP…".
-/// null when projects or tasks can't be read; no people when employees can't.
-export async function orgSnapshot(): Promise<OrgSnapshot | null> {
-  const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 19).replace("T", " "); // Odoo stores write_date in UTC
-  const [emps, projs, tasks] = await Promise.all([
-    callKw("hr.employee", "search_read", [[], ["name", "work_email", "job_title", "parent_id", "user_id"]], { limit: 2000 }),
-    callKw("project.project", "search_read", [[], ["name", "user_id", "active"]], { limit: 1000 }),
-    callKw("project.task", "search_read", [[["write_date", ">=", since]], ["project_id", "user_ids", "name"]], { limit: 5000, order: "write_date desc" }),
-  ]);
-  return snapshot(emps, projs, tasks);
 }
 
 // MARK: - Tasks

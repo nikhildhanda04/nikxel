@@ -617,8 +617,9 @@ DAILY SUMMARIES:
             let report = self.buildReport(for: date)
             if report.isEmpty { return }
             do {
-                let erpProjects = ERP.isConnected ? ERP.projects().map(\.name) : []
-                let prompt = self.summaryPrompt(report: report, date: date, erpProjects: erpProjects)
+                // The dashboard's projects (last good list when it's unreachable; none when unpaired).
+                let projects = CloudSync.projects().map(\.name)
+                let prompt = self.summaryPrompt(report: report, date: date, projects: projects)
                 let output = TwinProfile.correct(try self.momGenerator.runPrompt(prompt, kind: "daily-summary"))
                     + Self.erpTasksSection(ERP.tasksTouched(on: date))
                 let fileURL = self.summaryFileURL(for: date)
@@ -1169,7 +1170,7 @@ DAILY SUMMARIES:
         }.joined()
     }
 
-    private func summaryPrompt(report: String, date: Date, erpProjects: [String] = []) -> String {
+    private func summaryPrompt(report: String, date: Date, projects: [String] = []) -> String {
         let day = Self.dayKey(date)
         return """
 You are generating an end-of-day journal entry for the user, based on raw activity data captured throughout the day:
@@ -1235,13 +1236,13 @@ Output this exact Markdown structure:
 Rules:
 - Never invent activity not in the data. Inferring is OK ("session prompts mention 'typing lag' and you committed to StateMachine.swift, so you were fixing the typing bug") — flag uncertain inferences.
 - When session prompts and git activity disagree, prefer what the session prompts say the user was trying to do.
-- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. `- [research] Compared three OCR libraries…`. Pick [shipped] for a push, release or deploy.\(erpProjects.isEmpty ? "" : "\n- After the type tag, add the ERP project the bullet belongs to as `[[<exact name from the ERP projects list>]] `, only when it clearly belongs to one; otherwise add nothing.")
+- Start every top-level bullet in What you worked on, Meetings, Browsing & Reading and Other with one tag from [coding] [shipped] [meeting] [research] [learning] [writing] [review] [planning] [comms] [other], e.g. `- [research] Compared three OCR libraries…`. Pick [shipped] for a push, release or deploy.\(projects.isEmpty ? "" : "\n- After the type tag, add the project the bullet belongs to as `[[<exact name from the Projects list>]] `, only when it clearly belongs to one; otherwise add nothing.")
 - Output ONLY the Markdown — no preamble, no closing remarks.
 
 ---
 RAW ACTIVITY DATA:
 \(report)
-\(erpProjects.isEmpty ? "" : "\nERP projects:\n" + erpProjects.map { "- \($0)" }.joined(separator: "\n") + "\n")
+\(projects.isEmpty ? "" : "\nProjects:\n" + projects.map { "- \($0)" }.joined(separator: "\n") + "\n")
 """
     }
 }

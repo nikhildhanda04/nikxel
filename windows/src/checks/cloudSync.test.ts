@@ -69,4 +69,24 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   await CS.pushDay(md, "d", new Set(["headline"]), async (_p: string, b: any) => { h = b; return {}; });
   assert.equal(h.headline, "");
   assert.equal(h.items.length, 3);
+
+  const mom = "# Meeting — 21 Nov\n\n## Summary\nShipped it.\n\n## Client Summary\nDear client, all good.\n### Next\n- more\n\n## Action Items\n- [ ] Ravi: fix login";
+  const sb = CS.meetingShareBody(mom);
+  assert.ok(!sb.includes("Client Summary") && !sb.includes("Dear client") && !sb.includes("### Next"), "drops the client summary");
+  assert.ok(sb.startsWith("# Meeting") && sb.includes("## Summary\nShipped it.") && sb.includes("## Action Items\n- [ ] Ravi: fix login"), "keeps the rest");
+  assert.equal(CS.meetingShareBody("## Client Summary\nonly").trim(), "");
+  assert.equal(CS.meetingShareBody("é".repeat(25000)).length, 20000);
+
+  // projects(): token is "tok123" from the pair above.
+  assert.deepEqual(await CS.projects(async () => null), [], "no cache, fetch fails");
+  let gp: any, gb: any;
+  const fresh = await CS.projects(async (p: string, t: any) => { gp = p; gb = t; return [{ id: "p1", name: "Produce POS" }, { id: "p2", name: "Nikxel" }]; });
+  assert.deepEqual(fresh, [{ id: "p1", name: "Produce POS" }, { id: "p2", name: "Nikxel" }]);
+  assert.deepEqual([gp, gb], ["/api/device/projects", "tok123"]);
+  assert.deepEqual(await CS.projects(async () => null), fresh, "fetch fails: cached list");
+  let sp: any, sh: any;
+  assert.equal(await CS.shareMeeting("p1", "2026-11-21-101500", "Meeting — 21 Nov", "2026-11-21", sb, async (p: string, b: any) => { sp = p; sh = b; return {}; }), true);
+  assert.equal(sp, "/api/projects/p1/meetings");
+  assert.deepEqual(sh, { meeting_id: "2026-11-21-101500", title: "Meeting — 21 Nov", date: "2026-11-21", body: sb });
+  assert.equal(await CS.shareMeeting("p1", "m", "t", "2026-11-21", "b", async () => null), false);
 });

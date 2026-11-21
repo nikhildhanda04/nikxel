@@ -27,7 +27,6 @@ import * as PageShare from "./system/pageShare";
 import * as ERP from "./system/erp";
 import { CloudSync } from "./system/cloudSync";
 import * as ErpCrawl from "./system/erpCrawl";
-import * as OrgImport from "./system/orgImport";
 import { showAboutMe } from "./system/aboutMe";
 import { OnboardingWindowController } from "./system/onboarding";
 import { Permissions } from "./system/permissions";
@@ -328,7 +327,6 @@ class NikxelApp {
         ? item("Forklyft ERP connected ✓", () => void this.connectERP())
         : item("Connect Forklyft ERP…", () => void this.connectERP()),
       item("Connect to Dashboard…", () => void this.connectDashboard()),
-      item("Build org from ERP…", () => void this.buildOrgFromERP()),
       item("Tell Nikxel About You…", () => showAboutMe()),
       check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
         () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
@@ -502,50 +500,6 @@ class NikxelApp {
     ui.tell({
       icon: ok ? "✅" : "⚠️", title: ok ? "Connected to dashboard" : "Couldn't connect", kind: ok ? "info" : "warning",
       lines: [ok ? "Your daily work summary will be shared with your org." : "Check the code and that the dashboard is reachable, then try again."],
-    });
-  }
-
-  /// Reads people and projects from the ERP, has the AI write short notes, and sends the draft
-  /// to the dashboard's Org tab, only after the user confirms exactly what goes.
-  private buildingOrg = false;
-  private async buildOrgFromERP(): Promise<void> {
-    if (this.buildingOrg) {
-      ui.tell({ icon: "🏢", title: "Already building…", lines: ["The org is already being built. Finish or cancel that first."] });
-      return;
-    }
-    this.buildingOrg = true;
-    try {
-      await this.buildOrgFromERPInner();
-    } finally {
-      this.buildingOrg = false;
-    }
-  }
-
-  private async buildOrgFromERPInner(): Promise<void> {
-    const missing = [ERP.isConnected() ? null : "connect Forklyft ERP", CloudSync.token() ? null : "connect to the dashboard"].filter(Boolean);
-    if (missing.length) {
-      ui.tell({ icon: "🏢", title: "Can't build the org yet", kind: "warning", lines: [`First ${missing.join(" and ")} from this menu.`] });
-      return;
-    }
-    ui.tell({ icon: "🏢", title: "Reading ERP…", lines: ["Gathering people, projects and who works on what. This can take a minute."] });
-    const snap = await ERP.orgSnapshot();
-    if (!snap?.projects.length) {
-      ui.tell({ icon: "⚠️", title: "Couldn't read the ERP", kind: "warning", lines: ["Check your ERP connection and try again."] });
-      return;
-    }
-    const ai = OrgImport.parseAI(await this.meetingCoordinator.momGen.runPrompt(OrgImport.prompt(snap), "org-import").catch(() => ""));
-    const body = OrgImport.buildImportBody(snap, ai);
-    const r = await dialog.showMessageBox({
-      type: "question", title: "Nikxel", message: "Send this org to the dashboard?",
-      detail: `Nikxel will send ${OrgImport.summary(body)}\n\nYou can refine it in the dashboard's Org tab.`,
-      buttons: ["Send", "Cancel"], defaultId: 0, cancelId: 1, noLink: true,
-    });
-    if (r.response !== 0) return;
-    const status = await CloudSync.importOrg(body);
-    const ok = status != null && status >= 200 && status < 300;
-    ui.tell({
-      icon: ok ? "✅" : "⚠️", title: ok ? "Org sent" : "Couldn't send", kind: ok ? "info" : "warning",
-      lines: [ok ? "Refine it in the dashboard's Org tab." : status === 403 ? "Only the owner or an admin can build the org." : status != null ? `The dashboard rejected it (HTTP ${status}).` : "Couldn't reach the dashboard."],
     });
   }
 

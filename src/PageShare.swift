@@ -155,6 +155,10 @@ enum PageShare {
                 return ["error": "Couldn't build the client summary."]
             }
             return ["url": clientFile.absoluteString]
+        case "/projects", "/share-project":
+            // A meeting page's Share to project dialog (list + exact body), then its Send.
+            ProjectShare.handle(project: route == "/projects" ? nil : q("project") ?? "", file: file, later: later)
+            return nil
         case "/dashboard-state", "/dashboard":
             // The daily page's Send bar. <stem>.sent.json beside it remembers what was crossed out.
             guard file.deletingLastPathComponent().lastPathComponent == "daily" else { return ["error": "Only a daily summary can be sent to the dashboard."] }
@@ -342,6 +346,54 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       clientBtn.disabled = false; clientBtn.textContent = old;
       if (r && r.url) window.open(r.url, "_blank");
       else alert((r && r.error) || "Couldn't build the client summary.");
+    });
+  };
+
+  // --- "Share to project": pick one of your dashboard projects, see exactly
+  // what goes (the minutes minus the client summary), then Send.
+  var projBtn = document.querySelector(".nx-project");
+  if (projBtn) projBtn.onclick = function () {
+    var dlg = document.createElement("dialog");
+    dlg.style.cssText = "width:min(560px,calc(100vw - 32px));box-sizing:border-box;border:0;border-radius:16px;padding:20px;font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#1d1d1f;background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.3)";
+    var btnCss = "border:0;border-radius:10px;padding:9px 16px;font:600 14px/1 system-ui,-apple-system,'Segoe UI',sans-serif;cursor:pointer;";
+    dlg.onclose = function () { dlg.remove(); };
+    document.body.appendChild(dlg); dlg.textContent = "Loading your projects…"; dlg.showModal();
+    function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+    function button(text, primary, onclick) {
+      var b = el("button", btnCss + (primary ? "background:#1d1d1f;color:#fff" : "background:#f0f0f3;color:#1d1d1f"), text);
+      b.type = "button"; b.onclick = onclick; return b;
+    }
+    function done(text) {
+      dlg.textContent = ""; dlg.appendChild(el("p", "margin:0 0 16px", text));
+      var row = el("div", "display:flex;justify-content:flex-end"); row.appendChild(button("Close", true, function () { dlg.close(); }));
+      dlg.appendChild(row);
+    }
+    call("projects").then(function (r) {
+      if (!r || r.error) return done((r && r.error) || "Couldn't reach Nikxel.");
+      if (!r.paired) return done("Connect Nikxel to the dashboard first");
+      if (!r.projects || !r.projects.length) return done("You're not on any project yet. Create one on the dashboard.");
+      dlg.textContent = "";
+      dlg.appendChild(el("h3", "margin:0 0 10px;font-size:16px", "Share to project"));
+      r.projects.forEach(function (p, i) {
+        var lab = el("label", "display:flex;gap:8px;align-items:center;padding:5px 2px;cursor:pointer"), radio = el("input");
+        radio.type = "radio"; radio.name = "nx-proj"; radio.value = p.id; radio.checked = i === 0; radio._name = p.name;
+        lab.appendChild(radio); lab.appendChild(el("span", "", p.name)); dlg.appendChild(lab);
+      });
+      dlg.appendChild(el("div", "margin:12px 0 6px;color:#6e6e73;font-size:12px", "Exactly what will be sent"));
+      dlg.appendChild(el("pre", "max-height:40vh;overflow:auto;white-space:pre-wrap;margin:0;padding:10px 12px;background:#f5f5f7;border-radius:10px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace", r.body));
+      var msg = el("p", "min-height:1.2em;margin:10px 0;color:#6e6e73;font-size:12px");
+      var row = el("div", "display:flex;justify-content:flex-end;gap:8px");
+      var send = button("Send", true, function () {
+        var pick = dlg.querySelector("input[name=nx-proj]:checked");
+        if (!pick) { msg.textContent = "Pick a project."; return; }
+        send.disabled = true; msg.textContent = "Sending…";
+        call("share-project", { project: pick.value }).then(function (s) {
+          if (s && s.ok) done("Shared to " + pick._name);
+          else { send.disabled = false; msg.textContent = (s && s.error) || "Couldn't share it."; }
+        });
+      });
+      row.appendChild(button("Cancel", false, function () { dlg.close(); })); row.appendChild(send);
+      dlg.appendChild(msg); dlg.appendChild(row);
     });
   };
 

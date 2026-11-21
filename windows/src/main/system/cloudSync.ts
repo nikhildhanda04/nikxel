@@ -3,15 +3,17 @@ import * as crypto from "crypto";
 import { nikxelPath, writeAtomic, readText } from "../core/paths";
 
 /// Pairs this PC with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
-/// (items include ERP task names, stages, deadlines and project names), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
+/// DATA BOUNDARY: the only things that ever leave are {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
+/// (items include ERP task names, stages, deadlines and project names), and a meeting's minutes minus its Client Summary, sent on Share to project
+/// (never the transcript or audio), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Port of CloudSync.swift.
 
 export interface DayItem { id: string; section: string; what: string; type: string; minutes: number; details: string[]; project: string }
 /// Resolves the parsed JSON body on 2xx, null on any failure.
 export type Poster = (path: string, body: unknown, bearer: string | null) => Promise<any | null>;
-/// Resolves the HTTP status, null when the server can't be reached.
-export type StatusPoster = (path: string, body: unknown, bearer: string | null) => Promise<number | null>;
+/// Resolves the parsed JSON body on 2xx, null on any failure.
+export type Getter = (path: string, bearer: string | null) => Promise<any | null>;
+export interface Project { id: string; name: string }
 
 /// The sections that are sent (work and meetings; never chats or open tasks),
 /// and the type an untagged bullet in each gets.
@@ -76,12 +78,47 @@ export class CloudSync {
     return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
   }
 
-  /// Sends orgImport's body (after the user confirmed it). The HTTP status (403 for non owner/admin);
-  /// null on no token or when the dashboard can't be reached.
-  static async importOrg(body: unknown, post: StatusPoster = async (p, b, t) => (await CloudSync.send(p, b, t))?.status ?? null): Promise<number | null> {
+  static httpGet: Getter = async (p, bearer) => {
+    try {
+      const res = await fetch(CloudSync.backendBase() + p, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {}, signal: AbortSignal.timeout(20000) });
+      return res.ok ? await res.json() : null;
+    } catch { return null; }
+  };
+
+  static projectsFile(): string { return nikxelPath("projects.json"); }
+
+  /// The user's dashboard projects (for [[Project]] tags and Share to project). The last good list
+  /// (projects.json) when the dashboard can't be reached; [] when unpaired or never fetched.
+  static async projects(get: Getter = CloudSync.httpGet): Promise<Project[]> {
     const tok = CloudSync.token();
-    if (!tok) return null;
-    return post("/api/org/import", body, tok);
+    if (!tok) return [];
+    const parse = (v: unknown): Project[] | null => Array.isArray(v)
+      ? v.filter((r) => r && typeof r.id === "string" && typeof r.name === "string").map((r) => ({ id: r.id, name: r.name }))
+      : null;
+    const fresh = parse(await get("/api/device/projects", tok));
+    if (fresh) {
+      try { writeAtomic(CloudSync.projectsFile(), JSON.stringify(fresh)); } catch { /* cache is best-effort */ }
+      return fresh;
+    }
+    try { return parse(JSON.parse(readText(CloudSync.projectsFile()) ?? "null")) ?? []; } catch { return []; }
+  }
+
+  /// The meeting minutes as shared to a project: everything but the "## Client Summary" section
+  /// (up to the next "## "), capped at the server's 20000 characters. Never the transcript.
+  static meetingShareBody(md: string): string {
+    let skipping = false;
+    return md.split("\n").filter((line) => {
+      if (line.startsWith("## ")) skipping = line.slice(3).trim().toLowerCase() === "client summary";
+      return !skipping;
+    }).join("\n").slice(0, 20000);
+  }
+
+  /// Sends a meeting's minutes to one of the user's projects; re-sharing the same meeting replaces it.
+  /// False on no token or failed POST (404 when the user isn't on that project).
+  static async shareMeeting(projectID: string, meetingID: string, title: string, date: string, body: string, post: Poster = CloudSync.httpPost): Promise<boolean> {
+    const tok = CloudSync.token();
+    if (!tok) return false;
+    return (await post(`/api/projects/${encodeURIComponent(projectID)}/meetings`, { meeting_id: meetingID, title, date, body }, tok)) !== null;
   }
 
   /// Top-level bullets of every "## " section but Summary; indented bullets become details.

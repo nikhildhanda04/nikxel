@@ -63,6 +63,26 @@ import Foundation
         check(CloudSync.pushDay(summary: md, day: "d", skip: Set(all), allowEmpty: true, post: { _, b, _ in empty = b; return Data() }) && (empty?["items"] as? [[String: Any]])?.isEmpty == true, "allowEmpty retracts with items []")
         _ = CloudSync.pushDay(summary: md, day: "d", skip: ["headline"], post: { _, b, _ in hl = b; return Data() })
         check((hl?["headline"] as? String) == "" && (hl?["items"] as? [[String: Any]])?.count == 3, "skip headline blanks it, keeps items")
+
+        let mom = "# Meeting — 21 Nov\n\n## Summary\nShipped it.\n\n## Client Summary\nDear client, all good.\n### Next\n- more\n\n## Action Items\n- [ ] Ravi: fix login"
+        let sb = CloudSync.meetingShareBody(mom)
+        check(!sb.contains("Client Summary") && !sb.contains("Dear client") && !sb.contains("### Next"), "share body drops the client summary: \(sb)")
+        check(sb.contains("## Summary\nShipped it.") && sb.contains("## Action Items\n- [ ] Ravi: fix login") && sb.hasPrefix("# Meeting"), "share body keeps the rest")
+        check(CloudSync.meetingShareBody("## Client Summary\nonly") .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "client summary at the end")
+        check(CloudSync.meetingShareBody(String(repeating: "é", count: 25000)).utf16.count == 20000, "share body capped at 20000")
+
+        // projects(): token is "tok123" from the pair above.
+        check(CloudSync.projects(get: { _, _ in nil }).isEmpty, "no cache, fetch fails -> []")
+        var gotPath: String?, gotBearer: String?
+        let fresh = CloudSync.projects(get: { p, t in gotPath = p; gotBearer = t; return Data(#"[{"id":"p1","name":"Produce POS"},{"id":"p2","name":"Nikxel"}]"#.utf8) })
+        check(fresh == [CloudSync.Project(id: "p1", name: "Produce POS"), CloudSync.Project(id: "p2", name: "Nikxel")] && gotPath == "/api/device/projects" && gotBearer == "tok123", "projects fetched")
+        check(CloudSync.projects(get: { _, _ in nil }) == fresh, "fetch fails -> cached list")
+        var shared: [String: Any]?, sharePath: String?
+        check(CloudSync.shareMeeting(projectID: "p1", meetingID: "2026-11-21-101500", title: "Meeting — 21 Nov", date: "2026-11-21", body: sb,
+                                     post: { p, b, _ in sharePath = p; shared = b; return Data() }), "shareMeeting ok")
+        check(sharePath == "/api/projects/p1/meetings" && Set(shared?.keys.map { $0 } ?? []) == ["meeting_id", "title", "date", "body"] && (shared?["body"] as? String) == sb, "share request")
+        check(!CloudSync.shareMeeting(projectID: "p1", meetingID: "m", title: "t", date: "2026-11-21", body: "b", post: { _, _, _ in nil }), "failed share -> false")
+
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }
 }

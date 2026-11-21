@@ -249,21 +249,6 @@ enum ERP {
         }
     }
 
-    /// People, projects and who worked on what (task assignees, last 90 days) for "Build org from ERP…".
-    /// nil when projects or tasks can't be read; no people when employees can't. Blocking; call off the main thread.
-    static func orgSnapshot() -> OrgSnapshot? {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let since = f.string(from: Date().addingTimeInterval(-90 * 86400))
-        return OrgImport.snapshot(
-            employees: callKw("hr.employee", "search_read", args: [[], ["name", "work_email", "job_title", "parent_id", "user_id"]],
-                              kwargs: ["limit": 2000]) as? [[String: Any]],
-            projects: callKw("project.project", "search_read", args: [[], ["name", "user_id", "active"]],
-                             kwargs: ["limit": 1000]) as? [[String: Any]],
-            tasks: callKw("project.task", "search_read", args: [[["write_date", ">=", since]], ["project_id", "user_ids", "name"]],
-                          kwargs: ["limit": 5000, "order": "write_date desc"]) as? [[String: Any]])
-    }
-
     // MARK: - Tasks
 
     /// Create a project.task and return its id (nil on failure). The page's

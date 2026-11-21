@@ -129,6 +129,7 @@ enum NotePage {
         <main>
         \(hero(title: title, summary: find("summary"), isMeeting: isMeeting))
         \(hasClient ? clientCTA : "")
+        \(isMeeting ? projectCTA : "")
         \(nav.count > 1 ? "<nav class=\"glance\">\(nav.joined())</nav>" : "")
         \(body)
         <footer>Written by Nikxel from the recording's transcript. Tick tasks off here; the ticks stay in this browser only.</footer>
@@ -145,6 +146,14 @@ enum NotePage {
     private static let clientCTA = """
     <div class="client-cta"><button type="button" class="nx-client">Preview &amp; share client summary →</button>
     <p>A clean, client-facing recap on its own page — leaves out the internal detail. Preview it, then send it to the client.</p></div>
+    """
+
+    /// On every meeting page: sends these minutes (minus the Client Summary) to
+    /// one of the user's projects on the org dashboard. Wired by the PageShare
+    /// widget (/projects, /share-project), like the client button above.
+    private static let projectCTA = """
+    <div class="client-cta"><button type="button" class="nx-project">Share to project →</button>
+    <p>Send these minutes to a project on your org dashboard — without the client summary or the transcript.</p></div>
     """
 
     /// A client-facing markdown derived from a meeting's "## Client Summary":
@@ -522,9 +531,9 @@ enum NotePage {
     .summary { display: grid; gap: 10px; max-width: 64ch; color: var(--muted); font-size: 16.5px; }
 
     .client-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px; padding: 16px 18px; background: var(--sky); border: 1px solid var(--line); border-radius: 14px; }
-    .client-cta .nx-client { font: 600 14px/1 var(--sans); color: var(--surface); background: var(--accent); border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
-    .client-cta .nx-client:hover { transform: translateY(-1px); }
-    .client-cta .nx-client:disabled { opacity: .6; cursor: default; }
+    .client-cta .nx-client, .client-cta .nx-project { font: 600 14px/1 var(--sans); color: var(--surface); background: var(--accent); border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
+    .client-cta .nx-client:hover, .client-cta .nx-project:hover { transform: translateY(-1px); }
+    .client-cta .nx-client:disabled, .client-cta .nx-project:disabled { opacity: .6; cursor: default; }
     .client-cta p { min-width: 0; flex: 1; color: var(--muted); font-size: 13.5px; }
     @media print { .client-cta { display: none; } }
 

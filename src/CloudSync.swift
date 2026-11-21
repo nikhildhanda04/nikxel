@@ -2,8 +2,9 @@ import Foundation
 import CryptoKit
 
 /// Pairs this Mac with the org dashboard and pushes the derived work summary.
-/// DATA BOUNDARY: the only thing that ever leaves is {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
-/// (items include ERP task names, stages, deadlines and project names), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
+/// DATA BOUNDARY: the only things that ever leave are {kind, date, headline, items:[{id,section,what,type,minutes,details,project}]}, sent on the user's Send click
+/// (items include ERP task names, stages, deadlines and project names), and a meeting's minutes minus its Client Summary, sent on Share to project
+/// (never the transcript or audio), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Mirrors cloudSync.ts.
 enum CloudSync {
     /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
@@ -78,11 +79,62 @@ enum CloudSync {
         return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
     }
 
-    /// Sends OrgImport's body (after the user confirmed it). The HTTP status (403 for non owner/admin);
-    /// nil on no token or when the dashboard can't be reached.
-    static func importOrg(_ body: [String: Any], post: StatusPoster = httpSend) -> Int? {
-        guard let tok = token else { return nil }
-        return post("/api/org/import", body, tok)?.status
+    /// Blocking GET (callers are off the main thread). Returns the 2xx body, nil on any failure.
+    typealias Getter = (_ path: String, _ bearer: String?) -> Data?
+
+    static let httpGet: Getter = { path, bearer in
+        guard let url = URL(string: backendBase + path) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 20)
+        if let b = bearer { req.setValue("Bearer \(b)", forHTTPHeaderField: "Authorization") }
+        var out: Data?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { d, r, _ in
+            if let h = r as? HTTPURLResponse, (200..<300).contains(h.statusCode) { out = d }
+            sem.signal()
+        }.resume()
+        sem.wait()
+        return out
+    }
+
+    struct Project: Equatable { let id, name: String }
+    private static var projectsFile: String { NSHomeDirectory() + "/.nikxel/projects.json" }
+
+    /// The user's dashboard projects (for [[Project]] tags and Share to project). The last good list
+    /// (~/.nikxel/projects.json) when the dashboard can't be reached; [] when unpaired or never fetched.
+    static func projects(get: Getter = httpGet) -> [Project] {
+        guard let tok = token else { return [] }
+        func parse(_ d: Data?) -> [Project]? {
+            (d.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]])?.compactMap { r in
+                guard let id = r["id"] as? String, let name = r["name"] as? String else { return nil }
+                return Project(id: id, name: name)
+            }
+        }
+        let d = get("/api/device/projects", tok)
+        if let fresh = parse(d) {
+            try? d?.write(to: URL(fileURLWithPath: projectsFile), options: .atomic)
+            return fresh
+        }
+        return parse(FileManager.default.contents(atPath: projectsFile)) ?? []
+    }
+
+    /// The meeting minutes as shared to a project: everything but the "## Client Summary" section
+    /// (up to the next "## "), capped at the server's 20000 characters. Never the transcript.
+    static func meetingShareBody(_ md: String) -> String {
+        var skipping = false
+        let kept = md.components(separatedBy: "\n").filter { line in
+            if line.hasPrefix("## ") { skipping = line.dropFirst(3).trimmingCharacters(in: .whitespaces).lowercased() == "client summary" }
+            return !skipping
+        }.joined(separator: "\n")
+        guard kept.utf16.count > 20000 else { return kept }
+        return String(kept[..<kept.utf16.index(kept.utf16.startIndex, offsetBy: 20000)])
+    }
+
+    /// Sends a meeting's minutes to one of the user's projects; re-sharing the same meeting replaces it.
+    /// False on no token or failed POST (404 when the user isn't on that project).
+    static func shareMeeting(projectID: String, meetingID: String, title: String, date: String, body: String, post: Poster = httpPost) -> Bool {
+        guard let tok = token,
+              let id = projectID.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) else { return false }
+        return post("/api/projects/\(id)/meetings", ["meeting_id": meetingID, "title": title, "date": date, "body": body], tok) != nil
     }
 
     struct DayItem: Equatable { let id, section, what, type: String; let minutes: Int; let details: [String]; var project = "" }

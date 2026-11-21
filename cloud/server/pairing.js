@@ -29,7 +29,7 @@ export function redeemPairingCode(db, code, now = Date.now) {
 
 export const deviceAuth = (db, now = Date.now) => (req, res, next) => {
   const m = /^Bearer ([0-9a-f]{64})$/.exec(req.headers?.authorization || '');
-  const row = m && db.prepare('SELECT id, user_id, org_id FROM device_tokens WHERE token_hash = ?').get(sha256(m[1]));
+  const row = m && db.prepare('SELECT d.id, d.user_id, d.org_id FROM device_tokens d JOIN memberships m ON m.user_id = d.user_id AND m.org_id = d.org_id WHERE d.token_hash = ?').get(sha256(m[1]));
   if (!row) return res.status(401).json({ error: 'unauthorized' });
   db.prepare('UPDATE device_tokens SET last_used = ? WHERE id = ?').run(now(), row.id);
   req.device = { userId: row.user_id, orgId: row.org_id };

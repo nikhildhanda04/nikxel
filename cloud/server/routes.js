@@ -130,6 +130,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     db.transaction(() => {
       db.prepare('DELETE FROM memberships WHERE user_id = ? AND org_id = ?').run(req.params.userId, orgId);
       db.prepare('DELETE FROM device_tokens WHERE user_id = ? AND org_id = ?').run(req.params.userId, orgId);
+      db.prepare('DELETE FROM pairing_codes WHERE user_id = ? AND org_id = ?').run(req.params.userId, orgId);
       db.prepare('DELETE FROM project_users WHERE user_id = ? AND project_id IN (SELECT id FROM projects WHERE org_id = ?)').run(req.params.userId, orgId);
     })();
     res.json({ ok: true });

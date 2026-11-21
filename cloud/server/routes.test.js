@@ -190,12 +190,17 @@ test('members list, role changes, removal', async () => {
   assert.equal(await patch('admA', 'admin', 'memA', 'member'), 403); // revoking cofounder is owner-only
   assert.equal(await patch('cofA', 'cofounder', 'owA', 'member'), 403);
   assert.equal(await patch('memA2', 'member', 'memA2', 'admin'), 403);
+  c.db.prepare("INSERT INTO projects VALUES ('pA','A','PA','','owA',1,0), ('pB','B','PB','','owB',1,0)").run();
+  c.db.prepare("INSERT INTO project_users VALUES ('pA','memA2',1), ('pB','memA2',1)").run();
   const dev = c.deviceFor('memA2', 'A');
+  const code = createPairingCode(c.db, 'memA2', 'A');
   assert.equal((await push(c, dev, [I('a')])).status, 200);
   assert.equal(await del('admA', 'admin', 'memA2'), 200);
   assert.equal((await push(c, dev, [I('a')])).status, 401);
   assert.equal(c.db.prepare("SELECT COUNT(*) n FROM summaries WHERE user_id='memA2'").get().n, 1);
   assert.equal(c.db.prepare("SELECT COUNT(*) n FROM memberships WHERE user_id='memA2'").get().n, 0);
+  assert.equal(c.db.prepare("SELECT project_id FROM project_users WHERE user_id='memA2'").all().map((r) => r.project_id).join(), 'pB');
+  assert.equal(redeemPairingCode(c.db, code), null); // unredeemed code died with the membership
   assert.equal(await del('cofA', 'cofounder', 'owA'), 403);
   assert.equal(await del('admA', 'admin', 'cofA'), 403);
   assert.equal(await del('owA', 'owner', 'cofA'), 200);
@@ -206,5 +211,13 @@ test('members list, role changes, removal', async () => {
 test('rollup, org and teams are gone', async () => {
   const c = await boot();
   for (const p of ['rollup', 'org', 'teams']) assert.equal((await c.api('GET', '/api/' + p, { headers: A(c, 'owA', 'owner') })).status, 404);
+  c.close();
+});
+
+test('device token without a live membership is 401', async () => {
+  const c = await boot(); const dev = c.deviceFor('memA2', 'A');
+  assert.equal((await push(c, dev, [I('a')])).status, 200);
+  c.db.prepare("DELETE FROM memberships WHERE user_id='memA2'").run();
+  assert.equal((await push(c, dev, [I('a')])).status, 401);
   c.close();
 });

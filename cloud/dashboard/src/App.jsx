@@ -7,8 +7,9 @@ import Connect from './screens/Connect.jsx';
 import Mine from './screens/Mine.jsx';
 import People from './screens/People.jsx';
 import Invite from './screens/Invite.jsx';
+import Projects from './screens/Projects.jsx';
+import Project from './screens/Project.jsx';
 import Install from './screens/Install.jsx';
-import { Muted } from './ui.jsx';
 import { isStaff, roleLabel } from './roles.js';
 
 // #join=<token> is parked in sessionStorage (OAuth drops the hash) and the hash cleared.
@@ -53,7 +54,7 @@ export default function App() {
   const tabs = [['invite', 'Invite'], ['mine', 'My summaries'], ['projects', 'Projects'], ...(isStaff(me.role) ? [['people', 'People']] : []), ['connect', 'Connect']];
   const [base, sub] = route.split('/'); // #people/<encoded userId>
   const tab = tabs.some(([k]) => k === base) ? base : base === 'install' ? 'install' : 'mine';
-  const screen = { invite: <Invite me={me} />, mine: <Mine />, connect: <Connect />, install: <Install />, projects: <Muted>Coming next</Muted>, people: <People me={me} sub={sub && dec(sub)} /> }[tab];
+  const screen = { invite: <Invite me={me} />, mine: <Mine />, connect: <Connect />, install: <Install />, projects: sub ? <Project id={sub && dec(sub)} /> : <Projects />, people: <People me={me} sub={sub && dec(sub)} /> }[tab];
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (

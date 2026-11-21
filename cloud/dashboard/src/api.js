@@ -21,6 +21,12 @@ export const api = {
   pairingCode: () => call('GET', '/pairing-code'),
   mine: () => call('GET', '/summaries/mine'),
   removeMember: (userId) => call('DELETE', `/members/${encodeURIComponent(userId)}`),
+  projects: () => call('GET', '/projects'),
+  project: (id) => call('GET', `/projects/${encodeURIComponent(id)}`),
+  createProject: (name, description) => call('POST', '/projects', { name, description }),
+  editProject: (id, patch) => call('PATCH', `/projects/${encodeURIComponent(id)}`, patch),
+  addProjectMember: (id, userId) => call('PUT', `/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`),
+  removeProjectMember: (id, userId) => call('DELETE', `/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`),
   userSummaries: (userId) => call('GET', `/summaries/user/${encodeURIComponent(userId)}`),
 };
 

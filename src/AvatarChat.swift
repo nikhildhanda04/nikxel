@@ -37,7 +37,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private init(agent: MOMGenerator, recording: @escaping () -> Bool) {
         self.agent = agent
         self.recording = recording
-        window = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 280),
+        window = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 420),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let config = WKWebViewConfiguration()
         config.userContentController.addUserScript(WKUserScript(
@@ -56,10 +56,10 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         window.delegate = self
 
         let fx = NSVisualEffectView()
-        fx.material = .hudWindow
+        fx.material = .popover
         fx.blendingMode = .behindWindow
         fx.state = .active
-        let r: CGFloat = 16
+        let r: CGFloat = 18
         let mask = NSImage(size: NSSize(width: 2 * r + 1, height: 2 * r + 1), flipped: false) { rect in
             NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill(); return true
         }
@@ -171,38 +171,41 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private static let page = #"""
 <!doctype html><html><head><meta charset="utf-8">
 <style>
-:root{--glass:transparent;--fg:#1d1d1f;--muted:#6e6e73;--bot:rgba(255,255,255,.72);--line:rgba(0,0,0,.09);--me:#1d1d1f;--me-fg:#fff;--accent:#5e5ce6;--field:rgba(255,255,255,.8);color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--fg:#f5f5f7;--muted:#a1a1a6;--bot:rgba(255,255,255,.09);--line:rgba(255,255,255,.1);--me:#f5f5f7;--me-fg:#1d1d1f;--field:rgba(255,255,255,.08)}}
+:root{--glass:transparent;--fg:#0d0d0d;--muted:rgba(60,60,67,.62);--bot:rgba(255,255,255,.5);--bot-line:rgba(255,255,255,.75);--me:#2f2f2f;--me-fg:#fff;--line:rgba(0,0,0,.08);--field:rgba(255,255,255,.72);--rim:rgba(255,255,255,.55);--go:#0d0d0d;--go-fg:#fff;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--glass:transparent;--fg:#ececec;--muted:rgba(235,235,245,.55);--bot:rgba(255,255,255,.07);--bot-line:rgba(255,255,255,.1);--me:rgba(255,255,255,.17);--me-fg:#fff;--line:rgba(255,255,255,.1);--field:rgba(255,255,255,.08);--rim:rgba(255,255,255,.14);--go:#ececec;--go-fg:#0d0d0d}}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:transparent;overflow:hidden}
-body{display:flex;flex-direction:column;background:var(--glass);border-radius:16px;color:var(--fg);font:13px/1.42 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none}
-header{display:flex;align-items:center;gap:8px;padding:10px 10px 6px 14px}
-header b{font-size:12px;letter-spacing:.01em}
-#offline{display:none;color:var(--muted);font-size:11px;padding:1px 7px;border:1px solid var(--line);border-radius:999px}
+html,body{height:100%;margin:0;background:transparent;overflow:hidden;border-radius:18px}
+body{display:flex;flex-direction:column;background:var(--glass);border:1px solid var(--rim);color:var(--fg);font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none}
+header{display:flex;align-items:center;gap:8px;padding:11px 10px 7px 16px;border-bottom:1px solid var(--line)}
+header b{font-size:12.5px;font-weight:600;letter-spacing:.01em}
+#offline{display:none;color:var(--muted);font-size:11px;padding:1px 8px;border:1px solid var(--line);border-radius:999px}
 #offline.on{display:inline-block}
 .sp{flex:1}
-#close{width:22px;height:22px;border-radius:50%;border:0;background:transparent;color:var(--muted);font:15px/1 system-ui;cursor:pointer}
+#close{width:24px;height:24px;border-radius:50%;border:0;background:transparent;color:var(--muted);font:16px/1 system-ui;cursor:pointer}
 #close:hover{background:var(--line)}
-#log{flex:1;overflow-y:auto;padding:4px 12px 6px;display:flex;flex-direction:column;gap:8px}
-.msg{max-width:88%;padding:7px 11px;border-radius:15px;white-space:pre-wrap;-webkit-user-select:text;user-select:text;animation:in .2s ease-out}
-.bot{align-self:flex-start;background:var(--bot);border:1px solid var(--line);border-bottom-left-radius:5px}
-.me{align-self:flex-end;background:var(--me);color:var(--me-fg);border-bottom-right-radius:5px}
-.hello{color:var(--muted);background:transparent;border-color:transparent;padding-left:2px}
-.dots{display:inline-flex;gap:4px;padding:3px 0}
+#log{flex:1;overflow-y:auto;padding:12px 12px 8px;display:flex;flex-direction:column;gap:10px;scrollbar-width:none}
+#log::-webkit-scrollbar{display:none}
+.msg{max-width:84%;padding:8px 13px;border-radius:18px;white-space:pre-wrap;word-wrap:break-word;-webkit-user-select:text;user-select:text;animation:in .22s ease-out}
+.bot{align-self:flex-start;background:var(--bot);border:1px solid var(--bot-line);border-bottom-left-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.me{align-self:flex-end;background:var(--me);color:var(--me-fg);border-bottom-right-radius:6px}
+.hello{align-self:center;max-width:100%;color:var(--muted);background:transparent;border-color:transparent;box-shadow:none;font-size:12.5px;margin-top:6px}
+.dots{display:inline-flex;gap:4px;padding:4px 0}
 .dots i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:bob 1.1s infinite}
 .dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
 .hint{color:var(--muted);font-size:11.5px;margin-left:6px}
 @keyframes bob{0%,70%,100%{opacity:.3;transform:translateY(0)}35%{opacity:1;transform:translateY(-3px)}}
-@keyframes in{from{opacity:0;transform:translateY(5px)}}
-form{display:flex;align-items:center;gap:2px;margin:4px 10px 10px;padding:3px 3px 3px 13px;border:1px solid var(--line);border-radius:999px;background:var(--field);transition:border-color .15s}
-form:focus-within{border-color:var(--accent)}
+@keyframes in{from{opacity:0;transform:translateY(6px) scale(.98)}}
+form{display:flex;align-items:center;gap:4px;margin:6px 10px 10px;padding:4px 4px 4px 15px;border:1px solid var(--line);border-radius:999px;background:var(--field);box-shadow:0 2px 10px rgba(0,0,0,.06);transition:border-color .15s}
+form:focus-within{border-color:var(--muted)}
 input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--fg);font:inherit;padding:6px 0}
-.icon{width:30px;height:30px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:transparent;color:var(--muted);transition:background .15s,opacity .15s;flex:none}
+input::placeholder{color:var(--muted)}
+.icon{width:32px;height:32px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:transparent;color:var(--muted);transition:background .15s,opacity .15s,transform .1s;flex:none}
 .icon:hover:not(:disabled){background:var(--line)}
-.icon:disabled{opacity:.35;cursor:default}
-.icon svg{width:15px;height:15px}
-#send{background:var(--accent);color:#fff}
-#send:hover:not(:disabled){filter:brightness(1.1)}
+.icon:active:not(:disabled){transform:scale(.94)}
+.icon:disabled{opacity:.3;cursor:default}
+.icon svg{width:16px;height:16px}
+#send{background:var(--go);color:var(--go-fg)}
+#send:hover:not(:disabled){background:var(--go);opacity:.85}
 #mic.rec{background:#ff3b30;color:#fff;animation:pulse 1.3s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,59,48,.55)}100%{box-shadow:0 0 0 10px rgba(255,59,48,0)}}
 </style></head><body>

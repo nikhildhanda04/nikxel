@@ -18,7 +18,7 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
   if (current && !current.isDestroyed()) { current.close(); return; }
 
   // Beside the avatar on the side with room, level with it, kept in the work area.
-  const W = 320, H = 280, gap = 8;
+  const W = 340, H = 420, gap = 8;
   const wa = screen.getDisplayMatching(avatar).workArea;
   const x = avatar.x + avatar.width + gap + W <= wa.x + wa.width ? avatar.x + avatar.width + gap : avatar.x - gap - W;
   const y = Math.min(Math.max(avatar.y + avatar.height / 2 - H / 2, wa.y), wa.y + wa.height - H);

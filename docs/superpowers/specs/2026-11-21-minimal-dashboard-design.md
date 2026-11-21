@@ -10,7 +10,7 @@ The dashboard got cluttered. It pulled every ERP employee and project, and it ha
   - day items that members Sent tagged to the project;
   - meeting summaries shared to it in one click from the desktop app.
   Everyone in the org can read every project, so HR or a co-founder who isn't on the project can still follow it.
-- **People.** Lists every member with their role. Admins change roles and remove people.
+- **People.** Lists every member with their role. Admins change roles and remove people. Admins can also open any member's sent summaries from here.
 - **Connect.** Unchanged: a pairing code for the desktop app.
 
 ## Non-goals and anti-goals
@@ -62,7 +62,10 @@ The dashboard got cluttered. It pulled every ERP employee and project, and it ha
 - **Invites:**
   - Any member can copy a member invite. Only admins and above can choose admin or co-founder.
   - The invite landing page leads into a two-step onboarding: Install Nikxel (link from `NIKXEL_DOWNLOAD_URL`, macOS and Windows), then Connect.
-- **Visibility:** a user's full sent day is visible only to that user, under My summaries. Others see a person's items only through the projects those items are tagged to. Items with no project are effectively private to their sender. (This changes things: admins previously saw everyone's days on the Team page.)
+- **Visibility:**
+  - Each user sees their own sent days under My summaries.
+  - Owner, co-founder and admin can also read any member's sent days: click a person in People to open their summaries in the same day view, read-only.
+  - Plain members see others' items only through the projects those items are tagged to.
 - **Platforms:** every desktop change goes into both `src/` (Swift) and `windows/` (TS) in the same commit.
 - **Look:** keep the existing lafda styling, tokens and components. Remove unused screens:
   - Team, Charts, Pie, Line, Org, OrgSummary, TeamGrid, TeamDrawer, PeopleTable, Projects;

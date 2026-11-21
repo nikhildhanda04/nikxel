@@ -27,6 +27,7 @@ test('expired code cannot be redeemed (boundary inclusive)', () => {
 });
 test('only the hash of the token is stored', () => {
   const db = mk();
+  db.prepare("INSERT INTO memberships VALUES ('u1','o1','member')").run();
   const { deviceToken } = redeemPairingCode(db, createPairingCode(db, 'u1', 'o1'));
   const rows = db.prepare('SELECT * FROM device_tokens').all();
   assert.equal(rows.length, 1);

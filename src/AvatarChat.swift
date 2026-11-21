@@ -2,8 +2,8 @@ import Cocoa
 import WebKit
 import AVFoundation
 
-/// The small box a single click on the avatar opens: ask about your last two weeks of meetings, days, notes and
-/// projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Same page and behaviour as
+/// The chat a single click on the avatar opens: no panel, just bubbles and a field floating beside it.
+/// Ask about your last two weeks of meetings, days, notes and projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Same page and behaviour as
 /// windows/src/renderer/avatarChat.html; the mic records natively, as in EditChat.
 final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private static var current: AvatarChat?
@@ -12,9 +12,8 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
 
     static func toggle(near avatar: NSRect, agent: MOMGenerator, recording: @escaping () -> Bool) {
         if let c = current { c.window.close(); return }
-        let c = AvatarChat(agent: agent, recording: recording)
+        let c = AvatarChat(agent: agent, recording: recording, near: avatar)
         current = c
-        c.place(near: avatar)
         c.window.makeKeyAndOrderFront(nil)
         c.window.makeFirstResponder(c.web)  // type and Esc at once, without clicking in first
     }
@@ -29,19 +28,21 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private var history: [(q: String, a: String)] = []
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
+    private var hitTimer: Timer?
+    private var hits: [NSRect] = []  // page coordinates, top-left origin
     // Fetched once as the box opens, while the user types; every question reuses it.
     private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
     private let feedReady = DispatchGroup()
     private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
 
-    private init(agent: MOMGenerator, recording: @escaping () -> Bool) {
+    private init(agent: MOMGenerator, recording: @escaping () -> Bool, near avatar: NSRect) {
         self.agent = agent
         self.recording = recording
-        window = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 420),
-                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let (frame, flip) = AvatarChat.frame(near: avatar, size: NSSize(width: 340, height: 460))
+        window = KeyPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let config = WKWebViewConfiguration()
         config.userContentController.addUserScript(WKUserScript(
-            source: "var startRecording = \(recording());", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            source: "var startRecording = \(recording()); var flip = \(flip);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web = WKWebView(frame: .zero, configuration: config)
         super.init()
         config.userContentController.add(self, name: "nx")
@@ -49,28 +50,15 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         window.level = .floating
         window.backgroundColor = .clear
         window.isOpaque = false
-        window.hasShadow = true
+        window.hasShadow = false  // no panel: the bubbles and field carry their own shadows
         window.hidesOnDeactivate = false  // clicking elsewhere leaves it up
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.delegate = self
 
-        let fx = NSVisualEffectView()
-        fx.material = .popover
-        fx.blendingMode = .behindWindow
-        fx.state = .active
-        let r: CGFloat = 18
-        let mask = NSImage(size: NSSize(width: 2 * r + 1, height: 2 * r + 1), flipped: false) { rect in
-            NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill(); return true
-        }
-        mask.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
-        mask.resizingMode = .stretch
-        fx.maskImage = mask
         web.setValue(false, forKey: "drawsBackground")
-        web.autoresizingMask = [.width, .height]
-        window.contentView = fx
-        web.frame = fx.bounds
-        fx.addSubview(web)
+        window.contentView = web
+        window.ignoresMouseEvents = true  // until the page says where its bubbles are
         web.loadHTMLString(AvatarChat.page, baseURL: nil)
 
         feedReady.enter()
@@ -84,19 +72,29 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
             guard let self else { return }
             self.web.evaluateJavaScript("setRecording(\(self.recording()))")
         }
+        // A clear window still swallows clicks, so it takes them only over what the page reported.
+        hitTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let p = self.window.mouseLocationOutsideOfEventStream, h = self.window.frame.height
+            let over = self.hits.contains { $0.contains(NSPoint(x: p.x, y: h - p.y)) }
+            if self.window.ignoresMouseEvents == over { self.window.ignoresMouseEvents = !over }
+        }
     }
 
-    /// Beside the avatar on the side with room, level with it, kept on screen.
-    private func place(near avatar: NSRect) {
+    /// Beside the avatar on the side with room, the field level with its bottom, kept on screen.
+    /// flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
+    private static func frame(near avatar: NSRect, size s: NSSize) -> (NSRect, Bool) {
         let scr = NSScreen.screens.first { $0.frame.intersects(avatar) } ?? NSScreen.main ?? NSScreen.screens[0]
-        let v = scr.visibleFrame, s = window.frame.size, gap: CGFloat = 8
-        let x = avatar.maxX + gap + s.width <= v.maxX ? avatar.maxX + gap : avatar.minX - gap - s.width
-        let y = min(max(avatar.midY - s.height / 2, v.minY), v.maxY - s.height)
-        window.setFrameOrigin(NSPoint(x: x, y: y))
+        let v = scr.visibleFrame, gap: CGFloat = 4
+        let flip = avatar.maxX + gap + s.width > v.maxX
+        let x = flip ? avatar.minX - gap - s.width : avatar.maxX + gap
+        let y = min(max(avatar.minY, v.minY), v.maxY - s.height)
+        return (NSRect(origin: NSPoint(x: x, y: y), size: s), flip)
     }
 
     func windowWillClose(_ notification: Notification) {
         timer?.invalidate(); timer = nil
+        hitTimer?.invalidate(); hitTimer = nil
         recorder?.stop(); recorder = nil
         web.configuration.userContentController.removeScriptMessageHandler(forName: "nx")
         if AvatarChat.current === self { AvatarChat.current = nil }
@@ -110,6 +108,8 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         switch type {
         case "close":
             window.close()
+        case "hit":
+            hits = (body["rects"] as? [[Double]] ?? []).filter { $0.count == 4 }.map { NSRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
         case "send":
             let history = self.history, agent = self.agent, today = Date()
             DispatchQueue.global(qos: .userInitiated).async {
@@ -166,37 +166,32 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         web.evaluateJavaScript("nx.resolve(\(id), \(json)[0])")
     }
 
-    /// Same markup and CSS as windows/src/renderer/avatarChat.html, except the glass: here the
-    /// page is clear over an NSVisualEffectView; Electron can't blur, so Windows tints instead.
+    /// Same markup and CSS as windows/src/renderer/avatarChat.html.
     private static let page = #"""
 <!doctype html><html><head><meta charset="utf-8">
 <style>
-:root{--glass:transparent;--fg:#0d0d0d;--muted:rgba(60,60,67,.62);--bot:rgba(255,255,255,.5);--bot-line:rgba(255,255,255,.75);--me:#2f2f2f;--me-fg:#fff;--line:rgba(0,0,0,.08);--field:rgba(255,255,255,.72);--rim:rgba(255,255,255,.55);--go:#0d0d0d;--go-fg:#fff;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--glass:transparent;--fg:#ececec;--muted:rgba(235,235,245,.55);--bot:rgba(255,255,255,.07);--bot-line:rgba(255,255,255,.1);--me:rgba(255,255,255,.17);--me-fg:#fff;--line:rgba(255,255,255,.1);--field:rgba(255,255,255,.08);--rim:rgba(255,255,255,.14);--go:#ececec;--go-fg:#0d0d0d}}
+:root{--glass:rgba(255,255,255,.66);--rim:rgba(255,255,255,.85);--fg:#0d0d0d;--muted:rgba(60,60,67,.62);--me:rgba(32,32,34,.86);--me-fg:#fff;--line:rgba(0,0,0,.08);--go:#0d0d0d;--go-fg:#fff;--shade:0 6px 22px rgba(0,0,0,.16),0 1px 3px rgba(0,0,0,.08);color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--glass:rgba(38,38,42,.7);--rim:rgba(255,255,255,.14);--fg:#ececec;--muted:rgba(235,235,245,.55);--me:rgba(255,255,255,.88);--me-fg:#0d0d0d;--line:rgba(255,255,255,.1);--go:#ececec;--go-fg:#0d0d0d;--shade:0 6px 22px rgba(0,0,0,.45)}}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:transparent;overflow:hidden;border-radius:18px}
-body{display:flex;flex-direction:column;background:var(--glass);border:1px solid var(--rim);color:var(--fg);font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none}
-header{display:flex;align-items:center;gap:8px;padding:11px 10px 7px 16px;border-bottom:1px solid var(--line)}
-header b{font-size:12.5px;font-weight:600;letter-spacing:.01em}
-#offline{display:none;color:var(--muted);font-size:11px;padding:1px 8px;border:1px solid var(--line);border-radius:999px}
-#offline.on{display:inline-block}
-.sp{flex:1}
-#close{width:24px;height:24px;border-radius:50%;border:0;background:transparent;color:var(--muted);font:16px/1 system-ui;cursor:pointer}
-#close:hover{background:var(--line)}
-#log{flex:1;overflow-y:auto;padding:12px 12px 8px;display:flex;flex-direction:column;gap:10px;scrollbar-width:none}
+html,body{height:100%;margin:0;background:transparent;overflow:hidden}
+body{display:flex;flex-direction:column;padding:6px 10px 10px;color:var(--fg);font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none}
+#log{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:28px 4px 10px;scrollbar-width:none;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 40px)}
 #log::-webkit-scrollbar{display:none}
-.msg{max-width:84%;padding:8px 13px;border-radius:18px;white-space:pre-wrap;word-wrap:break-word;-webkit-user-select:text;user-select:text;animation:in .22s ease-out}
-.bot{align-self:flex-start;background:var(--bot);border:1px solid var(--bot-line);border-bottom-left-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+#log>:first-child{margin-top:auto}
+.msg{max-width:86%;padding:8px 13px;border-radius:18px;white-space:pre-wrap;word-wrap:break-word;-webkit-user-select:text;user-select:text;animation:in .22s ease-out;box-shadow:var(--shade)}
+.bot{align-self:flex-start;background:var(--glass);border:1px solid var(--rim);border-bottom-left-radius:6px}
 .me{align-self:flex-end;background:var(--me);color:var(--me-fg);border-bottom-right-radius:6px}
-.hello{align-self:center;max-width:100%;color:var(--muted);background:transparent;border-color:transparent;box-shadow:none;font-size:12.5px;margin-top:6px}
+body.flip .bot{align-self:flex-end;border-bottom-left-radius:18px;border-bottom-right-radius:6px}
+body.flip .me{align-self:flex-start;border-bottom-right-radius:18px;border-bottom-left-radius:6px}
 .dots{display:inline-flex;gap:4px;padding:4px 0}
 .dots i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:bob 1.1s infinite}
 .dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
 .hint{color:var(--muted);font-size:11.5px;margin-left:6px}
 @keyframes bob{0%,70%,100%{opacity:.3;transform:translateY(0)}35%{opacity:1;transform:translateY(-3px)}}
 @keyframes in{from{opacity:0;transform:translateY(6px) scale(.98)}}
-form{display:flex;align-items:center;gap:4px;margin:6px 10px 10px;padding:4px 4px 4px 15px;border:1px solid var(--line);border-radius:999px;background:var(--field);box-shadow:0 2px 10px rgba(0,0,0,.06);transition:border-color .15s}
-form:focus-within{border-color:var(--muted)}
+#offline{display:none;align-self:center;margin-bottom:6px;color:var(--muted);font-size:11px;padding:2px 9px;border-radius:999px;background:var(--glass);border:1px solid var(--rim)}
+#offline.on{display:block}
+form{flex:none;display:flex;align-items:center;gap:4px;padding:4px 4px 4px 15px;border:1px solid var(--rim);border-radius:999px;background:var(--glass);box-shadow:var(--shade)}
 input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--fg);font:inherit;padding:6px 0}
 input::placeholder{color:var(--muted)}
 .icon{width:32px;height:32px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:transparent;color:var(--muted);transition:background .15s,opacity .15s,transform .1s;flex:none}
@@ -209,8 +204,8 @@ input::placeholder{color:var(--muted)}
 #mic.rec{background:#ff3b30;color:#fff;animation:pulse 1.3s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,59,48,.55)}100%{box-shadow:0 0 0 10px rgba(255,59,48,0)}}
 </style></head><body>
-<header><b>Ask Nikxel</b><span id="offline">projects offline</span><span class="sp"></span><button id="close" title="Close (Esc)">×</button></header>
 <div id="log"></div>
+<span id="offline">projects offline</span>
 <form id="f"><input id="input" placeholder="Ask about your meetings, days, projects…" autocomplete="off">
 <button type="button" class="icon" id="mic" title="Tap, speak, tap again to send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></button>
 <button class="icon" id="send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>
@@ -224,8 +219,10 @@ var api = {
   send: function (t) { return ask("send", t); },
   close: function () { webkit.messageHandlers.nx.postMessage({ type: "close" }); },
   micStart: function () { return ask("mic").then(function (r) { return r === "recording"; }); },
-  micStop: function () { return ask("mic"); }
+  micStop: function () { return ask("mic"); },
+  hit: function (r) { webkit.messageHandlers.nx.postMessage({ type: "hit", rects: r }); }
 };
+var flipped = typeof flip !== "undefined" && flip;
 </script>
 <script>
 // Shared with windows/src/renderer/avatarChat.ts: everything below uses only `api`.
@@ -263,7 +260,21 @@ document.getElementById("f").onsubmit = function (e) {
   input.value = ""; run(t);
 };
 input.oninput = sync;
-document.getElementById("close").onclick = function () { api.close(); };
+// Only the bubbles and the field take clicks; the clear space around them passes through.
+function report() {
+  var L = log.getBoundingClientRect(), r = [];
+  [].forEach.call(log.querySelectorAll(".msg"), function (e) {
+    var b = e.getBoundingClientRect(), t = Math.max(b.top, L.top), u = Math.min(b.bottom, L.bottom);
+    if (u > t) r.push([b.left, t, b.width, u - t]);
+  });
+  [document.getElementById("f"), document.getElementById("offline")].forEach(function (e) {
+    var b = e.getBoundingClientRect(); if (b.height) r.push([b.left, b.top, b.width, b.height]);
+  });
+  api.hit(r);
+}
+new MutationObserver(report).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+log.onscroll = report; window.onresize = report;
+if (flipped) document.body.classList.add("flip");
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") api.close(); });
 mic.onclick = function () {
   if (!listening) {

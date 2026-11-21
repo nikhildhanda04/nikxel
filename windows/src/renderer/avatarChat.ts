@@ -8,6 +8,7 @@ declare global {
       voice(pcm: Uint8Array): Promise<string>;
       close(): Promise<void>;
       onRecording(cb: (on: boolean) => void): void;
+      hit(rects: number[][]): void;
     };
   }
 }
@@ -105,7 +106,22 @@ document.getElementById("f")!.onsubmit = e => {
   void run(t);
 };
 input.oninput = sync;
-document.getElementById("close")!.onclick = api.close;
+// Only the bubbles and the field take clicks; the clear space around them passes through.
+function report(): void {
+  const L = log.getBoundingClientRect(), r: number[][] = [];
+  for (const e of log.querySelectorAll(".msg")) {
+    const b = e.getBoundingClientRect(), t = Math.max(b.top, L.top), u = Math.min(b.bottom, L.bottom);
+    if (u > t) r.push([b.left, t, b.width, u - t]);
+  }
+  for (const e of [document.getElementById("f")!, document.getElementById("offline")!]) {
+    const b = e.getBoundingClientRect();
+    if (b.height) r.push([b.left, b.top, b.width, b.height]);
+  }
+  bridge.hit(r);
+}
+new MutationObserver(report).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+log.onscroll = report; window.onresize = report;
+if (new URLSearchParams(location.search).get("flip") === "1") document.body.classList.add("flip");
 document.addEventListener("keydown", e => { if (e.key === "Escape") api.close(); });
 
 mic.onclick = async () => {

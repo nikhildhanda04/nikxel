@@ -8,7 +8,7 @@ import { wavHeader } from "../recording/wavWriter";
 import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
 import { CloudSync } from "./cloudSync";
 
-/// The small box a single click on the avatar opens: ask about your last two weeks of meetings, days, notes and
+/// The chat a single click on the avatar opens (no panel, just bubbles and a field floating beside it): ask about your last two weeks of meetings, days, notes and
 /// projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Port of src/AvatarChat.swift.
 
 let current: BrowserWindow | null = null;
@@ -17,17 +17,20 @@ let seq = 0;
 export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => boolean): void {
   if (current && !current.isDestroyed()) { current.close(); return; }
 
-  // Beside the avatar on the side with room, level with it, kept in the work area.
-  const W = 340, H = 420, gap = 8;
+  // Beside the avatar on the side with room, the field level with its bottom, kept in the work area.
+  // flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
+  const W = 340, H = 460, gap = 4;
   const wa = screen.getDisplayMatching(avatar).workArea;
-  const x = avatar.x + avatar.width + gap + W <= wa.x + wa.width ? avatar.x + avatar.width + gap : avatar.x - gap - W;
-  const y = Math.min(Math.max(avatar.y + avatar.height / 2 - H / 2, wa.y), wa.y + wa.height - H);
+  const flip = avatar.x + avatar.width + gap + W > wa.x + wa.width;
+  const x = flip ? avatar.x - gap - W : avatar.x + avatar.width + gap;
+  const y = Math.min(Math.max(avatar.y + avatar.height - H, wa.y), wa.y + wa.height - H);
 
   const id = `c${++seq}`;
   const win = new BrowserWindow({
     x: Math.round(x), y: Math.round(y), width: W, height: H,
     frame: false,
     transparent: true,
+    hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
     minimizable: false,
@@ -63,14 +66,25 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
     try { return (readText(await new Transcriber().transcribe(wav, "txt")) ?? "").trim(); } catch { return ""; }
   });
   ipcMain.handle(`chat:close:${id}`, () => { if (!win.isDestroyed()) win.close(); });
+  // A clear window still swallows clicks, so it takes them only over the bubbles and field the page reports.
+  let hits: number[][] = [], ignoring = false;
+  ipcMain.on(`chat:hit:${id}`, (_e, rects: number[][]) => { hits = rects; });
+  const hitTimer = setInterval(() => {
+    if (win.isDestroyed()) return;
+    const c = screen.getCursorScreenPoint(), b = win.getBounds(), px = c.x - b.x, py = c.y - b.y;
+    const over = hits.some(([x, y, w, h]) => px >= x && px < x + w && py >= y && py < y + h);
+    if (ignoring === over) { ignoring = !over; win.setIgnoreMouseEvents(ignoring); }
+  }, 50);
 
   // A recording can start or stop while the box is open; the mic follows it.
   const timer = setInterval(() => { if (!win.isDestroyed()) win.webContents.send("chat:recording", recording()); }, 1000);
   win.on("closed", () => {
     clearInterval(timer);
+    clearInterval(hitTimer);
+    ipcMain.removeAllListeners(`chat:hit:${id}`);
     for (const ch of ["send", "voice", "close"]) ipcMain.removeHandler(`chat:${ch}:${id}`);
     if (current === win) current = null;
   });
   win.once("ready-to-show", () => { win.show(); win.focus(); });
-  win.loadFile(rendererPath("avatarChat"), { query: { id, rec: recording() ? "1" : "0" } });
+  win.loadFile(rendererPath("avatarChat"), { query: { id, rec: recording() ? "1" : "0", flip: flip ? "1" : "0" } });
 }

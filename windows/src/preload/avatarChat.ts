@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld("nikxelChat", {
   voice: (pcm: Uint8Array) => ipcRenderer.invoke(`chat:voice:${id}`, pcm),
   close: () => ipcRenderer.invoke(`chat:close:${id}`),
   onRecording: (cb: (on: boolean) => void) => ipcRenderer.on("chat:recording", (_e, on: boolean) => cb(on)),
+  hit: (rects: number[][]) => ipcRenderer.send(`chat:hit:${id}`, rects),
 });

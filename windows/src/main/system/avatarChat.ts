@@ -14,7 +14,7 @@ import { CloudSync } from "./cloudSync";
 let current: BrowserWindow | null = null;
 let seq = 0;
 
-export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => boolean): void {
+export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGenerator, recording: () => boolean): void {
   if (current && !current.isDestroyed()) { current.close(); return; }
 
   // Beside the avatar on the side with room, the field level with its bottom, kept in the work area.
@@ -66,6 +66,15 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
     try { return (readText(await new Transcriber().transcribe(wav, "txt")) ?? "").trim(); } catch { return ""; }
   });
   ipcMain.handle(`chat:close:${id}`, () => { if (!win.isDestroyed()) win.close(); });
+  // Moves with Nikxel when it's dragged (Windows doesn't carry child windows along).
+  let last = pinnedTo.getBounds();
+  const follow = () => {
+    if (win.isDestroyed()) return;
+    const b = pinnedTo.getBounds(), w = win.getBounds();
+    win.setBounds({ x: w.x + b.x - last.x, y: w.y + b.y - last.y, width: W, height: H });
+    last = b;
+  };
+  pinnedTo.on("move", follow);
   // A clear window still swallows clicks, so it takes them only over the bubbles and field the page reports.
   let hits: number[][] = [], ignoring = false;
   ipcMain.on(`chat:hit:${id}`, (_e, rects: number[][]) => { hits = rects; });
@@ -81,6 +90,7 @@ export function toggle(avatar: Rectangle, agent: MOMGenerator, recording: () => 
   win.on("closed", () => {
     clearInterval(timer);
     clearInterval(hitTimer);
+    pinnedTo.removeListener("move", follow);
     ipcMain.removeAllListeners(`chat:hit:${id}`);
     for (const ch of ["send", "voice", "close"]) ipcMain.removeHandler(`chat:${ch}:${id}`);
     if (current === win) current = null;

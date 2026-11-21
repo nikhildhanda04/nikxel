@@ -82,7 +82,7 @@ class NikxelApp {
     this.meetingCoordinator = new MeetingCoordinator(sm);
     this.avatar = createAvatarWindow(sm, {
       onDoubleClick: () => this.meetingCoordinator.toggleRecording(false),
-      onClick: avatar => AvatarChat.toggle(avatar, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
+      onClick: avatar => AvatarChat.toggle(avatar, this.avatar.window, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
     });
     this.inputHandler = new InputHandler(sm, () => this.avatar.recordKeystroke());
     // Puff BEFORE the window shows, so the first frame already has the avatar

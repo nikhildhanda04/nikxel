@@ -61,7 +61,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let f = self.window.frame, a = view.avatarCenter, h = view.halfChar
             let mc = self.meetingCoordinator!
             AvatarChat.toggle(near: NSRect(x: f.minX + a.x - h, y: f.minY + a.y - h, width: 2 * h, height: 2 * h),
-                              agent: mc.momGen, recording: { mc.isRecording })
+                              pinnedTo: self.window, agent: mc.momGen, recording: { mc.isRecording })
         }
 
         calendarWatcher = GoogleCalendarWatcher(stateMachine: stateMachine)

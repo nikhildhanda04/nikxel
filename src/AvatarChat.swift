@@ -10,11 +10,12 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     // Held here: transcribe() bails out quietly if its Transcriber is gone.
     private static let transcriber = Transcriber()
 
-    static func toggle(near avatar: NSRect, agent: MOMGenerator, recording: @escaping () -> Bool) {
+    static func toggle(near avatar: NSRect, pinnedTo parent: NSWindow, agent: MOMGenerator, recording: @escaping () -> Bool) {
         if let c = current { c.window.close(); return }
         let c = AvatarChat(agent: agent, recording: recording, near: avatar)
         current = c
         c.window.makeKeyAndOrderFront(nil)
+        parent.addChildWindow(c.window, ordered: .above)  // moves with Nikxel when it's dragged
         c.window.makeFirstResponder(c.web)  // type and Esc at once, without clicking in first
     }
 
@@ -95,6 +96,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     func windowWillClose(_ notification: Notification) {
         timer?.invalidate(); timer = nil
         hitTimer?.invalidate(); hitTimer = nil
+        window.parent?.removeChildWindow(window)
         recorder?.stop(); recorder = nil
         web.configuration.userContentController.removeScriptMessageHandler(forName: "nx")
         if AvatarChat.current === self { AvatarChat.current = nil }

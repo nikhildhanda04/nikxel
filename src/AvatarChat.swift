@@ -15,7 +15,12 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         let c = AvatarChat(agent: agent, recording: recording, near: avatar)
         current = c
         c.window.makeKeyAndOrderFront(nil)
-        parent.addChildWindow(c.window, ordered: .above)  // moves with Nikxel when it's dragged
+        // Follows Nikxel when it moves, re-placed each time so it stays on the side with room and on screen.
+        let start = parent.frame.origin
+        c.moved = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: parent, queue: .main) { [weak c] _ in
+            let o = parent.frame.origin
+            c?.place(near: avatar.offsetBy(dx: o.x - start.x, dy: o.y - start.y))
+        }
         c.window.makeFirstResponder(c.web)  // type and Esc at once, without clicking in first
     }
 
@@ -30,6 +35,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private var hitTimer: Timer?
+    private var moved: NSObjectProtocol?
     private var hits: [NSRect] = []  // page coordinates, top-left origin
     // Fetched once as the box opens, while the user types; every question reuses it.
     private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
@@ -82,21 +88,28 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         }
     }
 
-    /// Beside the avatar on the side with room, the field level with its bottom, kept on screen.
+    /// Beside the avatar on the side with room (right first), the field level with its bottom, kept on screen.
     /// flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
     private static func frame(near avatar: NSRect, size s: NSSize) -> (NSRect, Bool) {
         let scr = NSScreen.screens.first { $0.frame.intersects(avatar) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = scr.visibleFrame, gap: CGFloat = 4
-        let flip = avatar.maxX + gap + s.width > v.maxX
-        let x = flip ? avatar.minX - gap - s.width : avatar.maxX + gap
+        let right = v.maxX - avatar.maxX, left = avatar.minX - v.minX
+        let flip = right < s.width + gap && left > right
+        let x = min(max(flip ? avatar.minX - gap - s.width : avatar.maxX + gap, v.minX), v.maxX - s.width)
         let y = min(max(avatar.minY, v.minY), v.maxY - s.height)
         return (NSRect(origin: NSPoint(x: x, y: y), size: s), flip)
+    }
+
+    private func place(near avatar: NSRect) {
+        let (f, flip) = AvatarChat.frame(near: avatar, size: window.frame.size)
+        window.setFrame(f, display: true)
+        web.evaluateJavaScript("document.body.classList.toggle('flip', \(flip))")
     }
 
     func windowWillClose(_ notification: Notification) {
         timer?.invalidate(); timer = nil
         hitTimer?.invalidate(); hitTimer = nil
-        window.parent?.removeChildWindow(window)
+        if let m = moved { NotificationCenter.default.removeObserver(m); moved = nil }
         recorder?.stop(); recorder = nil
         web.configuration.userContentController.removeScriptMessageHandler(forName: "nx")
         if AvatarChat.current === self { AvatarChat.current = nil }

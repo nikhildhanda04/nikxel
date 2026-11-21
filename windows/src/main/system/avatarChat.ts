@@ -13,21 +13,26 @@ import { CloudSync } from "./cloudSync";
 
 let current: BrowserWindow | null = null;
 let seq = 0;
+const W = 340, H = 460, gap = 4;
+
+/// Beside the avatar on the side with room (right first), the field level with its bottom, kept in the work area.
+/// flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
+function place(avatar: Rectangle): { x: number; y: number; flip: boolean } {
+  const wa = screen.getDisplayMatching(avatar).workArea;
+  const right = wa.x + wa.width - (avatar.x + avatar.width), left = avatar.x - wa.x;
+  const flip = right < W + gap && left > right;
+  const x = Math.min(Math.max(flip ? avatar.x - gap - W : avatar.x + avatar.width + gap, wa.x), wa.x + wa.width - W);
+  const y = Math.min(Math.max(avatar.y + avatar.height - H, wa.y), wa.y + wa.height - H);
+  return { x: Math.round(x), y: Math.round(y), flip };
+}
 
 export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGenerator, recording: () => boolean): void {
   if (current && !current.isDestroyed()) { current.close(); return; }
 
-  // Beside the avatar on the side with room, the field level with its bottom, kept in the work area.
-  // flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
-  const W = 340, H = 460, gap = 4;
-  const wa = screen.getDisplayMatching(avatar).workArea;
-  const flip = avatar.x + avatar.width + gap + W > wa.x + wa.width;
-  const x = flip ? avatar.x - gap - W : avatar.x + avatar.width + gap;
-  const y = Math.min(Math.max(avatar.y + avatar.height - H, wa.y), wa.y + wa.height - H);
-
+  const { x, y, flip } = place(avatar);
   const id = `c${++seq}`;
   const win = new BrowserWindow({
-    x: Math.round(x), y: Math.round(y), width: W, height: H,
+    x, y, width: W, height: H,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -66,13 +71,14 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
     try { return (readText(await new Transcriber().transcribe(wav, "txt")) ?? "").trim(); } catch { return ""; }
   });
   ipcMain.handle(`chat:close:${id}`, () => { if (!win.isDestroyed()) win.close(); });
-  // Moves with Nikxel when it's dragged (Windows doesn't carry child windows along).
-  let last = pinnedTo.getBounds();
+  // Follows Nikxel when it moves, re-placed each time so it stays on the side with room and in the work area.
+  const start = pinnedTo.getBounds();
   const follow = () => {
     if (win.isDestroyed()) return;
-    const b = pinnedTo.getBounds(), w = win.getBounds();
-    win.setBounds({ x: w.x + b.x - last.x, y: w.y + b.y - last.y, width: W, height: H });
-    last = b;
+    const b = pinnedTo.getBounds();
+    const p = place({ ...avatar, x: avatar.x + b.x - start.x, y: avatar.y + b.y - start.y });
+    win.setBounds({ x: p.x, y: p.y, width: W, height: H });
+    void win.webContents.executeJavaScript(`document.body.classList.toggle("flip", ${p.flip})`);
   };
   pinnedTo.on("move", follow);
   // A clear window still swallows clicks, so it takes them only over the bubbles and field the page reports.

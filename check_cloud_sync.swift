@@ -45,6 +45,8 @@ import Foundation
         try? FileManager.default.createDirectory(atPath: tmp + "/.nikxel", withIntermediateDirectories: true)
         try? Data(#"[{"id":"old","name":"Old Org"}]"#.utf8).write(to: URL(fileURLWithPath: cache))
         check(!CloudSync.pair("123456", post: { _, _, _ in nil }) && FileManager.default.fileExists(atPath: cache), "failed pair keeps the cache")
+        let nf = CloudSync.projectFeed(get: { _, _ in Data("[]".utf8) })
+        check(nf.feed.isEmpty && !nf.offline, "no token -> ([], false)")
         let ok = CloudSync.pair("123456", post: { p, b, _ in
             (p == "/api/pair" && (b["code"] as? String) == "123456") ? Data(#"{"deviceToken":"tok123"}"#.utf8) : nil })
         check(ok && CloudSync.token == "tok123", "pair stores token")
@@ -87,6 +89,17 @@ import Foundation
                                      post: { p, b, _ in sharePath = p; shared = b; return Data() }), "shareMeeting ok")
         check(sharePath == "/api/projects/p1/meetings" && Set(shared?.keys.map { $0 } ?? []) == ["meeting_id", "title", "date", "body"] && (shared?["body"] as? String) == sb, "share request")
         check(!CloudSync.shareMeeting(projectID: "p1", meetingID: "m", title: "t", date: "2026-11-21", body: "b", post: { _, _, _ in nil }), "failed share -> false")
+
+        // projectFeed(): token "tok123".
+        let feedCache = tmp + "/.nikxel/project-feed.json"
+        check(CloudSync.projectFeed(get: { _, _ in nil }).offline, "no cache, fetch fails -> offline")
+        var feedPath: String?
+        let ff = CloudSync.projectFeed(get: { p, _ in feedPath = p; return Data(#"[{"id":"p1","name":"POS","days":[]}]"#.utf8) })
+        check(ff.feed.count == 1 && !ff.offline && feedPath == "/api/device/projects/feed?days=14" && FileManager.default.fileExists(atPath: feedCache), "feed fetched and cached")
+        let fc = CloudSync.projectFeed(get: { _, _ in nil })
+        check(fc.feed.count == 1 && !fc.offline, "fetch fails -> cached feed, not offline")
+        _ = CloudSync.pair("123456", post: { _, _, _ in Data(#"{"deviceToken":"tok123"}"#.utf8) })
+        check(!FileManager.default.fileExists(atPath: feedCache), "pair clears the feed cache")
 
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED"); exit(fails == 0 ? 0 : 1)
     }

@@ -274,8 +274,8 @@ export class MOMGenerator {
   // summaries and by LLMResponder for chat replies.
   /// `kind` labels the run in UsageLog. `claudeModel` overrides the model
   /// when the agent is Claude Code; other agents ignore it.
-  async runPrompt(prompt: string, kind: string, claudeModel?: string): Promise<string> {
-    return this.withFallback((bin, agent) => this.executeAgent(bin, agent, prompt, { kind, claudeModel }));
+  async runPrompt(prompt: string, kind: string, claudeModel?: string, timeoutSec?: number): Promise<string> {
+    return this.withFallback((bin, agent) => this.executeAgent(bin, agent, prompt, { kind, claudeModel, timeoutSec }));
   }
 
   /// Runs `body` on the connected agent, then on each other installed one

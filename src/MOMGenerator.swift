@@ -337,9 +337,10 @@ class MOMGenerator {
     // summaries and by LLMResponder for chat replies.
     /// `kind` labels the run in UsageLog. `claudeModel` overrides the model
     /// when the agent is Claude Code; other agents ignore it.
-    func runPrompt(_ prompt: String, kind: String, claudeModel: String? = nil) throws -> String {
+    func runPrompt(_ prompt: String, kind: String, claudeModel: String? = nil,
+                   timeout: Double = MOMGenerator.timeoutSec) throws -> String {
         try withFallback { bin, agent in
-            try executeAgent(binary: bin, agent: agent, prompt: prompt, kind: kind, claudeModel: claudeModel)
+            try executeAgent(binary: bin, agent: agent, prompt: prompt, kind: kind, claudeModel: claudeModel, timeout: timeout)
         }
     }
 

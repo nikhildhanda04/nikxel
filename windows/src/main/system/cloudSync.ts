@@ -57,6 +57,7 @@ export class CloudSync {
       fs.chmodSync(CloudSync.tokenFile(), 0o600); // best-effort on Windows
     } catch { /* chmod unsupported */ }
     try { fs.rmSync(CloudSync.projectsFile(), { force: true }); } catch { /* best-effort */ } // the last user's project names
+    try { fs.rmSync(CloudSync.projectFeedFile(), { force: true }); } catch { /* best-effort */ }
     return CloudSync.token() === r.deviceToken;
   }
 
@@ -102,6 +103,22 @@ export class CloudSync {
       return fresh;
     }
     try { return parse(JSON.parse(readText(CloudSync.projectsFile()) ?? "null")) ?? []; } catch { return []; }
+  }
+
+  static projectFeedFile(): string { return nikxelPath("project-feed.json"); }
+
+  /// The last 14 days of the user's project work (chat context). Cached to project-feed.json; the cache when the
+  /// dashboard can't be reached. offline is true only when neither is available; { feed: [], offline: false } when unpaired.
+  static async projectFeed(get: Getter = CloudSync.httpGet): Promise<{ feed: any[]; offline: boolean }> {
+    const tok = CloudSync.token();
+    if (!tok) return { feed: [], offline: false };
+    const fresh = await get("/api/device/projects/feed?days=14", tok);
+    if (Array.isArray(fresh)) {
+      try { writeAtomic(CloudSync.projectFeedFile(), JSON.stringify(fresh)); } catch { /* cache is best-effort */ }
+      return { feed: fresh, offline: false };
+    }
+    try { const c = JSON.parse(readText(CloudSync.projectFeedFile()) ?? "null"); if (Array.isArray(c)) return { feed: c, offline: false }; } catch { /* no cache */ }
+    return { feed: [], offline: true };
   }
 
   /// The meeting minutes as shared to a project: everything but the "## Client Summary" section

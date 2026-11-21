@@ -50,6 +50,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   fs.writeFileSync(CS.projectsFile(), '[{"id":"old","name":"Old Org"}]');
   assert.equal(await CS.pair("123456", async () => null), false);
   assert.ok(fs.existsSync(CS.projectsFile()), "failed pair keeps the cache");
+  assert.deepEqual(await CS.projectFeed(async () => []), { feed: [], offline: false }, "no token");
   const ok = await CS.pair("123456", async (p: string, b: any) =>
     p === "/api/pair" && b.code === "123456" ? { deviceToken: "tok123" } : null);
   assert.equal(ok, true);
@@ -94,4 +95,15 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.equal(sp, "/api/projects/p1/meetings");
   assert.deepEqual(sh, { meeting_id: "2026-11-21-101500", title: "Meeting — 21 Nov", date: "2026-11-21", body: sb });
   assert.equal(await CS.shareMeeting("p1", "m", "t", "2026-11-21", "b", async () => null), false);
+
+  const feedFile = require("path").join(require("path").dirname(CS.projectsFile()), "project-feed.json");
+  assert.equal((await CS.projectFeed(async () => null)).offline, true, "no cache, fetch fails");
+  let fp: any;
+  const ff = await CS.projectFeed(async (p: string) => { fp = p; return [{ id: "p1", name: "POS", days: [] }]; });
+  assert.deepEqual([ff.feed.length, ff.offline, fp], [1, false, "/api/device/projects/feed?days=14"]);
+  assert.ok(fs.existsSync(feedFile));
+  const fc = await CS.projectFeed(async () => null);
+  assert.deepEqual([fc.feed.length, fc.offline], [1, false], "cached feed");
+  await CS.pair("123456", async () => ({ deviceToken: "tok123" }));
+  assert.ok(!fs.existsSync(feedFile), "pair clears the feed cache");
 });

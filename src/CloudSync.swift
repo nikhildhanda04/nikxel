@@ -54,6 +54,7 @@ enum CloudSync {
                                              attributes: [.posixPermissions: 0o600]) else { return false }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFile)
         try? FileManager.default.removeItem(atPath: projectsFile) // the last user's project names
+        try? FileManager.default.removeItem(atPath: projectFeedFile)
         return true
     }
 
@@ -116,6 +117,23 @@ enum CloudSync {
             return fresh
         }
         return parse(FileManager.default.contents(atPath: projectsFile)) ?? []
+    }
+
+    private static var projectFeedFile: String { NSHomeDirectory() + "/.nikxel/project-feed.json" }
+
+    /// The last 14 days of the user's project work (chat context). Cached to project-feed.json; the cache when the
+    /// dashboard can't be reached. offline is true only when neither is available; ([], false) when unpaired.
+    static func projectFeed(get: Getter = httpGet) -> (feed: [[String: Any]], offline: Bool) {
+        guard let tok = token else { return ([], false) }
+        func parse(_ d: Data?) -> [[String: Any]]? { d.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]] }
+        let d = get("/api/device/projects/feed?days=14", tok)
+        if let fresh = parse(d) {
+            try? FileManager.default.createDirectory(atPath: (projectFeedFile as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try? d?.write(to: URL(fileURLWithPath: projectFeedFile), options: .atomic)
+            return (fresh, false)
+        }
+        if let cached = parse(FileManager.default.contents(atPath: projectFeedFile)) { return (cached, false) }
+        return ([], true)
     }
 
     /// The meeting minutes as shared to a project: everything but the "## Client Summary" section

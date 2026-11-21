@@ -14,6 +14,19 @@ const cleanDesc = (v) => { if (typeof v !== 'string' || v.length > 200) throw ba
 // Latest summary-item date per project id, for a whole org.
 const itemRows = (db, orgId) => db.prepare("SELECT user_id, date, items FROM summaries WHERE org_id = ? AND kind = 'day' ORDER BY date DESC").all(orgId);
 
+const userNames = (db) => Object.fromEntries(db.prepare('SELECT id, name FROM users').all().map((u) => [u.id, u.name]));
+
+// A project's items and meeting shares grouped by date, newest first.
+function projectDays(db, orgId, p, names) {
+  const byDate = {};
+  const day = (d) => (byDate[d] ??= { date: d, meetings: [], items: [] });
+  for (const s of itemRows(db, orgId))
+    for (const i of JSON.parse(s.items)) if (i.project_id === p.id) day(s.date).items.push({ ...i, user_id: s.user_id, name: names[s.user_id] ?? null });
+  for (const m of db.prepare('SELECT id, title, body, user_id, date FROM meeting_shares WHERE project_id = ? AND org_id = ? ORDER BY created_at').all(p.id, orgId))
+    day(m.date).meetings.push({ id: m.id, title: m.title, body: m.body, user_id: m.user_id, name: names[m.user_id] ?? null });
+  return Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date));
+}
+
 export function projectRouter(db, anyMember) {
   const r = express.Router();
   const uid = () => crypto.randomUUID();
@@ -67,22 +80,24 @@ export function projectRouter(db, anyMember) {
 
   r.get('/projects/:id', anyMember, (req, res) => {
     const p = mine(req), { orgId } = req.session;
-    const names = Object.fromEntries(db.prepare('SELECT id, name FROM users').all().map((u) => [u.id, u.name]));
-    const byDate = {};
-    const day = (d) => (byDate[d] ??= { date: d, meetings: [], items: [] });
-    for (const s of itemRows(db, orgId))
-      for (const i of JSON.parse(s.items)) if (i.project_id === p.id) day(s.date).items.push({ ...i, user_id: s.user_id, name: names[s.user_id] ?? null });
-    for (const m of db.prepare('SELECT id, title, body, user_id, date FROM meeting_shares WHERE project_id = ? AND org_id = ? ORDER BY created_at').all(p.id, orgId))
-      day(m.date).meetings.push({ id: m.id, title: m.title, body: m.body, user_id: m.user_id, name: names[m.user_id] ?? null });
+    const days = projectDays(db, orgId, p, userNames(db));
     res.json({
       project: { id: p.id, name: p.name, description: p.description, archived: !!p.archived, members: members(p.id), can_edit: writer(req, p) },
-      days: Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date)),
+      days,
     });
   });
 
   r.get('/device/projects', deviceAuth(db), (req, res) => {
     const { userId, orgId } = req.device;
     res.json(db.prepare('SELECT p.id, p.name FROM projects p JOIN project_users pu ON pu.project_id = p.id WHERE pu.user_id = ? AND p.org_id = ? AND p.archived = 0 ORDER BY p.name').all(userId, orgId));
+  });
+
+  r.get('/device/projects/feed', deviceAuth(db), (req, res) => {
+    const { userId, orgId } = req.device, n = Math.min(60, Math.max(1, parseInt(req.query.days, 10) || 14));
+    const since = new Date(Date.now() - (n - 1) * 864e5).toISOString().slice(0, 10), names = userNames(db);
+    res.json(db.prepare('SELECT p.id, p.name FROM projects p JOIN project_users pu ON pu.project_id = p.id WHERE pu.user_id = ? AND p.org_id = ? AND p.archived = 0 ORDER BY p.name').all(userId, orgId)
+      .map((p) => ({ ...p, days: projectDays(db, orgId, p, names).filter((d) => d.date >= since)
+        .map((d) => ({ date: d.date, meetings: d.meetings.map(({ title, body, name }) => ({ title, body, name })), items: d.items.map(({ what, section, name }) => ({ what, section, name })) })) })));
   });
 
   r.post('/projects/:id/meetings', deviceAuth(db), (req, res) => {

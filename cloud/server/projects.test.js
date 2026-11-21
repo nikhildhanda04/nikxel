@@ -74,3 +74,32 @@ test('projects: create, membership, archive, feed, shares', async () => {
   assert.equal(JSON.parse(db.prepare("SELECT items FROM summaries WHERE user_id='memA' AND date='2026-11-22'").get().items)[0].project_id, null);
   c.close();
 });
+
+test('device feed: own projects, window, clamp', async () => {
+  const c = await boot(); const { api } = c;
+  const h = (u) => c.cookie(u, 'A', 'member');
+  const mk = async (name, u = 'memA') => (await api('POST', '/api/projects', { headers: h(u), body: { name } })).json.id;
+  const p1 = await mk('P1'), p3 = await mk('P3');
+  await mk('P2', 'memA2'); // memA not a member
+  await api('PUT', `/api/projects/${p3}/members/memA2`, { headers: h('memA') });
+  const dev = c.deviceFor('memA', 'A'), dev2 = c.deviceFor('memA2', 'A');
+  const iso = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10), today = iso(0), old = iso(20);
+  const item = (i, project) => ({ id: i, section: 'sec' + i, project, what: 'w' + i, type: 'coding', minutes: 5, details: [] });
+  for (const d of [today, old]) {
+    assert.equal((await api('POST', '/api/summaries', { headers: dev, body: { kind: 'day', date: d, headline: '', items: [item('a' + d, 'P1'), item('x' + d, 'P3')] } })).status, 200);
+    assert.equal((await api('POST', `/api/projects/${p1}/meetings`, { headers: dev, body: { meeting_id: 'm' + d, title: 'T' + d, date: d, body: 'b' + d } })).status, 200);
+  }
+  const feed = (q, headers = dev) => api('GET', '/api/device/projects/feed' + q, { headers });
+  let f = (await feed('?days=14')).json;
+  assert.deepEqual(f.map((x) => x.name), ['P1', 'P3']);
+  assert.equal(f[0].days.length, 1);
+  assert.deepEqual(f[0].days[0].meetings.map((m) => [m.title, m.body, m.name]), [['T' + today, 'b' + today, 'memA']]);
+  assert.deepEqual(f[0].days[0].items.map((i) => [i.what, i.section, i.name]), [['wa' + today, 'seca' + today, 'memA']]);
+  assert.equal((await feed('?days=999')).json[0].days.length, 2); // 60
+  assert.equal((await feed('?days=abc')).json[0].days.length, 1); // 14
+  assert.deepEqual((await feed('', dev2)).json.map((x) => x.name), ['P2', 'P3']);
+  await api('PATCH', `/api/projects/${p3}`, { headers: h('memA'), body: { archived: true } });
+  assert.deepEqual((await feed('')).json.map((x) => x.name), ['P1']);
+  assert.equal((await api('GET', '/api/device/projects/feed')).status, 401);
+  c.close();
+});

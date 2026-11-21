@@ -170,7 +170,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     if (req.body?.kind !== 'day') throw bad('bad summary');
     const { date, headline, items } = cleanDay(req.body);
     const { userId, orgId } = req.device; // never from the body
-    const find = db.prepare('SELECT p.id FROM projects p JOIN project_users pu ON pu.project_id = p.id WHERE pu.user_id = ? AND p.org_id = ? AND lower(p.name) = lower(?)');
+    const find = db.prepare('SELECT p.id FROM projects p JOIN project_users pu ON pu.project_id = p.id WHERE pu.user_id = ? AND p.org_id = ? AND p.archived = 0 AND lower(p.name) = lower(?)');
     for (const i of items) if (i.project) i.project_id = find.get(userId, orgId, i.project)?.id ?? null;
     db.prepare(`INSERT INTO summaries VALUES (?,?,?,'day',?,?,?,'admin','sent',?)
       ON CONFLICT(user_id, org_id, kind, date) DO UPDATE SET items = excluded.items, notes = excluded.notes, created_at = excluded.created_at`)

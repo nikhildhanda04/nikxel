@@ -46,10 +46,15 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.equal(calls, 0); // no token: no-op
 
   assert.equal(await CS.pair("123456", async () => null), false);
+  fs.mkdirSync(path.dirname(CS.projectsFile()), { recursive: true });
+  fs.writeFileSync(CS.projectsFile(), '[{"id":"old","name":"Old Org"}]');
+  assert.equal(await CS.pair("123456", async () => null), false);
+  assert.ok(fs.existsSync(CS.projectsFile()), "failed pair keeps the cache");
   const ok = await CS.pair("123456", async (p: string, b: any) =>
     p === "/api/pair" && b.code === "123456" ? { deviceToken: "tok123" } : null);
   assert.equal(ok, true);
   assert.equal(CS.token(), "tok123");
+  assert.ok(!fs.existsSync(CS.projectsFile()), "pair clears the previous project cache");
 
   let sent: any, bearer: any;
   const r = await CS.pushDay(md, "2026-11-20", new Set([items[0].id]), async (_p: string, b: any, t: any) => { sent = b; bearer = t; return {}; });

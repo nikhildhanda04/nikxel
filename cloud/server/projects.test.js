@@ -70,5 +70,7 @@ test('projects: create, membership, archive, feed, shares', async () => {
   assert.equal((await api('GET', `/api/projects/${id}`, { headers: h('memA3') })).json.project.archived, true);
   assert.deepEqual((await api('GET', '/api/device/projects', { headers: dev })).json, []);
   assert.equal((await share(dev, id, m('x'))).status, 404);
+  assert.equal((await day('2026-11-22', [item('z', 'pps')])).status, 200); // archived: never linked
+  assert.equal(JSON.parse(db.prepare("SELECT items FROM summaries WHERE user_id='memA' AND date='2026-11-22'").get().items)[0].project_id, null);
   c.close();
 });

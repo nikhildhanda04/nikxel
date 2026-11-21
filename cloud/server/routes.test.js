@@ -196,3 +196,14 @@ test('device token without a live membership is 401', async () => {
   assert.equal((await push(c, dev, [I('a')])).status, 401);
   c.close();
 });
+
+test('removed member: live membership wins over the cookie', async () => {
+  const c = await boot(); const old = A(c, 'memA2', 'member');
+  assert.equal((await c.api('DELETE', '/api/members/memA2', { headers: A(c, 'owA', 'owner') })).status, 200);
+  const me = (await c.api('GET', '/api/me', { headers: old })).json;
+  assert.deepEqual([me.orgId, me.role], [null, null]);
+  assert.equal((await c.api('GET', '/api/pairing-code', { headers: old })).status, 403);
+  const inv = await c.api('POST', '/api/invites', { headers: A(c, 'owA', 'owner'), body: { role: 'member' } });
+  assert.equal((await c.api('POST', '/api/orgs/join', { headers: old, body: { token: inv.json.token } })).status, 200);
+  c.close();
+});

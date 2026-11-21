@@ -53,6 +53,7 @@ enum CloudSync {
         guard FileManager.default.createFile(atPath: tokenFile, contents: Data(tok.utf8),
                                              attributes: [.posixPermissions: 0o600]) else { return false }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFile)
+        try? FileManager.default.removeItem(atPath: projectsFile) // the last user's project names
         return true
     }
 

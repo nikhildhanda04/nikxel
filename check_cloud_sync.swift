@@ -41,9 +41,14 @@ import Foundation
         check(!CloudSync.pushDay(summary: md, day: "2026-11-20", skip: [], post: { _, _, _ in calls += 1; return nil }) && calls == 0, "pushDay with no token is a no-op")
 
         check(!CloudSync.pair("123456", post: { _, _, _ in nil }), "pair fails quietly on network failure")
+        let cache = tmp + "/.nikxel/projects.json"
+        try? FileManager.default.createDirectory(atPath: tmp + "/.nikxel", withIntermediateDirectories: true)
+        try? Data(#"[{"id":"old","name":"Old Org"}]"#.utf8).write(to: URL(fileURLWithPath: cache))
+        check(!CloudSync.pair("123456", post: { _, _, _ in nil }) && FileManager.default.fileExists(atPath: cache), "failed pair keeps the cache")
         let ok = CloudSync.pair("123456", post: { p, b, _ in
             (p == "/api/pair" && (b["code"] as? String) == "123456") ? Data(#"{"deviceToken":"tok123"}"#.utf8) : nil })
         check(ok && CloudSync.token == "tok123", "pair stores token")
+        check(!FileManager.default.fileExists(atPath: cache), "pair clears the previous project cache")
         let perm = (try? FileManager.default.attributesOfItem(atPath: tmp + "/.nikxel/cloud-token"))?[.posixPermissions] as? Int
         check(perm == 0o600, "token file is 0600")
 

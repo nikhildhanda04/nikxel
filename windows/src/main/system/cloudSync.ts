@@ -56,6 +56,7 @@ export class CloudSync {
       writeAtomic(CloudSync.tokenFile(), r.deviceToken);
       fs.chmodSync(CloudSync.tokenFile(), 0o600); // best-effort on Windows
     } catch { /* chmod unsupported */ }
+    try { fs.rmSync(CloudSync.projectsFile(), { force: true }); } catch { /* best-effort */ } // the last user's project names
     return CloudSync.token() === r.deviceToken;
   }
 

@@ -48,7 +48,7 @@ export function readSession(req, secret) {
 // Role lives in the DB, not the cookie: promotions/demotions apply immediately.
 export const liveSession = (db, s) => {
   const m = db.prepare('SELECT org_id, role FROM memberships WHERE user_id = ?').get(s.userId);
-  return { ...s, orgId: s.orgId ?? m?.org_id ?? null, role: m && m.org_id === (s.orgId ?? m.org_id) ? m.role : null };
+  return { ...s, orgId: m?.org_id ?? null, role: m?.role ?? null };
 };
 
 export const requireRole = (db, ...roles) => (req, res, next) => {

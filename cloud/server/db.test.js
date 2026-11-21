@@ -30,3 +30,12 @@ test('table columns match the spec exactly', () => {
   for (const [t, cols] of Object.entries(want))
     assert.deepStrictEqual(db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name).sort(), [...cols].sort(), t);
 });
+
+test('bootstrap drops the old ERP org tables', () => {
+  const db = openDb(':memory:');
+  db.exec('CREATE TABLE org_people (id TEXT); CREATE TABLE org_projects (id TEXT); CREATE TABLE project_members (project_id TEXT)');
+  bootstrap(db);
+  const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
+  for (const t of ['org_people', 'org_projects', 'project_members']) assert.ok(!names.includes(t), t);
+  for (const t of ['projects', 'project_users', 'meeting_shares']) assert.ok(names.includes(t), t);
+});

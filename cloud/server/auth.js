@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 
+export const STAFF = ['owner', 'cofounder', 'admin'];
 const COOKIE = 'nikxel_session';
 const mac = (body, secret) => crypto.createHmac('sha256', secret).update(body).digest();
 

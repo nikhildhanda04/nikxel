@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
 import express from 'express';
-import { readSession, issueSession, liveSession, requireRole, verifyGoogle } from './auth.js';
+import { readSession, issueSession, liveSession, requireRole, verifyGoogle, STAFF } from './auth.js';
 import { redeemPairingCode, createPairingCode, deviceAuth } from './pairing.js';
 import { cleanDay, ForbiddenError } from './summaries.js';
-import { importOrg, orgView, teamsFor, teamMemberUserIds, linkByEmail } from './org.js';
 
 const uid = () => crypto.randomUUID();
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
@@ -50,7 +49,6 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
       ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, name = excluded.name`).run(uid(), g.sub, g.email, g.name ?? null, Date.now());
     const user = db.prepare('SELECT id FROM users WHERE google_sub = ?').get(g.sub);
     const m = membership(user.id);
-    if (m) linkByEmail(db, m.org_id, user.id);
     issueSession(res, { userId: user.id, orgId: m?.org_id ?? null, role: m?.role ?? null }, secret());
     res.redirect(m ? '/' : '/onboarding');
   });
@@ -90,7 +88,6 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
       if (!i) return null;
       db.prepare('UPDATE invites SET accepted_by = ? WHERE id = ?').run(req.session.userId, i.id);
       db.prepare('INSERT INTO memberships VALUES (?,?,?)').run(req.session.userId, i.org_id, i.role);
-      linkByEmail(db, i.org_id, req.session.userId);
       return i;
     })();
     if (!inv) return res.status(404).json({ error: 'invalid invite' });
@@ -98,22 +95,44 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json({ orgId: inv.org_id, role: inv.role });
   });
 
-  r.post('/invites', requireRole(db, 'owner', 'admin'), (req, res) => {
+  const ROLES = ['cofounder', 'admin', 'member'];
+  const anyMember = requireRole(db, 'owner', ...ROLES);
+  const staff = requireRole(db, ...STAFF);
+  r.post('/invites', anyMember, (req, res) => {
     const role = req.body?.role ?? 'member';
-    if (!['member', 'admin'].includes(role)) throw bad('bad role');
+    if (!ROLES.includes(role)) throw bad('bad role');
+    const me = req.session.role;
+    if (role === 'cofounder' ? me !== 'owner' : role === 'admin' && !STAFF.includes(me)) throw new ForbiddenError();
     const token = crypto.randomBytes(24).toString('hex');
     db.prepare('INSERT INTO invites (id, org_id, token, role, created_at) VALUES (?,?,?,?,?)').run(uid(), req.session.orgId, token, role, Date.now());
     res.json({ token, role });
   });
 
-  r.patch('/members/:userId', requireRole(db, 'owner', 'admin'), (req, res) => {
-    const role = req.body?.role;
-    if (!['admin', 'member'].includes(role)) throw bad('bad role');
+  const target = (req) => {
     const t = db.prepare('SELECT role FROM memberships WHERE user_id = ? AND org_id = ?').get(req.params.userId, req.session.orgId);
     if (!t) throw notFound();
     if (t.role === 'owner') throw new ForbiddenError('owner role is fixed');
+    return t;
+  };
+
+  r.patch('/members/:userId', staff, (req, res) => {
+    const role = req.body?.role;
+    if (!ROLES.includes(role)) throw bad('bad role');
+    const t = target(req);
+    if ((role === 'cofounder' || t.role === 'cofounder') && req.session.role !== 'owner') throw new ForbiddenError();
     db.prepare('UPDATE memberships SET role = ? WHERE user_id = ? AND org_id = ?').run(role, req.params.userId, req.session.orgId);
     res.json({ user_id: req.params.userId, role });
+  });
+
+  r.delete('/members/:userId', staff, (req, res) => {
+    const t = target(req), { orgId } = req.session;
+    if (t.role === 'cofounder' && req.session.role !== 'owner') throw new ForbiddenError();
+    db.transaction(() => {
+      db.prepare('DELETE FROM memberships WHERE user_id = ? AND org_id = ?').run(req.params.userId, orgId);
+      db.prepare('DELETE FROM device_tokens WHERE user_id = ? AND org_id = ?').run(req.params.userId, orgId);
+      db.prepare('DELETE FROM project_users WHERE user_id = ? AND project_id IN (SELECT id FROM projects WHERE org_id = ?)').run(req.params.userId, orgId);
+    })();
+    res.json({ ok: true });
   });
 
   r.post('/auth/logout', (req, res) => {
@@ -121,7 +140,7 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json({ ok: true });
   });
 
-  r.get('/members', requireRole(db, 'owner', 'admin'), (req, res) => {
+  r.get('/members', anyMember, (req, res) => {
     res.json(db.prepare(`SELECT m.user_id, m.role, u.email, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = ?`).all(req.session.orgId));
   });
 
@@ -155,80 +174,12 @@ export function buildRouter(db, { exchange = defaultExchange, verifier } = {}) {
     res.json({ ok: true });
   });
 
-  r.get('/summaries/mine', session, (req, res) => {
-    res.json(db.prepare("SELECT id, date, notes, items, created_at FROM summaries WHERE user_id = ? AND org_id = ? AND kind = 'day' ORDER BY date DESC").all(req.session.userId, req.session.orgId)
-      .map(({ notes, items, ...x }) => ({ ...x, headline: notes, items: JSON.parse(items) })));
-  });
-
-  // No team: owner/admin, whole org. With team: owner/admin any team, a lead only the teams they lead.
-  r.get('/rollup', session, (req, res) => {
-    const { orgId, userId, role } = req.session;
-    if (!role) throw new ForbiddenError(); // no live membership: a stale person link grants nothing
-    const boss = role === 'owner' || role === 'admin';
-    let only = null;
-    if (req.query.team !== undefined) {
-      const team = String(req.query.team);
-      if (!db.prepare('SELECT 1 FROM org_projects WHERE id = ? AND org_id = ?').get(team, orgId)) throw notFound();
-      if (!boss && !teamsFor(db, orgId, userId, role).some((t) => t.id === team)) throw new ForbiddenError();
-      only = JSON.stringify(teamMemberUserIds(db, team));
-    } else if (!boss) throw new ForbiddenError();
-    res.json(db.prepare(`SELECT s.date, s.user_id, COALESCE(u.name, u.email) AS name, s.notes, s.items FROM summaries s JOIN users u ON u.id = s.user_id
-      WHERE s.org_id = ? AND s.kind = 'day' AND (? IS NULL OR s.user_id IN (SELECT value FROM json_each(?))) ORDER BY s.date DESC, name`).all(orgId, only, only)
-      .map(({ notes, items, ...x }) => ({ ...x, headline: notes, items: JSON.parse(items) })));
-  });
-
-  r.post('/org/import', deviceAuth(db), (req, res) => {
-    const { userId, orgId } = req.device;
-    const m = db.prepare('SELECT role FROM memberships WHERE user_id = ? AND org_id = ?').get(userId, orgId);
-    if (!['owner', 'admin'].includes(m?.role)) throw new ForbiddenError();
-    importOrg(db, orgId, req.body);
-    res.json({ ok: true });
-  });
-
-  const orgAdmin = requireRole(db, 'owner', 'admin');
-  const orgRow = (table, id, orgId) => {
-    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND org_id = ?`).get(id, orgId);
-    if (!row) throw notFound();
-    return row;
-  };
-
-  r.get('/org', orgAdmin, (req, res) => res.json(orgView(db, req.session.orgId)));
-
-  r.get('/teams', session, (req, res) => {
-    if (!req.session.role) throw new ForbiddenError();
-    res.json(teamsFor(db, req.session.orgId, req.session.userId, req.session.role));
-  });
-
-  r.patch('/org/projects/:id', orgAdmin, (req, res) => {
-    const p = orgRow('org_projects', req.params.id, req.session.orgId);
-    const { name, archived } = req.body ?? {};
-    if (name !== undefined && !(str(name) && name.trim().length <= 200)) throw bad('bad name');
-    if (archived !== undefined && typeof archived !== 'boolean') throw bad('bad archived');
-    db.prepare('UPDATE org_projects SET name = ?, name_by_hand = ?, archived = ? WHERE id = ?')
-      .run(name === undefined ? p.name : name.trim(), name === undefined ? p.name_by_hand : 1, archived === undefined ? p.archived : +archived, p.id);
-    res.json({ ok: true });
-  });
-
-  const memberPath = (req) => [orgRow('org_projects', req.params.id, req.session.orgId).id, orgRow('org_people', req.params.personId, req.session.orgId).id];
-  r.put('/org/projects/:id/members/:personId', orgAdmin, (req, res) => {
-    const role = req.body?.role;
-    if (!['lead', 'member'].includes(role)) throw bad('bad role');
-    db.prepare(`INSERT INTO project_members (project_id, person_id, role, role_by_hand, removed) VALUES (?,?,?,1,0)
-      ON CONFLICT(project_id, person_id) DO UPDATE SET role = excluded.role, role_by_hand = 1, removed = 0`).run(...memberPath(req), role);
-    res.json({ ok: true });
-  });
-
-  r.delete('/org/projects/:id/members/:personId', orgAdmin, (req, res) => {
-    if (!db.prepare('UPDATE project_members SET removed = 1 WHERE project_id = ? AND person_id = ?').run(...memberPath(req)).changes) throw notFound();
-    res.json({ ok: true });
-  });
-
-  r.patch('/org/people/:id', orgAdmin, (req, res) => {
-    const p = orgRow('org_people', req.params.id, req.session.orgId);
-    const u = req.body?.user_id;
-    if (u !== null && !(str(u) && db.prepare('SELECT 1 FROM memberships WHERE user_id = ? AND org_id = ?').get(u, req.session.orgId))) throw bad('bad user_id');
-    db.prepare('UPDATE org_people SET user_id = ?, linked_by_hand = 1 WHERE id = ?').run(u, p.id);
-    res.json({ ok: true });
+  const days = (userId, orgId) => db.prepare("SELECT id, date, notes, items, created_at FROM summaries WHERE user_id = ? AND org_id = ? AND kind = 'day' ORDER BY date DESC").all(userId, orgId)
+    .map(({ notes, items, ...x }) => ({ ...x, headline: notes, items: JSON.parse(items) }));
+  r.get('/summaries/mine', session, (req, res) => res.json(days(req.session.userId, req.session.orgId)));
+  r.get('/summaries/user/:userId', staff, (req, res) => {
+    if (!db.prepare('SELECT 1 FROM memberships WHERE user_id = ? AND org_id = ?').get(req.params.userId, req.session.orgId)) throw notFound();
+    res.json(days(req.params.userId, req.session.orgId));
   });
 
   return r;

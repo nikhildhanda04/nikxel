@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 export const openDb = (path) => new Database(path);
 
 export function bootstrap(db) {
+  db.exec('DROP TABLE IF EXISTS org_people; DROP TABLE IF EXISTS org_projects; DROP TABLE IF EXISTS project_members;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, google_sub TEXT UNIQUE NOT NULL, email TEXT NOT NULL, name TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS orgs (id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
@@ -15,17 +16,12 @@ export function bootstrap(db) {
       items TEXT NOT NULL, notes TEXT NOT NULL, visibility TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS summaries_uniq ON summaries(user_id, org_id, kind, date);
-    CREATE TABLE IF NOT EXISTS org_people (
-      id TEXT PRIMARY KEY, org_id TEXT NOT NULL, erp_id INTEGER NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, title TEXT NOT NULL,
-      manager_erp_id INTEGER, note TEXT NOT NULL, user_id TEXT, linked_by_hand INTEGER NOT NULL DEFAULT 0, UNIQUE(org_id, erp_id)
-    );
-    CREATE TABLE IF NOT EXISTS org_projects (
-      id TEXT PRIMARY KEY, org_id TEXT NOT NULL, erp_id INTEGER NOT NULL, name TEXT NOT NULL, name_by_hand INTEGER NOT NULL DEFAULT 0,
-      description TEXT NOT NULL, active INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0, UNIQUE(org_id, erp_id)
-    );
-    CREATE TABLE IF NOT EXISTS project_members (
-      project_id TEXT NOT NULL, person_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('lead','member')),
-      role_by_hand INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(project_id, person_id)
+    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+    CREATE UNIQUE INDEX IF NOT EXISTS projects_name ON projects(org_id, lower(name));
+    CREATE TABLE IF NOT EXISTS project_users (project_id TEXT NOT NULL, user_id TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY(project_id, user_id));
+    CREATE TABLE IF NOT EXISTS meeting_shares (
+      id TEXT PRIMARY KEY, org_id TEXT NOT NULL, project_id TEXT NOT NULL, user_id TEXT NOT NULL, meeting_id TEXT NOT NULL, title TEXT NOT NULL,
+      date TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(project_id, user_id, meeting_id)
     );
   `);
 }

@@ -9,7 +9,8 @@ const ORG = 'dev-org';
 const people = [['dev-jake', 'Jake', 'owner'], ['dev-asha', 'Asha', 'cofounder'], ['dev-ben', 'Ben', 'member'], ['dev-cleo', 'Cleo', 'member']];
 const W = 'what you worked on', M = 'meetings', B = 'browsing & reading', E = 'erp tasks';
 const POS = 'Produce POS', NX = 'Nikxel', VL = 'Visual Lens';
-const it = (id, section, what, type, minutes, project = '', details = []) => ({ id, section, what, type, minutes, details, project });
+const PID = { [POS]: 'dev-proj-pos', [NX]: 'dev-proj-nikxel' }; // Visual Lens stays untracked
+const it = (id, section, what, type, minutes, project = '', details = []) => ({ id, section, what, type, minutes, details, project, ...(PID[project] && { project_id: PID[project] }) });
 const erp = (id, what, project) => it(id, E, what, 'planning', 0, project);
 const days = {
   'dev-jake': [
@@ -53,5 +54,11 @@ db.transaction(() => {
       db.prepare(UPSERT).run(`${id}-day-${date}`, id, ORG, 'day', date,
         JSON.stringify(items), headline, 'admin', 'sent', now);
   }
+  for (const [name, pid] of Object.entries(PID)) {
+    db.prepare('INSERT OR IGNORE INTO projects (id, org_id, name, created_by, created_at) VALUES (?,?,?,?,?)').run(pid, ORG, name, 'dev-jake', now);
+    for (const [u] of people.slice(0, name === NX ? 4 : 3)) db.prepare('INSERT OR IGNORE INTO project_users VALUES (?,?,?)').run(pid, u, now);
+  }
+  db.prepare('INSERT OR IGNORE INTO meeting_shares VALUES (?,?,?,?,?,?,?,?,?)').run('dev-share-1', ORG, 'dev-proj-pos', 'dev-jake', '2026-11-17-1030', 'Produce POS sync', '2026-11-17',
+    '# Produce POS sync\n\n## Decisions\n- Ship receipts first\n\n## Action items\n- Ben: CSV export', now);
 })();
 for (const [id, name, role] of people) console.log(id.padEnd(10), name.padEnd(6), role);

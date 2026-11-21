@@ -577,7 +577,7 @@ class MOMGenerator {
     /// Bumped whenever the shipped prompts change in a way existing installs
     /// need. Every default prompt carries it as `promptVersionTag`, so an
     /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-    static let promptVersion = 8
+    static let promptVersion = 9
 
     private static let versionTagPrefix = "<!-- nikxel-prompt v"
     static var promptVersionTag: String { "\(versionTagPrefix)\(promptVersion) -->" }
@@ -740,10 +740,10 @@ If the transcript starts with "[Google Meet]" lines, Nikxel read the meeting
 itself. "Joined:" lists everyone who was in the call, with their email when
 the calendar invite had it. Lines labelled with a name instead of "Others"
 were spoken while Meet showed that person talking. Treat all of this as fact:
-use those exact names as the speaker labels, put each email in Speakers
-("**Name** — email"), and never replace a Meet name with "Speaker N". Lines
+use those exact names as the speaker labels, put each email in the With line
+("Name (email)"), and never replace a Meet name with "Speaker N". Lines
 still labelled "Others" are ones Meet couldn't attribute; use the rules above
-for them. Someone who joined but never spoke still goes in Speakers, noted as
+for them. Someone who joined but never spoke still goes in the With line, noted as
 not having spoken.
 
 ### Who "Me" is
@@ -774,64 +774,62 @@ Output this exact Markdown structure (keep section headings in English):
 
 # Meeting — {{date}}
 
+**<What the meeting was about, in 3-8 words>**
+_With: <every speaker label, comma-separated, {{user_name}} first>_
+
+The reader opens this note to understand the meeting in under a minute: what
+it was about, what was settled, what is still open, and who does what next.
+Be brief everywhere. One line per bullet wherever possible. If a line doesn't
+help someone who missed the call, leave it out.
+
 ## Summary
-**One sentence, under 25 words: what the meeting was about and where it landed.**
+3-4 bullets: what the meeting was about, where it landed, and what is still
+open. Someone who reads only this section should know what happened.
 
-Then 3-5 sentences: the main threads of discussion, what was agreed, and what
-is still open. Someone who missed the call should be able to read only this
-section and know what happened. Keep it a short paragraph, not a transcript
-recap.
+## For You
+1-4 bullets on what this meeting means for {{user_name}}, written to them as
+"You": what you asked for, offered, owe, or are waiting on. If nothing in the
+meeting concerns them directly, write "- Nothing for you specifically."
 
-## Speakers
-- **{{user_name}} (Me)** — role/context if the transcript shows it.
-- One line per distinct person you identified in "Others": the bold label you
-  will use for them below, then the evidence you used ("introduced themselves",
-  "addressed as Priya", "answered all the pricing questions").
-
-## Per-Speaker Highlights
-One block per person: their label in bold on its own line, then 2-5 short
-bullets (one point each, one line where possible) on what they contributed,
-asked, proposed, pushed back on, or committed to. Use the exact labels from
-the Speakers list.
-
-**{{user_name}} (Me)**
-- …
-
-**<next speaker>**
-- …
+## Topics Discussed
+One `###` heading per real topic, usually 2-4. Under each, 1-3 short bullets:
+the substance of what was said and where it ended up, including when it was
+left unsettled. No transcript recap and no who-said-what play-by-play.
 
 ## Decisions
-- The actual decisions reached — what was decided, and by whom if the
-  transcript shows it. Only things genuinely settled during the call, not
-  options that were merely discussed. If none, write "- None."
+A decision is something the meeting actually settled and committed to: a
+choice between options, a go/no-go, a priority set, a plan agreed. Most
+meetings have ONE, or none; a long meeting may have two or three.
+These are NOT decisions — leave them out:
+- things that were discussed, suggested, or proposed but not agreed;
+- opinions, preferences, and ideas to explore;
+- tasks someone will do (those are Action Items);
+- facts, status updates, and observations.
+When unsure whether something was really decided, it wasn't. If nothing was
+settled, write "- None."
 
-## Blockers & Risks
-- Anything stopping work: dependencies, missing approvals, people waiting on
-  each other, technical obstacles, deadline or resource risks raised.
-- Note who is blocked and on what. If none, write "- None."
-
-## Open Questions
-- Questions raised and left unanswered, and points parked for later.
-- If none, write "- None."
+## Open Points
+Questions left unanswered, things the meeting could not settle, and blockers
+or risks raised. One line each, naming who or what it is waiting on when
+known. If none, write "- None."
 
 ## Action Items
-This is the section people open the note for. Be thorough and be specific.
+Only real commitments: someone agreed, or was asked and accepted, that a
+specific thing will get done. Usually 2-5. Fold the small steps of one job
+into a single item. Leave out vague intentions ("we should look into…"),
+things already done during the call, and anything nobody agreed to do.
 - Format every task as: `- [ ] **Task** — Owner: <name or Unassigned> — Due: <YYYY-MM-DD or Not specified>`
 - Due dates must be written as YYYY-MM-DD. If a day was named without a date
   ("by Friday", "end of next week"), work out the actual date from the
   "Recorded" date above and write that. If no deadline was mentioned at all,
   write "Not specified" — never guess one.
-- Write each task as a complete, self-contained instruction. "Send Priya the
-  updated pricing sheet" — not "pricing sheet". Someone should be able to act
-  on the bullet without reading the rest of the note.
-- Include tasks that were assigned AND tasks someone took on themselves
-  ("I'll check with finance" is a task owned by that speaker).
-- Include things the meeting clearly implied need doing, but only when the
-  transcript supports them.
-- Owner is the speaker label from the Speakers section. If nobody picked it
-  up, write "Unassigned".
-- Scan the entire transcript for these, including the last few minutes —
-  tasks cluster at the end of calls.
+- Write each task as one short, self-contained instruction someone could act
+  on without reading the rest of the note: "Send Priya the updated pricing
+  sheet", not "pricing sheet".
+- A task someone took on themselves ("I'll check with finance") is owned by
+  that speaker. Owner is a label from the With line; if nobody picked it up,
+  write "Unassigned".
+- Check the last few minutes of the transcript — tasks cluster at the end.
 - If there are genuinely none, write "- [ ] None — no tasks came out of this
   meeting."
 

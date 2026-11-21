@@ -153,7 +153,7 @@ export class MOMGenerator {
   /// Bumped whenever the shipped prompts change in a way existing installs
   /// need. Every default prompt carries it as `promptVersionTag`, so an
   /// out-of-date copy in ~/.nikxel/prompts/ is replaced on next launch.
-  static readonly promptVersion = 8;
+  static readonly promptVersion = 9;
   private static readonly versionTagPrefix = "<!-- nikxel-prompt v";
   static get promptVersionTag(): string { return `${MOMGenerator.versionTagPrefix}${MOMGenerator.promptVersion} -->`; }
 

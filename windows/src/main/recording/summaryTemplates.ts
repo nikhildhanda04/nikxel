@@ -38,9 +38,9 @@ function write(file: string, text: string): void {
 const defaultBody = `# Default -- the built-in structure, unchanged.
 #
 # Every line below is a comment, so this template adds nothing to the prompt
-# and you get the standard summary: Summary, Speakers, Per-Speaker
-# Highlights, Decisions, Blockers & Risks, Open Questions, Action Items,
-# Follow-Up Meetings, Agent Prompts.
+# and you get the standard summary: Summary, For You, Topics
+# Discussed, Decisions, Open Points, Action Items, Follow-Up Meetings,
+# Agent Prompts.
 #
 # To tweak it, delete the # from a line below or write your own. To start
 # from a role instead, pick one from the Summary Template menu.
@@ -69,7 +69,7 @@ version and compatibility limits, known broken behaviour, and anything
 stated about how the existing system works. This is the section that saves
 re-asking a week later.
 
-In Blockers & Risks, say what the dependency actually is, who owns it, and
+For each blocker in Open Points, say what the dependency actually is, who owns it, and
 what specifically would unblock it.
 
 In Action Items, separate work that can start now from work that is waiting
@@ -97,11 +97,8 @@ it. If nothing moved, write "- None."
 Add a "## Dependencies" section: who is waiting on whom, across people and
 teams, and what each one is waiting for.
 
-Order Blockers & Risks by how many people or workstreams each one is
+Order the blockers in Open Points by how many people or workstreams each one is
 holding up, worst first.
-
-Keep Per-Speaker Highlights brief — one or two lines per person covering
-what they own and what they reported.
 
 Keep the Agent Prompts section; it is what gets forwarded to the engineers.`;
 
@@ -110,7 +107,7 @@ const hrBody = `# HR -- for 1:1s, interviews, performance and policy conversatio
 
 Drop the Agent Prompts section entirely.
 
-Rename "Per-Speaker Highlights" to "## Per-Person Notes".
+Add a "## Per-Person Notes" section: one or two lines per person.
 
 Add a "## Commitments Made" section near the top: anything promised to a
 person — compensation, title, leave, timelines, headcount, training,
@@ -158,8 +155,8 @@ Add a "## Commitments to Outsiders" section for anything promised to a
 customer, investor, candidate, partner or vendor, with who promised it and
 by when.
 
-Drop Per-Speaker Highlights unless there was real disagreement on the call —
-if there was, keep it and make the disagreement explicit.
+If there was real disagreement on the call, add a "## Where We Disagreed"
+section that names who held which view.
 
 Drop the Agent Prompts section.
 

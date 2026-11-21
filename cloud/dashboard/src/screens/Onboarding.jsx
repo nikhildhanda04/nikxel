@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { api } from '../api.js';
 import { Btn, Input, Muted, H } from '../ui.jsx';
 
-export default function Onboarding({ onDone }) {
+export default function Onboarding({ onDone, error = '' }) {
   const [name, setName] = useState(''), [token, setToken] = useState(''), [err, setErr] = useState('');
-  const go = (p) => p.then(onDone, (e) => setErr(e.message));
+  const go = (p) => p.then(() => { location.hash = 'install'; return onDone(); }, (e) => setErr(e.message));
   return (
     <div className="space-y-10">
       <section>
@@ -18,7 +18,7 @@ export default function Onboarding({ onDone }) {
           onChange={(e) => setToken(e.target.value)} />
           <Btn disabled={!token.trim()} onClick={() => go(api.joinOrg(token.trim().split('=').pop()))}>Join</Btn></div>
       </section>
-      {err && <Muted>{err}</Muted>}
+      {(err || error) && <Muted>{err || error}</Muted>}
     </div>
   );
 }

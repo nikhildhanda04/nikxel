@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { typeMeta, nextTheme } from './api.js';
+import { typeMeta, nextTheme, joinTokenFromHash } from './api.js';
 
 test('typeMeta labels known types and falls back to Other', () => {
   assert.equal(typeMeta('coding').label, 'Coding');
@@ -13,4 +13,10 @@ test('typeMeta labels known types and falls back to Other', () => {
 test('theme: nextTheme flips dark and light', () => {
   assert.equal(nextTheme('dark'), 'light');
   assert.equal(nextTheme('light'), 'dark');
+});
+
+test('joinTokenFromHash reads #join=<token> only', () => {
+  assert.equal(joinTokenFromHash('#join=abc123'), 'abc123');
+  assert.equal(joinTokenFromHash('#mine'), null);
+  assert.equal(joinTokenFromHash(''), null);
 });

@@ -20,13 +20,8 @@ export const api = {
   setRole: (userId, role) => call('PATCH', `/members/${encodeURIComponent(userId)}`, { role }),
   pairingCode: () => call('GET', '/pairing-code'),
   mine: () => call('GET', '/summaries/mine'),
-  rollup: ({ team } = {}) => call('GET', '/rollup' + (team ? '?team=' + encodeURIComponent(team) : '')),
-  org: () => call('GET', '/org'),
-  teams: () => call('GET', '/teams'),
-  patchProject: (id, patch) => call('PATCH', `/org/projects/${encodeURIComponent(id)}`, patch),
-  setMember: (projectId, personId, role) => call('PUT', `/org/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(personId)}`, { role }),
-  removeMember: (projectId, personId) => call('DELETE', `/org/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(personId)}`),
-  linkPerson: (personId, userId) => call('PATCH', `/org/people/${encodeURIComponent(personId)}`, { user_id: userId }),
+  removeMember: (userId) => call('DELETE', `/members/${encodeURIComponent(userId)}`),
+  userSummaries: (userId) => call('GET', `/summaries/user/${encodeURIComponent(userId)}`),
 };
 
 // Item type -> label, CSS color var (index.css), and a 24x24 SVG path. Plain JS so node --test can import it.
@@ -46,6 +41,14 @@ export const TYPE_ORDER = Object.keys(TYPES);
 export const typeMeta = (type) => {
   const k = TYPES[type] ? type : 'other';
   return { label: TYPES[k][0], color: `var(--t-${k})`, icon: TYPES[k][1] };
+};
+
+// Join token: Google OAuth drops the hash, so #join=<token> is parked in sessionStorage until the user has signed in.
+export const joinTokenFromHash = (h) => (/^#?join=(.+)$/.exec(h) || [])[1] || null;
+export const joinToken = {
+  get: () => { try { return sessionStorage.getItem('joinToken'); } catch { return null; } },
+  set: (t) => { try { sessionStorage.setItem('joinToken', t); } catch {} },
+  clear: () => { try { sessionStorage.removeItem('joinToken'); } catch {} },
 };
 
 export const nextTheme = (t) => (t === 'dark' ? 'light' : 'dark');

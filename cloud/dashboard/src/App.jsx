@@ -1,19 +1,27 @@
 import { useEffect, useState } from 'react';
-import { api, nextTheme } from './api.js';
+import { api, nextTheme, joinToken, joinTokenFromHash } from './api.js';
 import { Icon, pillCls } from './ui.jsx';
 import Login from './screens/Login.jsx';
 import Onboarding from './screens/Onboarding.jsx';
 import Connect from './screens/Connect.jsx';
 import Mine from './screens/Mine.jsx';
 import People from './screens/People.jsx';
-import Team from './screens/Team.jsx';
-import Projects from './screens/Projects.jsx';
-import Org from './screens/Org.jsx';
+import Invite from './screens/Invite.jsx';
+import Install from './screens/Install.jsx';
+import { Muted } from './ui.jsx';
+import { isStaff, roleLabel } from './roles.js';
+
+// #join=<token> is parked in sessionStorage (OAuth drops the hash) and the hash cleared.
+const grabJoin = () => {
+  const t = joinTokenFromHash(location.hash);
+  if (t) { joinToken.set(t); history.replaceState(null, '', location.pathname + location.search); }
+};
+grabJoin();
 
 const useHash = () => {
   const [h, setH] = useState(location.hash.slice(1) || 'mine');
   useEffect(() => {
-    const f = () => setH(location.hash.slice(1) || 'mine');
+    const f = () => { grabJoin(); setH(location.hash.slice(1) || 'mine'); };
     addEventListener('hashchange', f);
     return () => removeEventListener('hashchange', f);
   }, []);
@@ -24,25 +32,31 @@ const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } }
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
-  const [teams, setTeams] = useState([]); // teams the viewer can see: every team for owner/admin, the ones they lead otherwise
+  const [joinErr, setJoinErr] = useState('');
   const route = useHash();
-  const load = () => api.me().then(async (m) => { setTeams(m?.orgId ? await api.teams().catch(() => []) : []); setMe(m); }, () => setMe(null));
+  const load = () => api.me().then(setMe, () => setMe(null));
   useEffect(() => { load(); }, []);
+  useEffect(() => { // a saved invite: join once signed in with no org, otherwise just drop it
+    if (!me || !joinToken.get()) return;
+    const t = joinToken.get();
+    joinToken.clear();
+    if (me.orgId) return;
+    api.joinOrg(t).then(() => { location.hash = 'install'; load(); }, (e) => setJoinErr(e.message));
+  }, [me]);
 
   if (me === undefined) return null;
   if (me === null) return <Shell><Login onDone={load} /></Shell>;
-  if (!me.orgId) return <Shell><Onboarding onDone={load} /></Shell>;
+  if (!me.orgId) return <Shell><Onboarding onDone={load} error={joinErr} /></Shell>;
 
-  const admin = me.role === 'admin' || me.role === 'owner', lead = admin || teams.length > 0;
-  const tabs = [['mine', 'My days'], ...(lead ? [['team', 'Team'], ['projects', 'Projects']] : []), ...(admin ? [['people', 'People'], ['org', 'Org']] : []), ['connect', 'Connect']];
-  const [base, sub] = route.split('/'); // #projects/<encoded name>
-  const tab = tabs.some(([k]) => k === base) ? base : 'mine';
-  const screen = { mine: <Mine />, connect: <Connect />, team: <Team teams={teams} admin={admin} />, projects: <Projects key={route} name={sub === undefined ? undefined : dec(sub)} teams={teams} admin={admin} />, people: <People me={me} />, org: <Org route={route} /> }[tab];
+  const tabs = [['invite', 'Invite'], ['mine', 'My summaries'], ['projects', 'Projects'], ...(isStaff(me.role) ? [['people', 'People']] : []), ['connect', 'Connect']];
+  const [base, sub] = route.split('/'); // #people/<encoded userId>
+  const tab = tabs.some(([k]) => k === base) ? base : base === 'install' ? 'install' : 'mine';
+  const screen = { invite: <Invite me={me} />, mine: <Mine />, connect: <Connect />, install: <Install />, projects: <Muted>Coming next</Muted>, people: <People me={me} sub={sub && dec(sub)} /> }[tab];
   const logout = () => api.logout().finally(() => { location.hash = ''; setMe(null); });
 
   return (
     <Shell right={<>
-      <span className="min-w-0 truncate text-sm text-muted">{me.name}<span className="hidden sm:inline"> · {me.role}</span></span>
+      <span className="min-w-0 truncate text-sm text-muted">{me.name}<span className="hidden sm:inline"> · {roleLabel(me.role)}</span></span>
       <button onClick={logout} className={pillCls}>Log out</button>
     </>}>
       <nav className="mb-8 flex gap-5 overflow-x-auto text-sm">

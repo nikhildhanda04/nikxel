@@ -1,6 +1,3 @@
-import { cloneElement, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { tipPos } from './orgView.js';
 
 // lafda's "Sign in" pill: hairline border, secondary fill, inset top highlight.
 export const pillCls = 'inline-flex h-8 items-center gap-1.5 rounded-full border border-fg/15 bg-accent px-3.5 text-sm font-medium shadow-[inset_0_1px_0_0_var(--hi)] transition-colors hover:border-fg/30 disabled:opacity-40';
@@ -27,40 +24,4 @@ export function Chips({ label, value, set, opts }) {
       {opts.map(([k, l]) => <button key={k} className={chipCls(value === k)} aria-pressed={value === k} onClick={() => set(k)}>{l}</button>)}
     </div>
   );
-}
-
-// Tooltip around one DOM element (span or button). Shows on mouse hover and keyboard focus (focus-visible);
-// hides on Esc, blur, mouse leave, click, scroll or a tap elsewhere. `tap`: a tap on the trigger toggles it (touch, non-interactive triggers).
-// `describe`: wire aria-describedby — leave off when the trigger's label already says the same, or it sits inside an aria-hidden/button region.
-export function Tip({ tip, children, tap = false, describe = true }) {
-  const [open, setOpen] = useState(false), [pos, setPos] = useState(null);
-  const id = useId(), ref = useRef(null), box = useRef(null);
-  const place = () => setPos(tipPos(ref.current.getBoundingClientRect(), box.current.getBoundingClientRect(), document.documentElement.clientWidth));
-  useLayoutEffect(() => { if (!open) return setPos(null); place(); }, [open, tip]);
-  useEffect(() => {
-    if (!open) return;
-    // Capture phase so Esc hides the tip before anything else (e.g. the drawer) acts on it.
-    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    const away = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    const hide = () => setOpen(false);
-    addEventListener('keydown', key, true); addEventListener('pointerdown', away); addEventListener('scroll', hide, true); addEventListener('resize', place);
-    return () => { removeEventListener('keydown', key, true); removeEventListener('pointerdown', away); removeEventListener('scroll', hide, true); removeEventListener('resize', place); };
-  }, [open]);
-  if (!tip) return children;
-  const c = children.props, on = (f, g) => (e) => { f?.(e); g(e); };
-  return <>
-    {cloneElement(children, {
-      ref, 'aria-describedby': describe ? id : undefined,
-      onPointerEnter: on(c.onPointerEnter, (e) => e.pointerType === 'mouse' && setOpen(true)),
-      onPointerLeave: on(c.onPointerLeave, (e) => e.pointerType === 'mouse' && setOpen(false)),
-      onFocus: on(c.onFocus, (e) => e.target === ref.current && e.target.matches(':focus-visible') && setOpen(true)),
-      onBlur: on(c.onBlur, () => setOpen(false)),
-      onClick: on(c.onClick, () => setOpen((o) => tap && !o)), // a click acts, so drop the tip; `tap` toggles it instead
-    })}
-    {(open || describe) && createPortal(
-      <span ref={box} role="tooltip" id={id} hidden={!open} style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: 'hidden' }}
-        className="pointer-events-none fixed z-[60] max-w-[min(18rem,calc(100vw-16px))] rounded-md bg-fg px-2 py-1 text-xs leading-snug text-bg shadow-lg">
-        {tip}
-      </span>, document.body)}
-  </>;
 }

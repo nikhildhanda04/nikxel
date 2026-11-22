@@ -13,6 +13,7 @@ import { StateMachine } from "./core/stateMachine";
 import { CardKind, ui } from "./core/ui";
 import { createAvatarWindow } from "./avatar/avatarWindow";
 import * as AvatarChat from "./system/avatarChat";
+import * as Learning from "./system/learning";
 import { InputHandler } from "./avatar/inputHandler";
 import { GoogleCalendarWatcher } from "./google/googleCalendarWatcher";
 import { ChatTaskBlock, GoogleSync } from "./google/googleSync";
@@ -83,9 +84,15 @@ class NikxelApp {
     const source = this.meetingDetector.source;
     if (!inMeeting || !source || this.meetingCoordinator.isRecording || Date.now() - this.callPromptAt < 30 * 60_000) return;
     this.callPromptAt = Date.now();
+    // The user agreed to this once (learning.ts offerAutoRecordCalls): record without asking.
+    if (Settings.autoRecordCalls) {
+      this.meetingCoordinator.toggleRecording(false);
+      ui.tell({ icon: "🎙️", title: "Recording " + source, lines: ["Double-click me to stop."] });
+      return;
+    }
     ui.ask({ icon: "🎙️", title: "You're in " + source, lines: ["Want me to record it and write the notes?"], buttons: [
-      { title: "Record", action: () => { if (!this.meetingCoordinator.isRecording) this.meetingCoordinator.toggleRecording(false); } },
-      { title: "Not now", action: () => {} },
+      { title: "Record", action: () => { Learning.count("call.record"); if (!this.meetingCoordinator.isRecording) this.meetingCoordinator.toggleRecording(false); } },
+      { title: "Not now", action: () => Learning.count("call.skip") },
     ] });
   }
 

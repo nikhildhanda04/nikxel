@@ -11,6 +11,7 @@ import { bus } from "../core/bus";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { TwinDistiller } from "./twinDistiller";
+import * as Learning from "./learning";
 import { TwinProfile } from "./twinProfile";
 import * as ErpCrawl from "./erpCrawl";
 import * as ERP from "./erp";
@@ -37,8 +38,6 @@ const SAMPLE_INTERVAL = 15;
 // Cap each sample's attributed duration so a sleep-through-the-night gap
 // doesn't get charged to whatever app was foreground when the lid closed.
 const DURATION_CAP = 5 * 60;
-// Fire EOD summary at this hour (24h). 22 = 10pm.
-const SUMMARY_HOUR = 22;
 /// Sunday (0), 9am: the week in review. The open tasks: the first launch,
 /// wake or unlock of the day from 5am on.
 const WEEK_DAY = 0, WEEK_HOUR = 9, MORNING_HOUR = 5;
@@ -463,10 +462,33 @@ export class DayLogger {
 
   // MARK: - Scheduling
 
+  /// The day a summary written at `fire` covers: the day before when the summary time is in
+  /// the early hours (Settings.summaryMinutes past 1440).
+  private static summaryDay(fire: Date): Date {
+    return new Date(fire.getTime() - Math.floor(Settings.summaryMinutes / 1440) * 86_400_000);
+  }
+
   private nextSummaryFireDate(after: Date): Date {
-    const today = new Date(after.getFullYear(), after.getMonth(), after.getDate(), SUMMARY_HOUR, 0, 0);
+    const m = Settings.summaryMinutes % 1440;
+    const today = new Date(after.getFullYear(), after.getMonth(), after.getDate(), 0, m, 0);
     if (today > after) return today;
-    return new Date(after.getFullYear(), after.getMonth(), after.getDate() + 1, SUMMARY_HOUR, 0, 0);
+    return new Date(after.getFullYear(), after.getMonth(), after.getDate() + 1, 0, m, 0);
+  }
+
+  /// After the summary time changes.
+  reschedule(): void { this.scheduleSummary(); }
+
+  /// The activity samples of the last `days` days, for habits.dayEnds.
+  recentSamples(days = 15, now = new Date()): { t: number; app: string }[] {
+    const out: { t: number; app: string }[] = [];
+    for (let back = 0; back <= days; back++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12);
+      for (const line of (readText(this.logFile(d)) ?? "").split("\n")) {
+        try { const o = JSON.parse(line); if (typeof o.t === "number" && typeof o.app === "string") out.push({ t: o.t, app: o.app }); }
+        catch { /* blank or torn line */ }
+      }
+    }
+    return out;
   }
 
   private scheduleSummary(): void {
@@ -474,7 +496,7 @@ export class DayLogger {
     const fire = this.nextSummaryFireDate(new Date());
     const interval = Math.max(1000, fire.getTime() - Date.now());
     this.summaryTimer = setTimeout(() => {
-      this.generateSummary(new Date());
+      this.generateSummary(DayLogger.summaryDay(new Date()));
       this.scheduleSummary();
     }, interval);
   }
@@ -485,11 +507,13 @@ export class DayLogger {
   backfillIfMissed(): void {
     this.weekBackfill();
     this.morningBackfill();
-    const now = new Date();
-    const todayFire = new Date(now.getFullYear(), now.getMonth(), now.getDate(), SUMMARY_HOUR, 0, 0);
-    if (now < todayFire) return;
-    if (fs.existsSync(this.summaryFile(now))) return;
-    this.generateSummary(now);
+    // The latest day whose summary time has passed: today after 10pm, or yesterday at 3am
+    // when the summary is set for 2:30am.
+    const now = new Date(), m = Settings.summaryMinutes;
+    const day = new Date(now.getTime() - m * 60_000);
+    if (m < 1440 && dayStamp(day) !== dayStamp(now)) return;
+    if (fs.existsSync(this.summaryFile(day))) return;
+    this.generateSummary(day);
   }
 
   // MARK: - Open tasks
@@ -674,8 +698,11 @@ ${report}`;
         await fs.promises.writeFile(page, DayPage.html(output, stats, false, true), "utf8");
         const line = DayLogger.digestLine(stats);
         if (line) this.onSummaryReady?.(line, page);
-        await TwinDistiller.distill([], TwinProfile.recentSentMessages(), output,
+        await TwinDistiller.distill([], TwinProfile.recentSentMessages(),
+          output + Learning.editsBlock(new Date(date.getTime() - 86_400_000)),
           (p, k) => this.momGenerator.runPrompt(p, k));
+        // Once the digest bubble has gone: anything learned worth asking about.
+        setTimeout(() => { void Learning.daily(this, this.momGenerator); }, 15 * 60_000);
         // Fold the day's ERP picture into the sealed profile too (skips if not connected).
         await ErpCrawl.ingest((p, k) => this.momGenerator.runPrompt(p, k));
       } catch (e) {

@@ -67,6 +67,7 @@ enum PageEdit {
             try renamed.write(to: transcriptURL, atomically: true, encoding: .utf8)
         }
         try save(updated, md: md, page: page)
+        Learning.logEdit(instruction, page: page)  // repeated fixes can become a standing rule
         return note
     }
 

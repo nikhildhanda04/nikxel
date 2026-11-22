@@ -8,6 +8,7 @@ import { favicon } from "../recording/markdown";
 import { NotePage } from "../recording/notePage";
 import { Transcriber } from "../recording/transcriber";
 import { wavHeader } from "../recording/wavWriter";
+import * as Learning from "./learning";
 
 /// Edits a finished summary from a sentence: "Speaker 3 is Rahul", "merge the
 /// 2nd and 4th action items". The agent gets the summary's Markdown, the
@@ -70,6 +71,7 @@ export async function apply(instruction: string, page: string): Promise<string> 
     writeAtomic(transcriptPath, reply.renames.reduce((t, [from, to]) => t.replaceAll(from, to), transcript));
   }
   save(reply.markdown, md, page);
+  Learning.logEdit(instruction, page);  // repeated fixes can become a standing rule
   return reply.note;
 }
 

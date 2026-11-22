@@ -20,8 +20,6 @@ class DayLogger {
     // Cap each sample's attributed duration so a sleep-through-the-night gap
     // doesn't get charged to whatever app was foreground when the lid closed.
     private let durationCap: TimeInterval = 5 * 60
-    // Fire EOD summary at this hour (24h). 22 = 10pm.
-    private let summaryHour: Int = 22
 
     init(momGenerator: MOMGenerator) {
         self.momGenerator = momGenerator
@@ -398,13 +396,33 @@ class DayLogger {
 
     // MARK: - Scheduling
 
+    /// The day a summary written at `fire` covers: the day before when the summary time is in
+    /// the early hours (NikxelSettings.summaryMinutes past 1440).
+    private static func summaryDay(firedAt fire: Date) -> Date {
+        fire.addingTimeInterval(-Double(NikxelSettings.summaryMinutes / 1440) * 86_400)
+    }
+
     private func nextSummaryFireDate(after reference: Date) -> Date {
-        let cal = Calendar.current
-        var comps = cal.dateComponents([.year, .month, .day], from: reference)
-        comps.hour = summaryHour; comps.minute = 0; comps.second = 0
-        let today = cal.date(from: comps) ?? reference
+        let cal = Calendar.current, m = NikxelSettings.summaryMinutes % 1440
+        let today = cal.date(byAdding: .minute, value: m, to: cal.startOfDay(for: reference)) ?? reference
         if today > reference { return today }
         return cal.date(byAdding: .day, value: 1, to: today) ?? reference
+    }
+
+    /// After the summary time changes.
+    func reschedule() { scheduleSummary() }
+
+    /// The activity samples of the last `days` days, for Habits.dayEnds.
+    func recentSamples(days: Int = 15, now: Date = Date()) -> [(t: TimeInterval, app: String)] {
+        (0...days).flatMap { offset -> [(t: TimeInterval, app: String)] in
+            guard let d = Calendar.current.date(byAdding: .day, value: -offset, to: now),
+                  let content = try? String(contentsOf: logFileURL(for: d), encoding: .utf8) else { return [] }
+            return content.split(separator: "\n").compactMap { line in
+                guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                      let t = obj["t"] as? TimeInterval, let app = obj["app"] as? String else { return nil }
+                return (t, app)
+            }
+        }
     }
 
     /// On the wall clock, not a Timer: a Timer's countdown stops while the
@@ -415,7 +433,7 @@ class DayLogger {
         let interval = max(1, nextSummaryFireDate(after: Date()).timeIntervalSinceNow)
         DispatchQueue.main.asyncAfter(wallDeadline: .now() + interval) { [weak self] in
             guard let self = self, generation == self.summaryGeneration else { return }
-            self.generateSummary(for: Date())
+            self.generateSummary(for: Self.summaryDay(firedAt: Date()))
             self.scheduleSummary()
         }
     }
@@ -426,13 +444,12 @@ class DayLogger {
     func backfillIfMissed() {
         weekBackfill()
         morningBackfill()
-        let now = Date()
-        let cal = Calendar.current
-        var comps = cal.dateComponents([.year, .month, .day], from: now)
-        comps.hour = summaryHour; comps.minute = 0; comps.second = 0
-        guard let todayFire = cal.date(from: comps), now >= todayFire else { return }
-        if FileManager.default.fileExists(atPath: summaryFileURL(for: now).path) { return }
-        generateSummary(for: now)
+        // The latest day whose summary time has passed: today after 10pm, or yesterday at 3am
+        // when the summary is set for 2:30am.
+        let day = Date().addingTimeInterval(-Double(NikxelSettings.summaryMinutes) * 60)
+        guard Calendar.current.isDate(day, inSameDayAs: Date()) || NikxelSettings.summaryMinutes >= 1440 else { return }
+        if FileManager.default.fileExists(atPath: summaryFileURL(for: day).path) { return }
+        generateSummary(for: day)
     }
 
     // MARK: - Open tasks
@@ -632,7 +649,10 @@ DAILY SUMMARIES:
                     DispatchQueue.main.async { self.onSummaryReady?(line, pageURL) }
                 }
                 TwinDistiller.distill(meetingSelfLines: [], sentMessages: TwinProfile.recentSentMessages(),
-                                      daySummary: output, runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
+                                      daySummary: output + Learning.editsBlock(since: date.addingTimeInterval(-86_400)),
+                                      runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
+                // Once the digest bubble has gone: anything learned worth asking about.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15 * 60) { Learning.daily(dayLogger: self, agent: self.momGenerator) }
                 // Fold the day's ERP picture into the sealed profile too (skips if not connected).
                 ErpCrawl.ingest(runPrompt: { try self.momGenerator.runPrompt($0, kind: $1) })
             } catch {

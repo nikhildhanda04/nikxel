@@ -66,6 +66,8 @@ interface Stored {
   userContext?: string;
   botMemoryDays?: number;
   googleSyncEnabled?: boolean;
+  summaryMinutes?: number;
+  autoRecordCalls?: boolean;
   summaryTemplate?: string;
   waBotMode?: string;
   waGroupReplies?: boolean;
@@ -166,6 +168,16 @@ export const Settings = {
 
   get botMemoryDays(): number { return clamp(load().botMemoryDays ?? 7, 0, 14); },
   set botMemoryDays(v: number) { save(s => { s.botMemoryDays = clamp(v, 0, 14); }); },
+
+  /// When the day summary is written, in minutes after the day's midnight; 1440+ means the
+  /// early hours after it (the summary then covers the day before). 10pm until the user says
+  /// yes to a later time (learning.ts offerSummaryTime).
+  get summaryMinutes(): number { return load().summaryMinutes ?? 22 * 60; },
+  set summaryMinutes(v: number) { save(s => { s.summaryMinutes = v; }); },
+
+  /// Start recording when a call is noticed, instead of asking. Off until the user agrees.
+  get autoRecordCalls(): boolean { return load().autoRecordCalls ?? false; },
+  set autoRecordCalls(v: boolean) { save(s => { s.autoRecordCalls = v; }); },
 
   get googleSyncEnabled(): boolean { return load().googleSyncEnabled ?? true; },
   set googleSyncEnabled(v: boolean) { save(s => { s.googleSyncEnabled = v; }); },

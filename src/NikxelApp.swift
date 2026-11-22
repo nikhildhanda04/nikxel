@@ -762,12 +762,19 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let source = meetingDetector.source, !meetingCoordinator.isRecording,
               Date().timeIntervalSince(callPromptAt) > 30 * 60 else { return }
         callPromptAt = Date()
+        // The user agreed to this once (Learning.offerAutoRecord): record without asking.
+        if NikxelSettings.autoRecordCalls {
+            meetingCoordinator.toggleRecording()
+            NikxelView.tell(icon: "🎙️", title: "Recording " + source, lines: ["Double-click me to stop."])
+            return
+        }
         NikxelView.ask(icon: "🎙️", title: callPromptTitle + source, lines: ["Want me to record it and write the notes?"], buttons: [
             ("Record", { [weak self] in
+                Learning.count("call.record")
                 guard let mc = self?.meetingCoordinator, !mc.isRecording else { return }
                 mc.toggleRecording()
             }),
-            ("Not now", {}),
+            ("Not now", { Learning.count("call.skip") }),
         ])
     }
 

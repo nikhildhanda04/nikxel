@@ -96,6 +96,8 @@ enum NikxelSettings {
         var projectsRoot: String?
         var avatarSize: Double?
         var loginItemOffered: Bool?
+        var summaryMinutes: Int?
+        var autoRecordCalls: Bool?
     }
 
     private static let fileURL: URL = {
@@ -243,6 +245,20 @@ enum NikxelSettings {
     /// explicitly connected a Google account and granted write scopes --
     /// connecting IS the opt-in, and every push is confirmed in a dialog that
     /// lists each item first.
+    /// When the day summary is written, in minutes after the day's midnight; 1440+ means the
+    /// early hours after it (the summary then covers the day before). 10pm until the user says
+    /// yes to a later time (Learning.offerSummaryTime).
+    static var summaryMinutes: Int {
+        get { load().summaryMinutes ?? 22 * 60 }
+        set { save { $0.summaryMinutes = newValue } }
+    }
+
+    /// Start recording when a call is noticed, instead of asking. Off until the user agrees.
+    static var autoRecordCalls: Bool {
+        get { load().autoRecordCalls ?? false }
+        set { save { $0.autoRecordCalls = newValue } }
+    }
+
     static var googleSyncEnabled: Bool {
         get { load().googleSyncEnabled ?? true }
         set { save { $0.googleSyncEnabled = newValue } }

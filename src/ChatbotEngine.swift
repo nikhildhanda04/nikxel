@@ -604,6 +604,7 @@ class ChatbotEngine {
             guard !cancelled else { break }
             Thread.sleep(forTimeInterval: 0.3)
             guard ok else { setActiveContact(nil); continue }
+            if !draftOnly { WhatsAppActivityLogger.logBotSent(chat: chat.name, text: replyText) }
 
             // 9. A task the contact asked for, if the reply pass found one.
             // Fire-and-forget: it no-ops without a connected Google account and
@@ -712,7 +713,10 @@ class ChatbotEngine {
             cblog("ChatbotEngine: Meet link to '\(m.contact)' \(NikxelSettings.waDraftOnly ? "drafted" : "sent")=\(ok)")
             if ok {
                 meetLock.lock(); meets[key]?.sentAt = Date(); meetLock.unlock()
-                if !NikxelSettings.waDraftOnly { sentByBot[key] = Array(((sentByBot[key] ?? []) + [text]).suffix(sentCap)) }
+                if !NikxelSettings.waDraftOnly {
+                    WhatsAppActivityLogger.logBotSent(chat: m.contact, text: text)
+                    sentByBot[key] = Array(((sentByBot[key] ?? []) + [text]).suffix(sentCap))
+                }
             }
         }
         meetLock.lock(); let empty = meets.values.allSatisfy { $0.sentAt != nil }; meetLock.unlock()

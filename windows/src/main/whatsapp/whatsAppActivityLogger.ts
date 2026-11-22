@@ -145,9 +145,15 @@ export class WhatsAppActivityLogger {
     appendLine(fileURL(this.logDir, file, new Date()), line);
   }
 
+  /// Record a message Nikxel's bot sent, so "You: …" in the chat list can be
+  /// told apart from the user's own replies.
+  static logBotSent(chat: string, text: string): void {
+    WhatsAppActivityLogger.shared.appendJSONL("bot", { t: Date.now() / 1000, name: chat, text: text.slice(0, 120) });
+  }
+
   /// Read back today's (or any day's) raw entries for `DayLogger` to fold
   /// into the EOD summary prompt.
-  static readLog(file: "chats" | "calls", day: Date): any[] {
+  static readLog(file: "chats" | "calls" | "bot", day: Date): any[] {
     let content: string;
     try { content = fs.readFileSync(fileURL(logDirectory(), file, day), "utf8"); } catch { return []; }
     const out: any[] = [];

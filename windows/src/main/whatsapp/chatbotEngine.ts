@@ -6,6 +6,7 @@ import { cblog } from "../core/diag";
 import { ChromeWhatsApp, type WAUnreadChat } from "./chromeWhatsApp";
 import { LLMResponder } from "./llmResponder";
 import { MeetingDetector } from "./meetingDetector";
+import { WhatsAppActivityLogger } from "./whatsAppActivityLogger";
 import { WAContactLists } from "./waContactLists";
 import { WABotGate, containsMeetingLink, fingerprint, runsOutsideMeetings } from "./waBotGate";
 
@@ -495,6 +496,7 @@ export class ChatbotEngine {
       if (this.cancelled) break;
       await sleep(300);
       if (!ok) { this.setActiveContact(null); continue; }
+      if (!draftOnly) WhatsAppActivityLogger.logBotSent(chat.name, replyText);
 
       // 9. A task the contact asked for, if the reply pass found one.
       // Fire-and-forget: it no-ops without a connected Google account and
@@ -603,7 +605,10 @@ export class ChatbotEngine {
       if (ok) {
         const cur = this.meets.get(key);
         if (cur) cur.sentAt = new Date();
-        if (!draft) this.sentByBot.set(key, [...(this.sentByBot.get(key) ?? []), text].slice(-this.sentCap));
+        if (!draft) {
+          WhatsAppActivityLogger.logBotSent(m.contact, text);
+          this.sentByBot.set(key, [...(this.sentByBot.get(key) ?? []), text].slice(-this.sentCap));
+        }
       }
     }
     const allSent = [...this.meets.values()].every(m => m.sentAt !== null);

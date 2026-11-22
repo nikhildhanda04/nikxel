@@ -145,6 +145,14 @@ class WhatsAppActivityLogger {
         }
     }
 
+    /// Record a message Nikxel's bot sent, so "You: …" in the chat list can be
+    /// told apart from the user's own replies.
+    static func logBotSent(chat: String, text: String) {
+        shared.queue.async {
+            shared.appendJSONL(file: "bot", entry: ["t": Date().timeIntervalSince1970, "name": chat, "text": String(text.prefix(120))])
+        }
+    }
+
     private static let dayFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"

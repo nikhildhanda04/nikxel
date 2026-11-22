@@ -23,6 +23,7 @@ import Foundation
               == [R(chat: "Dev", group: true, incomingAt: 100, repliedAt: 160)], "group chat detected")
         check(Suggestions.replies(chats: [], bot: []).isEmpty, "empty input")
 
+        check(Suggestions.replies(chats: [row(100, "Asha", "see you at 10:30")], bot: []) == [R(chat: "Asha", group: false, incomingAt: 100, repliedAt: nil)], "time with a colon isn't a group")
         let open = R(chat: "Asha", group: false, incomingAt: 100, repliedAt: nil)
         func bots(_ text: String, _ t: Double = 240, _ name: String = "Asha") -> [[String: Any]] { [["t": t, "name": name, "text": text]] }
         check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: Sure, I'll check it")], bot: bots("Sure,\nI'll  check it")) == [open], "newlines and whitespace runs flattened: still the bot")
@@ -73,6 +74,12 @@ import Foundation
         check(items("NONE").isEmpty, "NONE: nothing")
         check(items(#"{"items":["# + offer("summaryTime", #"{"minutes":1560.5}"#) + "," + offer("summaryTime", #"{"minutes":1320}"#) + "]}").isEmpty, "fractional minutes and current time dropped")
         check(Suggestions.key(action: "waQuietHours", params: ["to": "8", "from": "21"]) == "weekly:waQuietHours:from=21,to=8", "key sorts params")
+        var off = st; off.autoRecordCalls = false
+        let autoJSON = #"{"items":["# + offer("autoRecordCalls", "{}") + "]}"
+        check(Suggestions.parse(autoJSON, settings: off, answered: []).count == 1, "autoRecordCalls off: offer kept")
+        check(Suggestions.parse(autoJSON, settings: off, answered: ["autoRecord"]).isEmpty, "autoRecordCalls answered by the daily check dropped")
+        check(items(#"{"items":["# + offer("summaryTime", #"{"minutes":1560}"#) + "]}", answered: ["summaryTime"]).isEmpty, "summaryTime answered by the daily check dropped")
+        check(Suggestions.key(action: "autoRecordCalls", params: [:]) == "autoRecord", "auto-record key shared with the daily check")
         check(Suggestions.key(action: "summaryRule", params: ["text": "Lead with decisions"]) == "rule:Lead with decisions", "rule key shared with the daily check")
 
         let title = String(repeating: "0123456789", count: 20)

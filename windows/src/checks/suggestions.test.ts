@@ -19,6 +19,8 @@ test("replies", () => {
     [{ chat: "Dev", group: true, incomingAt: 100, repliedAt: 160 }], "group chat detected");
   assert.deepEqual(replies([], []), [], "empty input");
 
+  assert.deepEqual(replies([row(100, "Asha", "see you at 10:30")], []),
+    [{ chat: "Asha", group: false, incomingAt: 100, repliedAt: null }], "time with a colon isn't a group");
   const open = [{ chat: "Asha", group: false, incomingAt: 100, repliedAt: null }];
   const replied = [{ chat: "Asha", group: false, incomingAt: 100, repliedAt: 250 }];
   const bots = (text: string, t = 240, name = "Asha") => [{ t, name, text }];
@@ -72,6 +74,11 @@ test("digest, catalogue and the AI's reply", () => {
   assert.deepEqual(items("NONE"), [], "NONE: nothing");
   assert.deepEqual(items(`{"items":[${offer("summaryTime", `{"minutes":1560.5}`)},${offer("summaryTime", `{"minutes":1320}`)}]}`), [], "fractional minutes and current time dropped");
   assert.equal(key("waQuietHours", { to: "8", from: "21" }), "weekly:waQuietHours:from=21,to=8", "key sorts params");
+  const off = { ...st, autoRecordCalls: false }, autoJSON = `{"items":[${offer("autoRecordCalls", "{}")}]}`;
+  assert.equal(parse(autoJSON, off, new Set()).length, 1, "autoRecordCalls off: offer kept");
+  assert.deepEqual(parse(autoJSON, off, new Set(["autoRecord"])), [], "autoRecordCalls answered by the daily check dropped");
+  assert.deepEqual(items(`{"items":[${offer("summaryTime", `{"minutes":1560}`)}]}`, new Set(["summaryTime"])), [], "summaryTime answered by the daily check dropped");
+  assert.equal(key("autoRecordCalls", {}), "autoRecord", "auto-record key shared with the daily check");
   assert.equal(key("summaryRule", { text: "Lead with decisions" }), "rule:Lead with decisions", "rule key shared with the daily check");
 
   const title = "0123456789".repeat(20);

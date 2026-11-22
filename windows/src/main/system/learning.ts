@@ -166,6 +166,7 @@ function meetings(days: Set<string>): Suggestions.Meeting[] {
     const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)).getTime() / 1000;
     let end: number;
     try { end = fs.statSync(path.join(dir, name)).mtimeMs / 1000; } catch { continue; }
+    if (end - start > 4 * 3600) continue;  // a later edit of the summary moves the write time: not a real end
     const head = (readText(path.join(dir, name)) ?? "").split("\n").find(l => l.startsWith("# "));
     out.push({ start, end, title: head ? head.slice(2) : name.slice(0, -3) });
   }
@@ -192,7 +193,7 @@ export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey:
       edits: edits(new Date(y, mo - 1, d - 7), ["meeting", "notes"]).map(e => e.text),
       erp, settings, declined: answered,
     };
-    const context = [dayLogger.roleGuidance(), Settings.userContextBlock].filter(Boolean).join("\n\n");
+    const context = [dayLogger.roleGuidance(), Settings.userContextBlock, Settings.languageInstruction].filter(Boolean).join("\n\n");
     const reply = await agent.runPrompt(Suggestions.prompt(Suggestions.digest(input), context), "weekly-suggestions");
     const advice: string[] = [], queued: Queued[] = [];
     for (const item of Suggestions.parse(reply, settings, new Set(answered))) {

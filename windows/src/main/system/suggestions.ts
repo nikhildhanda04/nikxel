@@ -32,7 +32,7 @@ export function replies(chats: any[], bot: any[]): Reply[] {
         if (open === null) open = t;
         // ponytail: heuristic — a 1:1 message that itself starts "Word: ..." reads as a group; WhatsApp's list doesn't say
         const c = p.indexOf(":");
-        if (c >= 1 && c <= 40) group = true;
+        if (c >= 1 && c <= 40 && p[c + 1] === " ") group = true;
       }
     }
     if (open !== null) done.push({ at: open, reply: null });
@@ -194,7 +194,7 @@ export const catalogue: { id: string; params: string; meaning: string }[] = [
   { id: "waQuietHours", params: `{"from": <0-23>, "to": <0-23>}`, meaning: "the WhatsApp bot doesn't answer between these hours; wraps past midnight when to < from" },
   { id: "waDraftOnly", params: "{}", meaning: "the WhatsApp bot types its reply into the chat and leaves sending to the person" },
   { id: "waChatTasks", params: "{}", meaning: "a WhatsApp message that plainly asks for something becomes a Google Task" },
-  { id: "summaryTemplate", params: `{"name": "<an installed template>"}`, meaning: "switch meeting summaries to another installed template" },
+  { id: "summaryTemplate", params: `{"name": "<an installed template>"}`, meaning: "switch to another installed template, which changes how daily, weekly and meeting summaries are written" },
 ];
 
 /** The weekly review prompt: the digest, the catalogue and who the person is; the reply is one line of JSON. */
@@ -231,9 +231,10 @@ export type Item =
   | { kind: "advice"; text: string; evidence: string }
   | { kind: "offer"; action: string; params: Record<string, string>; line: string; evidence: string };
 
-/** The answered-key for an offer; a summary rule shares `rule:<text>` with the daily rule check. */
+/** The answered-key for an offer; a summary rule shares `rule:<text>` and auto-record `autoRecord` with the daily checks. */
 export function key(action: string, params: Record<string, string>): string {
   if (action === "summaryRule") return "rule:" + (params.text ?? "");
+  if (action === "autoRecordCalls") return "autoRecord";
   return `weekly:${action}:` + Object.keys(params).sort(cmp).map((k) => `${k}=${params[k]}`).join(",");
 }
 
@@ -294,6 +295,7 @@ export function parse(reply: string, settings: Settings, answered: Set<string>):
       if (p === null) continue;
       const k = key(str("action"), p);
       if (answered.has(k) || seen.has(k)) continue;  // and not twice in one reply
+      if (str("action") === "summaryTime" && answered.has("summaryTime")) continue;  // the daily summary-time question was answered
       seen.add(k);
       out.push({ kind: "offer", action: str("action"), params: p, line: str("line"), evidence: str("evidence") });
     }

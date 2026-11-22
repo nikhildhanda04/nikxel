@@ -45,7 +45,7 @@ enum Suggestions {
                 } else {
                     if open == nil { open = t }
                     // ponytail: heuristic -- a 1:1 message that itself starts "Word: ..." reads as a group; WhatsApp's list doesn't say
-                    if let c = p.firstIndex(of: ":"), (1...40).contains(p.distance(from: p.startIndex, to: c)) { group = true }
+                    if let c = p.firstIndex(of: ":"), (1...40).contains(p.distance(from: p.startIndex, to: c)), p[p.index(after: c)...].hasPrefix(" ") { group = true }
                 }
             }
             if let o = open { done.append((o, nil)) }
@@ -211,7 +211,7 @@ enum Suggestions {
         ("waQuietHours", #"{"from": <0-23>, "to": <0-23>}"#, "the WhatsApp bot doesn't answer between these hours; wraps past midnight when to < from"),
         ("waDraftOnly", "{}", "the WhatsApp bot types its reply into the chat and leaves sending to the person"),
         ("waChatTasks", "{}", "a WhatsApp message that plainly asks for something becomes a Google Task"),
-        ("summaryTemplate", #"{"name": "<an installed template>"}"#, "switch meeting summaries to another installed template"),
+        ("summaryTemplate", #"{"name": "<an installed template>"}"#, "switch to another installed template, which changes how daily, weekly and meeting summaries are written"),
     ]
 
     /// The weekly review prompt: the digest, the catalogue and who the person is; the reply is one line of JSON.
@@ -251,9 +251,10 @@ enum Suggestions {
         case offer(action: String, params: [String: String], line: String, evidence: String)
     }
 
-    /// The answered-key for an offer; a summary rule shares `rule:<text>` with the daily rule check.
+    /// The answered-key for an offer; a summary rule shares `rule:<text>` and auto-record `autoRecord` with the daily checks.
     static func key(action: String, params: [String: String]) -> String {
         if action == "summaryRule" { return "rule:" + (params["text"] ?? "") }
+        if action == "autoRecordCalls" { return "autoRecord" }
         return "weekly:\(action):" + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
     }
 
@@ -301,7 +302,8 @@ enum Suggestions {
             case "offer":
                 guard !str("line").isEmpty, let p = offerParams(str("action"), x["params"] as? [String: Any] ?? [:], settings) else { continue }
                 let k = key(action: str("action"), params: p)
-                if answered.contains(k) || !seen.insert(k).inserted { continue }  // and not twice in one reply
+                if answered.contains(k) || !seen.insert(k).inserted { continue }
+                if str("action") == "summaryTime", answered.contains("summaryTime") { continue }  // the daily summary-time question was answered  // and not twice in one reply
                 out.append(.offer(action: str("action"), params: p, line: str("line"), evidence: str("evidence")))
             default: continue
             }

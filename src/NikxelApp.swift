@@ -909,7 +909,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     /// Rebuilt rather than mutated, because creating or deleting a template
     /// changes the list itself, not just which row is ticked.
-    private func rebuildTemplateMenu() {
+    func rebuildTemplateMenu() {
         guard let menu = templateMenu else { return }
         menu.removeAllItems()
         let active = NikxelSettings.summaryTemplate

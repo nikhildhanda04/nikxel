@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// What Nikxel learned from habits and edits, offered before anything changes: "I'm thinking
@@ -173,7 +174,8 @@ enum Learning {
             guard name.hasSuffix(".md"), !name.contains(".transcript"), days.contains(String(name.prefix(10))) else { return nil }
             let stem = String(name.dropLast(3)), url = dir.appendingPathComponent(name)
             guard let start = long.date(from: stem) ?? short.date(from: stem),
-                  let end = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return nil }
+                  let end = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+                  end.timeIntervalSince(start) <= 4 * 3600 else { return nil }  // a later edit of the summary moves the write time: not a real end
             let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
             let title = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) } ?? stem
             return Suggestions.Meeting(start: start.timeIntervalSince1970, end: end.timeIntervalSince1970, title: title)
@@ -203,7 +205,7 @@ enum Learning {
             edits: edits(since: days.last.map { Calendar.current.startOfDay(for: $0) } ?? end, kinds: ["meeting", "notes"]).map(\.text),
             erp: days.reversed().flatMap { d in ERP.tasksTouched(on: d).map { (day: dayKey(d), name: $0.name, project: $0.project) } },
             settings: settings, declined: answered)
-        let context = [dayLogger.roleGuidance(), NikxelSettings.userContextBlock].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let context = [dayLogger.roleGuidance(), NikxelSettings.userContextBlock, NikxelSettings.languageInstruction].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let reply: String
         do {
             reply = try agent.runPrompt(Suggestions.prompt(digest: Suggestions.digest(input), context: context), kind: "weekly-suggestions")
@@ -262,7 +264,10 @@ enum Learning {
         case "waQuietHours":
             guard let f = Int(p["from"] ?? ""), let t = Int(p["to"] ?? "") else { return }
             NikxelSettings.waQuietHours = true; NikxelSettings.waQuietFrom = f; NikxelSettings.waQuietTo = t
-        case "summaryTemplate": if let n = p["name"] { NikxelSettings.summaryTemplate = n }
+        case "summaryTemplate":
+            guard let n = p["name"] else { return }
+            NikxelSettings.summaryTemplate = n
+            DispatchQueue.main.async { (NSApp.delegate as? NikxelAppDelegate)?.rebuildTemplateMenu() }
         case "summaryRule": if let t = p["text"] { addRule(t) }
         default: cblog("Learning: unknown weekly action \(action)")
         }

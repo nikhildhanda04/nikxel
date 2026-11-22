@@ -23,6 +23,17 @@ import Foundation
               == [R(chat: "Dev", group: true, incomingAt: 100, repliedAt: 160)], "group chat detected")
         check(Suggestions.replies(chats: [], bot: []).isEmpty, "empty input")
 
+        let open = R(chat: "Asha", group: false, incomingAt: 100, repliedAt: nil)
+        func bots(_ text: String, _ t: Double = 240, _ name: String = "Asha") -> [[String: Any]] { [["t": t, "name": name, "text": text]] }
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: Sure, I'll check it")], bot: bots("Sure,\nI'll  check it")) == [open], "newlines and whitespace runs flattened: still the bot")
+        let long = String(repeating: "abcdefghij", count: 8)
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: " + long.prefix(30) + "…")], bot: bots(long)) == [open], "preview cut with an ellipsis: still the bot")
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: ")], bot: bots("Sure", 240)) == [R(chat: "Asha", group: false, incomingAt: 100, repliedAt: 250)], "empty own text is a real reply")
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You:")], bot: bots("Sure", 240)) == [R(chat: "Asha", group: false, incomingAt: 100, repliedAt: 250)], "bare \"You:\" is a real reply")
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: Sure")], bot: bots("Sure", 240, "Ben")) == [R(chat: "Asha", group: false, incomingAt: 100, repliedAt: 250)], "bot row for another chat: not matched")
+        check(Suggestions.replies(chats: [row(100, "Asha", "hi"), row(250, "Asha", "You: Sure")], bot: bots("Sure", 551)) == [R(chat: "Asha", group: false, incomingAt: 100, repliedAt: 250)], "bot row 301s away: not matched")
+        check(Suggestions.replies(chats: [row(100, "Asha", "You: a"), row(200, "Asha", "You:")], bot: []).isEmpty, "only own previews: nothing")
+
         if failed { exit(1) }
     }
 }

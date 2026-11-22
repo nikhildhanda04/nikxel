@@ -13,8 +13,21 @@ enum Suggestions {
             guard let t = time(r), let n = r["name"] as? String, let x = r["text"] as? String else { return nil }
             return (t, n, x)
         }
+        /// The sidebar flattens newlines and whitespace runs and may end a long preview with "…", so compare on that footing.
+        func norm(_ s: String) -> String {
+            var n = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            for e in ["…", "..."] where n.hasSuffix(e) { n = String(n.dropLast(e.count)); break }
+            return n.trimmingCharacters(in: .whitespaces)
+        }
+        let normed = botRows.map { (t: $0.t, name: $0.name, text: norm($0.text)) }
+        /// An empty own text (a photo, a sticker) never matches: it's the user's.
         func isBot(_ name: String, _ t: TimeInterval, _ own: String) -> Bool {
-            botRows.contains { $0.name == name && abs($0.t - t) <= 300 && (own.hasPrefix(String($0.text.prefix(40))) || $0.text.hasPrefix(own)) }
+            let own = norm(own)
+            if own.isEmpty { return false }
+            return normed.contains { b in
+                guard b.name == name, abs(b.t - t) <= 300 else { return false }
+                return own.hasPrefix(String(b.text.prefix(40))) || b.text.hasPrefix(own)
+            }
         }
         var byChat: [String: [(t: TimeInterval, preview: String)]] = [:]
         for r in chats {
@@ -26,8 +39,8 @@ enum Suggestions {
             var open: TimeInterval? = nil, group = false
             var done: [(at: TimeInterval, reply: TimeInterval?)] = []
             for (t, p) in rows.sorted(by: { $0.t < $1.t }) {
-                if p.hasPrefix("You: ") {
-                    if isBot(name, t, String(p.dropFirst(5))) { continue }
+                if p.hasPrefix("You:") {
+                    if isBot(name, t, String(p.dropFirst(4))) { continue }
                     if let o = open { done.append((o, t)); open = nil }
                 } else {
                     if open == nil { open = t }

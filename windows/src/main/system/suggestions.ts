@@ -7,8 +7,14 @@ export interface Reply { chat: string; group: boolean; incomingAt: number; repli
  *  incoming after the user's last message and closes at their next one — except Nikxel's own bot sends, which aren't the user. */
 export function replies(chats: any[], bot: any[]): Reply[] {
   const botRows = bot.filter((r) => typeof r?.t === "number" && typeof r.name === "string" && typeof r.text === "string");
-  const isBot = (name: string, t: number, own: string) =>
-    botRows.some((b) => b.name === name && Math.abs(b.t - t) <= 300 && (own.startsWith(b.text.slice(0, 40)) || b.text.startsWith(own)));
+  // The sidebar flattens newlines and whitespace runs and may end a long preview with "…", so compare on that footing.
+  const norm = (s: string) => s.split(/\s+/).filter(Boolean).join(" ").replace(/(…|\.\.\.)$/, "").trim();
+  const bots = botRows.map((b) => ({ ...b, text: norm(b.text) }));
+  // An empty own text (a photo, a sticker) never matches: it's the user's.
+  const isBot = (name: string, t: number, raw: string) => {
+    const own = norm(raw);
+    return own !== "" && bots.some((b) => b.name === name && Math.abs(b.t - t) <= 300 && (own.startsWith(b.text.slice(0, 40)) || b.text.startsWith(own)));
+  };
   const byChat = new Map<string, { t: number; preview: string }[]>();
   for (const r of chats) {
     if (typeof r?.t !== "number" || typeof r.name !== "string" || typeof r.preview !== "string") continue;
@@ -19,8 +25,8 @@ export function replies(chats: any[], bot: any[]): Reply[] {
     let open: number | null = null, group = false;
     const done: { at: number; reply: number | null }[] = [];
     for (const { t, preview: p } of rows.sort((a, b) => a.t - b.t)) {
-      if (p.startsWith("You: ")) {
-        if (isBot(name, t, p.slice(5))) continue;
+      if (p.startsWith("You:")) {
+        if (isBot(name, t, p.slice(4))) continue;
         if (open !== null) { done.push({ at: open, reply: t }); open = null; }
       } else {
         if (open === null) open = t;

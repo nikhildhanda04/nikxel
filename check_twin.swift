@@ -57,6 +57,12 @@ func cblog(_ msg: String) { print("log: \(msg)") } // stand-in for the app's log
         check(TwinDistiller.accept(new: "Who\n" + String(repeating: "a", count: 5000), old: "x", cap: 3000).count <= 3000, "accept caps length")
         check(TwinDistiller.accept(new: "Who\nl1\nl2\nl3", old: "x", cap: 8) == "Who\nl1", "accept cuts on a line boundary")
         check(TwinDistiller.accept(new: "I can't help with that.", old: "GOOD PROFILE") == "GOOD PROFILE", "accept keeps old on malformed output")
+        let long = "Who\nA dev.\nWork & projects\n" + (1...80).map { "- project \($0) is going along fine" }.joined(separator: "\n")
+            + "\nVoice & style\n- terse, Hinglish\n<!--corrections-->\nvizon -> vizion\n<!--/corrections-->"
+        let kept = TwinDistiller.accept(new: long, old: "x", cap: 600)
+        check(kept.count <= 600 && kept.contains("A dev.") && kept.contains("- project 1 ") && !kept.contains("project 80")
+              && kept.contains("terse, Hinglish") && kept.contains("vizon -> vizion\n<!--/corrections-->"),
+              "over the cap, the longest section is trimmed and Voice & style and corrections survive")
         check(TwinDistiller.accept(new: "## Who\nA dev.", old: "GOOD PROFILE") == "## Who\nA dev.", "accept takes a well-formed profile")
         TwinProfile.learned = "Who\nA dev.\n<!--corrections-->\nvizon -> vizion"
         check(!TwinProfile.injectedBlock.contains("<!--corrections-->") && !TwinProfile.injectedBlock.contains("vizon") && TwinProfile.injectedBlock.contains("A dev."), "unterminated corrections region is stripped")

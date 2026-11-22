@@ -60,6 +60,12 @@ test("TwinDistiller: accept, mergePrompt, distill", async t => {
   assert.ok(TD.accept("Who\n" + "a".repeat(5000), "x", 3000).length <= 3000);
   assert.equal(TD.accept("Who\nl1\nl2\nl3", "x", 8), "Who\nl1");
   assert.equal(TD.accept("I can't help with that.", "GOOD PROFILE"), "GOOD PROFILE");
+  const long = "Who\nA dev.\nWork & projects\n" + Array.from({ length: 80 }, (_, i) => `- project ${i + 1} is going along fine`).join("\n")
+    + "\nVoice & style\n- terse, Hinglish\n<!--corrections-->\nvizon -> vizion\n<!--/corrections-->";
+  const kept = TD.accept(long, "x", 600);
+  assert.ok(kept.length <= 600 && kept.includes("A dev.") && kept.includes("- project 1 ") && !kept.includes("project 80")
+    && kept.includes("terse, Hinglish") && kept.includes("vizon -> vizion\n<!--/corrections-->"),
+    "over the cap, the longest section is trimmed and Voice & style and corrections survive");
   assert.equal(TD.accept("## Who\nA dev.", "GOOD PROFILE"), "## Who\nA dev.");
   TP.learned = "Who\nA dev.\n<!--corrections-->\nvizon -> vizion";
   assert.ok(!TP.injectedBlock.includes("<!--corrections-->") && !TP.injectedBlock.includes("vizon") && TP.injectedBlock.includes("A dev."));

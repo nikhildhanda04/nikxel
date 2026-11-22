@@ -131,8 +131,10 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
                 let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/nikxel")
                 self.feedReady.wait()
                 let (feed, offline) = self.feed
-                let context = ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
-                                                cap: ChatContext.cap)
+                // What Nikxel has learned about the user (names, projects, people) goes first.
+                let context = [NikxelSettings.userContextBlock,
+                               ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
+                                                 cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
                 var answer: String?
                 let reply: String
                 do {

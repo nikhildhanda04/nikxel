@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain, Rectangle, screen } from "electron";
 import * as path from "path";
 import { cblog } from "../core/diag";
+import { Settings } from "../core/settings";
 import { documentsRoot, nikxelPath, preloadPath, readText, rendererPath, writeAtomic } from "../core/paths";
 import { MOMError, MOMGenerator } from "../recording/momGenerator";
 import { Transcriber } from "../recording/transcriber";
@@ -52,7 +53,9 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
   ipcMain.handle(`chat:send:${id}`, async (_e, text: string) => {
     const today = new Date();
     const { feed, offline } = await feedP;
-    const context = build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP);
+    // What Nikxel has learned about the user (names, projects, people) goes first.
+    const context = [Settings.userContextBlock,
+      build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
     let reply: string, error = false;
     try {
       reply = (await agent.runPrompt(prompt(context, history, text, today), "chat", "haiku", 30)).trim();

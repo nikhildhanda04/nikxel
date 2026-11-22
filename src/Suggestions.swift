@@ -224,7 +224,12 @@ enum Suggestions {
         - offer: a task Nikxel takes on for them from now on. ONLY the actions in the list below -- never invent one. If the idea isn't on the list, it can only be advice.
 
         Rules:
-        - Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "median WhatsApp wait 45 min for messages arriving at 14:00 and 15:00, against 8 min at 10:00"). An item you can't back with a number from the digest is left out.
+        - Ground every item in this person's own numbers from the digest. An item you can't back with a number from the digest is left out.
+        - The person is not technical and reads every word you write. Write "text" and "evidence" in plain everyday words, like a friend who noticed something:
+          - "evidence" is one short sentence with at most two numbers, rounded the way people say them: "about 7 hours", "2 to 3 days", "around 2pm", "most days" -- never minutes in the thousands, decimals, or counts like "x475".
+          - Call apps and chats what people call them ("WhatsApp", "Chrome", "Vizion Lens group"), never web addresses, window titles, memory sizes or file names.
+          - No statistics or jargon: no "median", "per hour", "average", "digest", arrows or symbols.
+          - Example evidence: "WhatsApp took about 7 hours of your week, and you hopped between it and Code all afternoon."
         - Nothing generic (take breaks, use a to-do list, turn off notifications) unless the digest shows why it fits this person.
         - One sharp item beats three weak ones. If nothing is clearly worth saying, return no items.
         - Don't repeat anything under "Already answered", or anything that means the same.
@@ -238,7 +243,7 @@ enum Suggestions {
         \(context.isEmpty ? "(nothing given)" : context)
 
         Reply with exactly one line of JSON and nothing else:
-        {"items": [{"kind": "advice", "text": "<what to try, under 30 words>", "evidence": "<their numbers>"}, {"kind": "offer", "action": "<an action from the list>", "params": {<its params>}, "line": "I'm thinking of …", "evidence": "<their numbers>"}]}
+        {"items": [{"kind": "advice", "text": "<what to try, plain words, under 25 words>", "evidence": "<one plain sentence>"}, {"kind": "offer", "action": "<an action from the list>", "params": {<its params>}, "line": "I'm thinking of …", "evidence": "<one plain sentence>"}]}
         or {"items": []} when nothing is worth saying.
 
         DIGEST:

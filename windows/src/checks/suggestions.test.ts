@@ -1,7 +1,7 @@
 // Runnable check for suggestions.ts — port of check_suggestions.swift.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { replies } from "../main/system/suggestions";
+import { replies, switchesByHour, topPairs, afterMeetings } from "../main/system/suggestions";
 
 const row = (t: number, name: string, preview: string) => ({ t, name, preview });
 
@@ -30,4 +30,23 @@ test("replies", () => {
   assert.deepEqual(replies([row(100, "Asha", "hi"), row(250, "Asha", "You: Sure")], bots("Sure", 240, "Ben")), replied, "bot row for another chat: not matched");
   assert.deepEqual(replies([row(100, "Asha", "hi"), row(250, "Asha", "You: Sure")], bots("Sure", 551)), replied, "bot row 301s away: not matched");
   assert.deepEqual(replies([row(100, "Asha", "You: a"), row(200, "Asha", "You:")], []), [], "only own previews: nothing");
+});
+
+// Local-time dates, as habits.test.ts does, so the checks pass in any zone.
+const at = (d: number, h: number, m: number) => new Date(2026, 0, d, h, m).getTime() / 1000;
+const smp = (t: number, app: string) => ({ t, app, title: "" });
+
+test("activity patterns", () => {
+  const sw = [smp(at(5, 10, 0), "Code"), smp(at(5, 10, 10), "Slack"), smp(at(5, 10, 20), "Code"), smp(at(5, 10, 30), "Slack"), smp(at(5, 11, 0), "Code")];
+  assert.deepEqual(switchesByHour(sw), { 10: 3, 11: 0 }, "switches per active hour; hour-boundary change not counted");
+  assert.deepEqual(switchesByHour([...sw, smp(at(6, 10, 0), "Code"), smp(at(6, 10, 10), "Slack")]), { 10: 2, 11: 0 }, "average over days");
+  assert.deepEqual(switchesByHour([smp(at(5, 10, 0), "Code"), smp(at(5, 10, 5), "LockApp"), smp(at(5, 10, 10), "Code")]), { 10: 0 }, "lock screen dropped");
+  assert.deepEqual(switchesByHour([]), {}, "no samples: no hours");
+  assert.deepEqual(topPairs(sw), [{ a: "Code", b: "Slack", count: 3 }], "pair Code/Slack x3 (a < b)");
+  assert.deepEqual(topPairs([smp(1, "B"), smp(2, "A"), smp(3, "C")], 2), [{ a: "A", b: "B", count: 1 }, { a: "A", b: "C", count: 1 }], "ties by name, limited");
+  assert.deepEqual(topPairs(sw, 0), [], "limit 0");
+  const mt = (end: number) => ({ start: end - 3600, end, title: "m" });
+  assert.deepEqual(afterMeetings([mt(1000), mt(10000)], [smp(1100, "Odoo"), smp(1200, "Odoo"), smp(1300, "Mail"), smp(10500, "Odoo"), smp(2800, "Late")]),
+    [{ app: "Odoo", meetings: 2 }], "after two meetings: Odoo x2 once each; Mail x1 and 30 min edge dropped");
+  assert.deepEqual(afterMeetings([], [smp(1, "A")]), [], "no meetings");
 });

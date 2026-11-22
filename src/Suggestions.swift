@@ -53,4 +53,54 @@ enum Suggestions {
         }
         return out.sorted { ($0.incomingAt, $0.chat) < ($1.incomingAt, $1.chat) }
     }
+
+    /// One foreground-app sample.
+    struct Sample { let t: TimeInterval; let app: String; let title: String }
+    /// A meeting's span.
+    struct Meeting { let start: TimeInterval; let end: TimeInterval; let title: String }
+
+    /// Samples in time order with lock-screen ones dropped.
+    private static func awake(_ s: [Sample]) -> [Sample] {
+        s.filter { $0.app != "loginwindow" && $0.app != "ScreenSaverEngine" }.sorted { $0.t < $1.t }
+    }
+
+    /// App changes between consecutive samples in the same clock hour of the same day; a change across an hour boundary isn't counted.
+    private static func switches(_ s: [Sample], _ cal: Calendar) -> [(from: String, to: String, hour: Int)] {
+        let a = awake(s)
+        var out: [(from: String, to: String, hour: Int)] = []
+        for (p, c) in zip(a, a.dropFirst()) where p.app != c.app {
+            let pd = cal.dateComponents([.year, .month, .day, .hour], from: Date(timeIntervalSince1970: p.t))
+            let cd = cal.dateComponents([.year, .month, .day, .hour], from: Date(timeIntervalSince1970: c.t))
+            if pd == cd { out.append((p.app, c.app, pd.hour!)) }
+        }
+        return out
+    }
+
+    /// Hour of day -> average app changes per active hour (an hour is active when it has at least one sample).
+    static func switchesByHour(_ s: [Sample], calendar: Calendar = .current) -> [Int: Double] {
+        var active = Set<DateComponents>()
+        for x in awake(s) { active.insert(calendar.dateComponents([.year, .month, .day, .hour], from: Date(timeIntervalSince1970: x.t))) }
+        var hours: [Int: Int] = [:], total: [Int: Int] = [:]
+        for d in active { hours[d.hour!, default: 0] += 1 }
+        for w in switches(s, calendar) { total[w.hour, default: 0] += 1 }
+        return hours.reduce(into: [:]) { $0[$1.key] = Double(total[$1.key] ?? 0) / Double($1.value) }
+    }
+
+    /// Unordered app pairs by direct switches between them, most first, ties by name.
+    static func topPairs(_ s: [Sample], limit: Int = 5, calendar: Calendar = .current) -> [(a: String, b: String, count: Int)] {
+        var n: [[String]: Int] = [:]
+        for w in switches(s, calendar) { n[[w.from, w.to].sorted(), default: 0] += 1 }
+        let all = n.map { (a: $0.key[0], b: $0.key[1], count: $0.value) }
+        return Array(all.sorted { ($1.count, $0.a, $0.b) < ($0.count, $1.a, $1.b) }.prefix(max(0, limit)))
+    }
+
+    /// Apps seen within 30 minutes after at least two meetings ended (once per meeting), most first, ties by name.
+    static func afterMeetings(_ m: [Meeting], _ s: [Sample]) -> [(app: String, meetings: Int)] {
+        let a = awake(s)
+        var n: [String: Int] = [:]
+        for mt in m {
+            for app in Set(a.filter { $0.t >= mt.end && $0.t < mt.end + 1800 }.map(\.app)) { n[app, default: 0] += 1 }
+        }
+        return n.filter { $0.value >= 2 }.map { (app: $0.key, meetings: $0.value) }.sorted { ($1.meetings, $0.app) < ($0.meetings, $1.app) }
+    }
 }

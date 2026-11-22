@@ -40,3 +40,47 @@ export function replies(chats: any[], bot: any[]): Reply[] {
   }
   return out.sort((a, b) => a.incomingAt - b.incomingAt || (a.chat < b.chat ? -1 : a.chat > b.chat ? 1 : 0));
 }
+
+export interface Sample { t: number; app: string; title: string }
+export interface Meeting { start: number; end: number; title: string }
+
+/** Samples in time order with lock-screen ones dropped. */
+const awake = (s: Sample[]) => s.filter((x) => x.app !== "LockApp").sort((a, b) => a.t - b.t);
+const slot = (t: number) => { const d = new Date(t * 1000); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}`; };
+
+/** App changes between consecutive samples in the same clock hour of the same day; a change across an hour boundary isn't counted. */
+function switches(s: Sample[]) {
+  const a = awake(s), out: { from: string; to: string; hour: number }[] = [];
+  for (let i = 1; i < a.length; i++) {
+    if (a[i - 1].app !== a[i].app && slot(a[i - 1].t) === slot(a[i].t)) out.push({ from: a[i - 1].app, to: a[i].app, hour: new Date(a[i].t * 1000).getHours() });
+  }
+  return out;
+}
+
+/** Hour of day -> average app changes per active hour (an hour is active when it has at least one sample). */
+export function switchesByHour(s: Sample[]): Record<number, number> {
+  const active = new Set(awake(s).map((x) => slot(x.t)));
+  const hours: Record<number, number> = {}, total: Record<number, number> = {};
+  for (const k of active) { const h = Number(k.split("-")[3]); hours[h] = (hours[h] ?? 0) + 1; }
+  for (const w of switches(s)) total[w.hour] = (total[w.hour] ?? 0) + 1;
+  return Object.fromEntries(Object.entries(hours).map(([h, n]) => [h, (total[Number(h)] ?? 0) / n]));
+}
+
+const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+
+/** Unordered app pairs by direct switches between them, most first, ties by name. */
+export function topPairs(s: Sample[], limit = 5): { a: string; b: string; count: number }[] {
+  const n = new Map<string, { a: string; b: string; count: number }>();
+  for (const w of switches(s)) {
+    const [a, b] = [w.from, w.to].sort(cmp), k = JSON.stringify([a, b]);
+    n.set(k, { a, b, count: (n.get(k)?.count ?? 0) + 1 });
+  }
+  return [...n.values()].sort((x, y) => y.count - x.count || cmp(x.a, y.a) || cmp(x.b, y.b)).slice(0, Math.max(0, limit));
+}
+
+/** Apps seen within 30 minutes after at least two meetings ended (once per meeting), most first, ties by name. */
+export function afterMeetings(m: Meeting[], s: Sample[]): { app: string; meetings: number }[] {
+  const a = awake(s), n = new Map<string, number>();
+  for (const mt of m) for (const app of new Set(a.filter((x) => x.t >= mt.end && x.t < mt.end + 1800).map((x) => x.app))) n.set(app, (n.get(app) ?? 0) + 1);
+  return [...n].filter(([, c]) => c >= 2).map(([app, meetings]) => ({ app, meetings })).sort((x, y) => y.meetings - x.meetings || cmp(x.app, y.app));
+}

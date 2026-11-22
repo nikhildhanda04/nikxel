@@ -45,6 +45,8 @@ export function micCallSource(key: string): string | null {
   if (is(/^(webexmta|ciscocollabhost|atmgr)\.exe$/, /webex/)) return "a Webex call";
   if (is(/^whatsapp\.exe$/, /whatsapp/)) return "a WhatsApp call";
   if (is(/^slack\.exe$/, /^$/)) return "a Slack huddle";
+  // A browser holding the mic: a web call — Meet, or Zoom/Teams on the web.
+  if (is(/^(chrome|msedge|brave|firefox|opera|vivaldi|arc|chromium)\.exe$/, /^$/)) return BROWSER_CALL;
   return null;
 }
 
@@ -60,13 +62,16 @@ export function detectMeeting(s: DesktopSnapshot): boolean {
 
 /// What the meeting is, for the "record it?" prompt: "Google Meet", "a Zoom call", … or null.
 export function meetingSource(s: DesktopSnapshot): string | null {
-  for (const k of s.mic) { const src = micCallSource(k); if (src) return src; }
-  for (const w of s.windows) {
-    if (BROWSERS.has(w.proc.toLowerCase()) && isMeetTitle(w.title)) return "Google Meet";
-    if (isZoomMeetingWindow(w.proc, w.title)) return "a Zoom call";
-  }
-  return null;
+  const meet = s.windows.some(w => BROWSERS.has(w.proc.toLowerCase()) && isMeetTitle(w.title));
+  const mic = s.mic.map(micCallSource).find(src => src !== null) ?? null;
+  // A browser holding the mic is named after the Meet window when one is showing.
+  if (mic === BROWSER_CALL) return meet ? "Google Meet" : mic;
+  if (mic) return mic;
+  if (meet) return "Google Meet";
+  return s.windows.some(w => isZoomMeetingWindow(w.proc, w.title)) ? "a Zoom call" : null;
 }
+
+const BROWSER_CALL = "a call in your browser";
 
 /// One look at the desktop, or null when the helper can't answer.
 async function snapshot(): Promise<DesktopSnapshot | null> {

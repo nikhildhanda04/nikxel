@@ -25,9 +25,8 @@ test("native meeting apps holding the microphone", () => {
   assert.ok(isMeetingMicUser("C:#Users#asha#AppData#Roaming#Zoom#bin#Zoom.exe"));
   assert.ok(isMeetingMicUser("C:#Users#asha#AppData#Local#Microsoft#Teams#current#Teams.exe"));
   assert.ok(isMeetingMicUser("MSTeams_8wekyb3d8bbwe"));
-  // Nikxel's own recorder, a browser, or a voice recorder: not a meeting by itself.
+  // Nikxel's own recorder or a voice recorder: not a meeting by itself.
   assert.ok(!isMeetingMicUser("C:#Users#asha#AppData#Local#Programs#Nikxel#Nikxel.exe"));
-  assert.ok(!isMeetingMicUser("C:#Program Files#Google#Chrome#Application#chrome.exe"));
   assert.ok(!isMeetingMicUser("Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe"));
   // A folder that happens to say "teams" doesn't make its exe a meeting app.
   assert.ok(!isMeetingMicUser("C:#Users#asha#teams-tools#recorder.exe"));
@@ -49,5 +48,8 @@ test("what the meeting is, for the record prompt", () => {
   assert.equal(meetingSource({ windows: [], mic: ["5319275A.WhatsAppDesktop_cv1g1gvanyjgm"] }), "a WhatsApp call");
   assert.equal(meetingSource({ windows: [], mic: ["MSTeams_8wekyb3d8bbwe"] }), "a Teams call");
   assert.equal(meetingSource({ windows: [{ proc: "chrome", title: "Meet - abc-defg-hij - Google Chrome" }], mic: [] }), "Google Meet");
-  assert.equal(meetingSource({ windows: [], mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), null);
+  // A browser on the mic is a web call, named Meet when a Meet window shows.
+  assert.equal(meetingSource({ windows: [], mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), "a call in your browser");
+  assert.equal(meetingSource({ windows: [{ proc: "chrome", title: "Meet - abc-defg-hij - Google Chrome" }],
+    mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), "Google Meet");
 });

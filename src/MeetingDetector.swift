@@ -54,7 +54,10 @@ class MeetingDetector {
             // Titles first: one AX read per window. The Arc scan is an Apple
             // Event per tab, so it only runs when the titles found nothing.
             // The mic first: one CoreAudio read says whether a call app has it open right now.
-            let source = Self.micCallSource() ?? (Self.checkWindowTitles() || Self.checkArcTabs() ? "Google Meet" : nil)
+            // A browser holding the mic is named after the Meet window when one is showing.
+            let meet = { Self.checkWindowTitles() || Self.checkArcTabs() }
+            let mic = Self.micCallSource()
+            let source = mic == Self.browserCall ? (meet() ? "Google Meet" : mic) : mic ?? (meet() ? "Google Meet" : nil)
             DispatchQueue.main.async {
                 self?.source = source
                 self?.autoDetected = source != nil
@@ -70,7 +73,11 @@ class MeetingDetector {
         ("us.zoom.xos", "a Zoom call"), ("com.microsoft.teams", "a Teams call"),
         ("com.apple.FaceTime", "a FaceTime call"), ("com.tinyspeck.slackmacgap", "a Slack huddle"),
         ("com.hnc.Discord", "a Discord call"), ("Cisco-Systems.Spark", "a Webex call"),
+        // Browsers (Arc and Dia share the company.thebrowser prefix): a web call — Meet, or Zoom/Teams on the web.
+        ("company.thebrowser", browserCall), ("com.google.Chrome", browserCall), ("com.brave.Browser", browserCall),
+        ("com.microsoft.edgemac", browserCall), ("com.apple.WebKit", browserCall), ("com.apple.Safari", browserCall),
     ]
+    private static let browserCall = "a call in your browser"
 
     /// The first call app with microphone input running, via CoreAudio's per-process objects (macOS 14.2+).
     private static func micCallSource() -> String? {
@@ -129,6 +136,7 @@ class MeetingDetector {
     private static func checkWindowTitles() -> Bool {
         let bundleIDs = [
             "company.thebrowser.Browser",  // Arc
+            "company.thebrowser.dia",      // Dia
             "com.google.Chrome",           // Chrome
             "com.apple.Safari",            // Safari
             "com.brave.Browser",           // Brave

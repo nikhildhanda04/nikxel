@@ -142,6 +142,8 @@ interface Session {
   nodes: AudioNode[];
   micGain: GainNode | null;
   micBase: number;
+  micSrc: MediaStreamAudioSourceNode | null;
+  micStream: MediaStream | null;
 }
 
 let session: Session | null = null;
@@ -206,12 +208,8 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     // recording continues with system audio only.
     let mic: MediaStream | null = null;
     try {
-      mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-        video: false,
-      });
+      mic = await openMic();
       streams.push(mic);
-      mic.getAudioTracks()[0]?.addEventListener("ended", () => api.log("microphone track ended (device unplugged?)"));
     } catch (e) {
       api.micUnavailable(errInfo(e));
     }
@@ -261,7 +259,7 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     // with the system-audio one.
     if (micGain) micGain.gain.value = muted ? 0 : micBase;
 
-    session = { ctx, streams, taps, nodes, micGain, micBase };
+    session = { ctx, streams, taps, nodes, micGain, micBase, micSrc, micStream: mic };
     api.started({ tracks: taps.map(t => t.track), inputRate: ctx.sampleRate });
     if (stopRequested) void stop();
   } catch (e) {
@@ -271,6 +269,45 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     starting = false;
   }
 }
+
+const openMic = () => navigator.mediaDevices.getUserMedia({
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  video: false,
+}).then(m => {
+  m.getAudioTracks()[0]?.addEventListener("ended", () => { api.log("microphone track ended (device unplugged?)"); void followMic("track ended"); });
+  return m;
+});
+
+/// The mic follows the default input. A Bluetooth headset connecting or dropping out
+/// mid-meeting swaps the device under us; the old track either ends or keeps listening to a
+/// device nobody's talking into. The new source feeds the same gain node, so the mic track's
+/// timeline never breaks (the tap records silence for the moment there's none).
+let following = false;
+async function followMic(why: string): Promise<void> {
+  const s = session;
+  if (!s?.micGain || following) return;
+  following = true;
+  try {
+    const current = s.micStream?.getAudioTracks()[0];
+    const def = (await navigator.mediaDevices.enumerateDevices()).find(d => d.kind === "audioinput" && d.deviceId === "default");
+    if (current?.readyState === "live" && def && current.getSettings().groupId === def.groupId) return;
+    const mic = await openMic();
+    if (session !== s) { stopStreams([mic]); return; }
+    try { s.micSrc?.disconnect(); } catch { /* already gone */ }
+    if (s.micStream) stopStreams([s.micStream]);
+    s.micSrc = s.ctx.createMediaStreamSource(mic);
+    s.micSrc.connect(s.micGain);
+    s.micStream = mic;
+    s.streams.push(mic);
+    s.nodes.push(s.micSrc);
+    api.log(`microphone switched to "${mic.getAudioTracks()[0]?.label ?? "?"}" (${why})`);
+  } catch (e) {
+    api.log(`microphone switch failed (${why}): ${errInfo(e).message}`);
+  } finally {
+    following = false;
+  }
+}
+navigator.mediaDevices.addEventListener("devicechange", () => { void followMic("device change"); });
 
 async function stop(): Promise<void> {
   if (starting) { stopRequested = true; return; }

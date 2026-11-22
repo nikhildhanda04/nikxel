@@ -298,7 +298,7 @@ class AudioRecorder: NSObject {
                 let scale: Float = 1.0 / 32768.0
                 for i in 0..<fc {
                     ch0[i] = Float(ip[isInterleaved ? i * inCh + 0 : i]) * scale
-                    ch1[i] = inCh > 1 ? Float(ip[isInterleaved ? i * inCh + 1 : fc + i]) * scale * scale
+                    ch1[i] = inCh > 1 ? Float(ip[isInterleaved ? i * inCh + 1 : fc + i]) * scale
                                       : Float(ip[isInterleaved ? i * inCh + 0 : i]) * scale
                 }
             }

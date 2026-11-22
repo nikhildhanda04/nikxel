@@ -12,6 +12,7 @@ import type { MOMGenerator } from "../recording/momGenerator";
 import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 import { TwinDistiller } from "./twinDistiller";
 import * as Learning from "./learning";
+import type * as Suggestions from "./suggestions";
 import { TwinProfile } from "./twinProfile";
 import * as ErpCrawl from "./erpCrawl";
 import * as ERP from "./erp";
@@ -491,6 +492,13 @@ export class DayLogger {
     return out;
   }
 
+  /// The week's activity samples with their window titles -- the seven days before `end`, as the week in review reads them.
+  weekSamples(end: Date): Suggestions.Sample[] {
+    const out: Suggestions.Sample[] = [];
+    for (let back = 1; back <= 7; back++) out.push(...this.readSamples(new Date(end.getFullYear(), end.getMonth(), end.getDate() - back, 12)));
+    return out;
+  }
+
   private scheduleSummary(): void {
     if (this.summaryTimer) clearTimeout(this.summaryTimer);
     const fire = this.nextSummaryFireDate(new Date());
@@ -618,7 +626,9 @@ export class DayLogger {
           stats.meetings += s.meetings; stats.messages += s.messages;
         }
         const report = days.map(d => `### ${d.day}\n${d.text}`).join("\n\n");
-        const output = await this.momGenerator.runPrompt(this.weekPrompt(report, end), "weekly-summary");
+        let output = await this.momGenerator.runPrompt(this.weekPrompt(report, end), "weekly-summary");
+        const ideas = await Learning.weekly(this, this.momGenerator, dayStamp(end));
+        if (ideas) output += (output.endsWith("\n") ? "\n" : "\n\n") + ideas;
         const file = this.weekFile(end);
         ensureDir(DayLogger.weekDirectory);
         await fs.promises.writeFile(file, output, "utf8");
@@ -1112,7 +1122,7 @@ ${report}`;
   /// Role-specific emphasis for the daily/weekly summary, from the chosen
   /// summary-template slug (the user's role, asked once). Empty for "default".
   /// Mirrors DayLogger.roleGuidance in src/DayLogger.swift.
-  private roleGuidance(): string {
+  roleGuidance(): string {
     switch (Settings.summaryTemplate) {
       case "developer":
         return "Shape this for a DEVELOPER. Make code the spine: lead with what was built, fixed or shipped, tied to the session prompts and Git (commits, files/lines changed, which repos and branches). Keep the technical specifics — bug causes, modules, endpoints. Meetings and chats are secondary.";

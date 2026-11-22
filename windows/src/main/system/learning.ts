@@ -1,13 +1,16 @@
 import * as fs from "fs";
 import * as path from "path";
 import { cblog } from "../core/diag";
-import { dayStamp, ensureDir, nikxelPath, readText, writeAtomic } from "../core/paths";
+import { dayStamp, documentsDir, ensureDir, nikxelPath, readText, writeAtomic } from "../core/paths";
 import { Settings } from "../core/settings";
 import { ui } from "../core/ui";
 import type { MOMGenerator } from "../recording/momGenerator";
 import { SummaryTemplates } from "../recording/summaryTemplates";
 import type { DayLogger } from "./dayLogger";
+import * as ERP from "./erp";
 import * as Habits from "./habits";
+import * as Suggestions from "./suggestions";
+import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 
 /// What Nikxel learned from habits and edits, offered before anything changes: "I'm thinking
 /// of… Will this suit you better?" A yes applies it; a no is remembered and never asked again;
@@ -15,7 +18,11 @@ import * as Habits from "./habits";
 /// ~/.nikxel/learning.json, the user's summary fixes in ~/.nikxel/edits/instructions.jsonl.
 /// Port of src/Learning.swift.
 
-interface State { answered?: Record<string, boolean>; askedDay?: string; counts?: Record<string, number>; reviewedEditsAt?: number }
+interface Queued { action: string; params: Record<string, string>; line: string; evidence: string; at: number }
+interface State {
+  answered?: Record<string, boolean>; askedDay?: string; counts?: Record<string, number>; reviewedEditsAt?: number
+  suggestedWeek?: string; queued?: Queued[]
+}
 const file = () => nikxelPath("learning.json");
 const editsFile = () => nikxelPath("edits", "instructions.jsonl");
 
@@ -89,8 +96,8 @@ export function editsBlock(since: Date): string {
 
 /// After the day summary: the first thing worth asking about, if any.
 export async function daily(dayLogger: DayLogger, agent: MOMGenerator): Promise<void> {
-  if (offerSummaryTime(dayLogger) || offerAutoRecordCalls()) return;
-  await offerRule(agent);
+  if (offerSummaryTime(dayLogger) || offerAutoRecordCalls() || await offerRule(agent)) return;
+  offerQueued(dayLogger);
 }
 
 function offerSummaryTime(dayLogger: DayLogger): boolean {
@@ -112,22 +119,111 @@ function offerAutoRecordCalls(): boolean {
 
 /// Repeated summary fixes → one standing rule for meeting summaries, added to the active
 /// summary template on a yes. Looks only when there are fixes it hasn't looked at.
-async function offerRule(agent: MOMGenerator): Promise<void> {
+async function offerRule(agent: MOMGenerator): Promise<boolean> {
   const recent = edits(new Date(Date.now() - 30 * 86_400_000), ["meeting", "notes"]);
   const newest = Math.max(0, ...recent.map(e => e.t));
-  if (recent.length < 2 || newest <= (load().reviewedEditsAt ?? 0)) return;
+  if (recent.length < 2 || newest <= (load().reviewedEditsAt ?? 0)) return false;
   update(s => { s.reviewedEditsAt = newest; });
   const decided = Object.keys(load().answered ?? {}).filter(k => k.startsWith("rule:")).map(k => k.slice(5));
   let reply: string;
-  try { reply = await agent.runPrompt(Habits.rulePrompt(recent.map(e => e.text), decided), "learning-rule", "haiku"); } catch { return; }
+  try { reply = await agent.runPrompt(Habits.rulePrompt(recent.map(e => e.text), decided), "learning-rule", "haiku"); } catch { return false; }
   const r = Habits.parseRule(reply);
-  if (!r) return;
-  offer("rule:" + r.rule, "Your meeting summaries",
+  if (!r) return false;
+  return offer("rule:" + r.rule, "Your meeting summaries",
     `You've asked me this ${r.times} times${r.example ? ` ("${r.example}")` : ""}. I'm thinking of always doing it in your meeting summaries: ${r.rule}`,
-    () => {
-      const url = SummaryTemplates.activeURL, old = readText(url) ?? "";
-      try {
-        writeAtomic(url, old + (old.endsWith("\n") || !old ? "" : "\n") + `\n# Added by Nikxel after you said yes (${dayStamp(new Date())}):\n${r.rule}\n`);
-      } catch { /* unwritable: the rule just isn't kept */ }
-    });
+    () => addRule(r.rule));
+}
+
+/// A standing instruction appended to the active summary template -- a yes from the daily rule check or the weekly review.
+function addRule(rule: string): void {
+  const url = SummaryTemplates.activeURL, old = readText(url) ?? "";
+  try {
+    writeAtomic(url, old + (old.endsWith("\n") || !old ? "" : "\n") + `\n# Added by Nikxel after you said yes (${dayStamp(new Date())}):\n${rule}\n`);
+  } catch { /* unwritable: the rule just isn't kept */ }
+}
+
+// MARK: - Once a week
+
+/// The catalogue's settings as they stand now.
+function settingsNow(): Suggestions.Settings {
+  return { summaryMinutes: Settings.summaryMinutes, autoRecordCalls: Settings.autoRecordCalls, waDraftOnly: Settings.waDraftOnly,
+    waQuietHours: Settings.waQuietHours, waQuietFrom: Settings.waQuietFrom, waQuietTo: Settings.waQuietTo, waChatTasks: Settings.waChatTasks,
+    summaryTemplate: Settings.summaryTemplate, templates: SummaryTemplates.available().map(t => t.slug) };
+}
+
+/// Meetings whose file name dates them in `days`: start from the name, end from the file's last write, title from its "# " line.
+function meetings(days: Set<string>): Suggestions.Meeting[] {
+  const dir = documentsDir("meetings"), out: Suggestions.Meeting[] = [];
+  let names: string[] = [];
+  try { names = fs.readdirSync(dir); } catch { /* no meetings yet */ }
+  for (const name of names) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})?\.md$/.exec(name);
+    if (!m || !days.has(name.slice(0, 10))) continue;  // also skips .transcript files
+    const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)).getTime() / 1000;
+    let end: number;
+    try { end = fs.statSync(path.join(dir, name)).mtimeMs / 1000; } catch { continue; }
+    const head = (readText(path.join(dir, name)) ?? "").split("\n").find(l => l.startsWith("# "));
+    out.push({ start, end, title: head ? head.slice(2) : name.slice(0, -3) });
+  }
+  return out;
+}
+
+/// The weekly review, run inside the week in review's background work: the week's digest to the AI once per `weekKey`,
+/// advice back as an "## Ideas for you" section, offers queued for `offerQueued`. "" when there's nothing or it already ran.
+export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey: string): Promise<string> {
+  if (load().suggestedWeek === weekKey) return "";
+  update(s => { s.suggestedWeek = weekKey; });  // before the call: never twice
+  try {
+    const [y, mo, d] = weekKey.split("-").map(Number), end = new Date(y, mo - 1, d);  // that day's midnight
+    const days = [1, 2, 3, 4, 5, 6, 7].map(back => new Date(y, mo - 1, d - back, 12));
+    const answered = Object.keys(load().answered ?? {}).sort();
+    const settings = settingsNow(), erp: Suggestions.Input["erp"] = [];
+    for (const day of [...days].reverse()) for (const t of await ERP.tasksTouched(day)) erp.push({ day: dayStamp(day), name: t.name, project: t.project });
+    const input: Suggestions.Input = {
+      samples: dayLogger.weekSamples(end), meetings: meetings(new Set(days.map(day => dayStamp(day)))),
+      chats: days.flatMap(day => WhatsAppActivityLogger.readLog("chats", day)),
+      bot: days.flatMap(day => WhatsAppActivityLogger.readLog("bot", day)),
+      edits: edits(new Date(y, mo - 1, d - 7), ["meeting", "notes"]).map(e => e.text),
+      erp, settings, declined: answered,
+    };
+    const context = [dayLogger.roleGuidance(), Settings.userContextBlock].filter(Boolean).join("\n\n");
+    const reply = await agent.runPrompt(Suggestions.prompt(Suggestions.digest(input), context), "weekly-suggestions");
+    const advice: string[] = [], queued: Queued[] = [];
+    for (const item of Suggestions.parse(reply, settings, new Set(answered))) {
+      if (item.kind === "advice") advice.push(`- ${item.text}${item.evidence ? ` — ${item.evidence}` : ""}`);
+      else queued.push({ action: item.action, params: item.params, line: item.line, evidence: item.evidence, at: Date.now() / 1000 });
+    }
+    update(s => { s.queued = queued; });
+    cblog(`Learning: weekly suggestions ${weekKey}: ${advice.length} advice, ${queued.length} offers`);
+    return advice.length ? "## Ideas for you\n" + advice.join("\n") + "\n" : "";
+  } catch (e) {
+    cblog(`Learning: weekly suggestions failed: ${e instanceof Error ? e.message : e}`);
+    return "";
+  }
+}
+
+/// The weekly review's offers, one a day: older than 14 days, answered, or no longer changing anything drops out first.
+function offerQueued(dayLogger: DayLogger): void {
+  const s = load(), now = Date.now() / 1000, answered = new Set(Object.keys(s.answered ?? {})), settings = settingsNow();
+  // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
+  const live = (s.queued ?? []).filter(q => typeof q.at === "number" && now - q.at < 14 * 86_400
+    && Suggestions.parse(JSON.stringify({ items: [{ ...q, kind: "offer" }] }), settings, answered).length > 0);
+  const q = live[0];
+  const asked = !!q && offer(Suggestions.key(q.action, q.params), "An idea for your week",
+    q.evidence ? `${q.line} (${q.evidence})` : q.line, () => apply(q.action, q.params, dayLogger));
+  update(x => { x.queued = asked ? live.slice(1) : live; });
+}
+
+/// What a yes to a weekly offer does, per catalogue action.
+function apply(action: string, p: Record<string, string>, dayLogger: DayLogger): void {
+  switch (action) {
+    case "summaryTime": Settings.summaryMinutes = Number(p.minutes); dayLogger.reschedule(); break;
+    case "autoRecordCalls": Settings.autoRecordCalls = true; break;
+    case "waDraftOnly": Settings.waDraftOnly = true; break;
+    case "waChatTasks": Settings.waChatTasks = true; break;
+    case "waQuietHours": Settings.waQuietHours = true; Settings.waQuietFrom = Number(p.from); Settings.waQuietTo = Number(p.to); break;
+    case "summaryTemplate": Settings.summaryTemplate = p.name; break;
+    case "summaryRule": addRule(p.text); break;
+    default: cblog(`Learning: unknown weekly action ${action}`);
+  }
 }

@@ -98,8 +98,8 @@ enum Learning {
     /// After the day summary: the first thing worth asking about, if any. Off the main thread.
     static func daily(dayLogger: DayLogger, agent: MOMGenerator) {
         DispatchQueue.global(qos: .utility).async {
-            if offerSummaryTime(dayLogger) || offerAutoRecord() { return }
-            offerRule(agent)
+            if offerSummaryTime(dayLogger) || offerAutoRecord() || offerRule(agent) { return }
+            offerQueued(dayLogger)
         }
     }
 
@@ -124,21 +124,132 @@ enum Learning {
 
     /// Repeated summary fixes → one standing rule for meeting summaries, added to the active
     /// summary template on a yes. Looks only when there are fixes it hasn't looked at.
-    private static func offerRule(_ agent: MOMGenerator) {
+    private static func offerRule(_ agent: MOMGenerator) -> Bool {
         let recent = edits(since: Date().addingTimeInterval(-30 * 86_400), kinds: ["meeting", "notes"])
         let reviewed = load()["reviewedEditsAt"] as? TimeInterval ?? 0
-        guard recent.count >= 2, let newest = recent.map(\.t).max(), newest > reviewed else { return }
+        guard recent.count >= 2, let newest = recent.map(\.t).max(), newest > reviewed else { return false }
         update { $0["reviewedEditsAt"] = newest }
         let decided = (load()["answered"] as? [String: Bool] ?? [:]).keys.filter { $0.hasPrefix("rule:") }.map { String($0.dropFirst(5)) }
         guard let reply = try? agent.runPrompt(Habits.rulePrompt(edits: recent.map(\.text), decided: decided),
                                                kind: "learning-rule", claudeModel: "haiku"),
-              let r = Habits.parseRule(reply) else { return }
-        offer(key: "rule:" + r.rule, title: "Your meeting summaries",
-              line: "You've asked me this \(r.times) times\(r.example.isEmpty ? "" : " (\"\(r.example)\")"). I'm thinking of always doing it in your meeting summaries: \(r.rule)") {
-            let url = SummaryTemplates.activeURL
-            let old = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            try? (old + (old.hasSuffix("\n") || old.isEmpty ? "" : "\n") + "\n# Added by Nikxel after you said yes (\(dayKey(Date()))):\n\(r.rule)\n")
-                .write(to: url, atomically: true, encoding: .utf8)
+              let r = Habits.parseRule(reply) else { return false }
+        return offer(key: "rule:" + r.rule, title: "Your meeting summaries",
+                     line: "You've asked me this \(r.times) times\(r.example.isEmpty ? "" : " (\"\(r.example)\")"). I'm thinking of always doing it in your meeting summaries: \(r.rule)") {
+            addRule(r.rule)
+        }
+    }
+
+    /// A standing instruction appended to the active summary template -- a yes from the daily rule check or the weekly review.
+    private static func addRule(_ rule: String) {
+        let url = SummaryTemplates.activeURL
+        let old = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try? (old + (old.hasSuffix("\n") || old.isEmpty ? "" : "\n") + "\n# Added by Nikxel after you said yes (\(dayKey(Date()))):\n\(rule)\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - Once a week
+
+    /// The catalogue's settings as they stand now.
+    private static func settingsNow() -> Suggestions.Settings {
+        Suggestions.Settings(summaryMinutes: NikxelSettings.summaryMinutes, autoRecordCalls: NikxelSettings.autoRecordCalls,
+                             waDraftOnly: NikxelSettings.waDraftOnly, waQuietHours: NikxelSettings.waQuietHours,
+                             waQuietFrom: NikxelSettings.waQuietFrom, waQuietTo: NikxelSettings.waQuietTo, waChatTasks: NikxelSettings.waChatTasks,
+                             summaryTemplate: NikxelSettings.summaryTemplate, templates: SummaryTemplates.available().map(\.slug))
+    }
+
+    /// Meetings whose file name dates them in `days`: start from the name, end from the file's last write, title from its "# " line.
+    private static func meetings(on days: Set<String>) -> [Suggestions.Meeting] {
+        let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/nikxel/meetings")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        let long = DateFormatter(), short = DateFormatter()
+        long.dateFormat = "yyyy-MM-dd-HHmmss"; short.dateFormat = "yyyy-MM-dd-HHmm"
+        return names.compactMap { name in
+            guard name.hasSuffix(".md"), !name.contains(".transcript"), days.contains(String(name.prefix(10))) else { return nil }
+            let stem = String(name.dropLast(3)), url = dir.appendingPathComponent(name)
+            guard let start = long.date(from: stem) ?? short.date(from: stem),
+                  let end = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return nil }
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            let title = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) } ?? stem
+            return Suggestions.Meeting(start: start.timeIntervalSince1970, end: end.timeIntervalSince1970, title: title)
+        }
+    }
+
+    /// The weekly review, run inside the week in review's background work: the week's digest to the AI once per `weekKey`,
+    /// advice back as an "## Ideas for you" section, offers queued for `offerQueued`. "" when there's nothing or it already ran.
+    static func weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey: String) -> String {
+        var fresh = false
+        update { s in if s["suggestedWeek"] as? String != weekKey { s["suggestedWeek"] = weekKey; fresh = true } }  // before the call: never twice
+        guard fresh else { return "" }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let end = f.date(from: weekKey) ?? Date()  // that day's midnight: the seven days before it are the week's
+        let days = (1...7).compactMap { Calendar.current.date(byAdding: .day, value: -$0, to: end) }
+        let answered = (load()["answered"] as? [String: Bool] ?? [:]).keys.sorted()
+        let settings = settingsNow()
+        let input = Suggestions.Input(
+            samples: dayLogger.weekSamples(end: end), meetings: meetings(on: Set(days.map(dayKey))),
+            chats: days.flatMap { WhatsAppActivityLogger.readLog(file: "chats", for: $0) },
+            bot: days.flatMap { WhatsAppActivityLogger.readLog(file: "bot", for: $0) },
+            edits: edits(since: days.last.map { Calendar.current.startOfDay(for: $0) } ?? end, kinds: ["meeting", "notes"]).map(\.text),
+            erp: days.reversed().flatMap { d in ERP.tasksTouched(on: d).map { (day: dayKey(d), name: $0.name, project: $0.project) } },
+            settings: settings, declined: answered)
+        let context = [dayLogger.roleGuidance(), NikxelSettings.userContextBlock].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let reply: String
+        do {
+            reply = try agent.runPrompt(Suggestions.prompt(digest: Suggestions.digest(input), context: context), kind: "weekly-suggestions")
+        } catch {
+            cblog("Learning: weekly suggestions failed: \(error)")
+            return ""
+        }
+        let items = Suggestions.parse(reply, settings: settings, answered: Set(answered))
+        var advice: [String] = [], queued: [[String: Any]] = []
+        for item in items {
+            switch item {
+            case let .advice(text, evidence): advice.append("- \(text)\(evidence.isEmpty ? "" : " — \(evidence)")")
+            case let .offer(action, params, line, evidence):
+                queued.append(["action": action, "params": params, "line": line, "evidence": evidence, "at": Date().timeIntervalSince1970])
+            }
+        }
+        update { $0["queued"] = queued }
+        cblog("Learning: weekly suggestions \(weekKey): \(advice.count) advice, \(queued.count) offers")
+        return advice.isEmpty ? "" : "## Ideas for you\n" + advice.joined(separator: "\n") + "\n"
+    }
+
+    /// The weekly review's offers, one a day: older than 14 days, answered, or no longer changing anything drops out first.
+    private static func offerQueued(_ dayLogger: DayLogger) {
+        let s = load(), now = Date().timeIntervalSince1970
+        let answered = Set((s["answered"] as? [String: Bool] ?? [:]).keys), settings = settingsNow()
+        let live = (s["queued"] as? [[String: Any]] ?? []).filter { q in
+            guard let at = q["at"] as? TimeInterval, now - at < 14 * 86_400 else { return false }
+            // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
+            guard let data = try? JSONSerialization.data(withJSONObject: ["items": [q.merging(["kind": "offer"]) { a, _ in a }]]) else { return false }
+            return !Suggestions.parse(String(decoding: data, as: UTF8.self), settings: settings, answered: answered).isEmpty
+        }
+        var asked = false
+        if let q = live.first, let action = q["action"] as? String, let params = q["params"] as? [String: String],
+           let line = q["line"] as? String {
+            let evidence = q["evidence"] as? String ?? ""
+            asked = offer(key: Suggestions.key(action: action, params: params), title: "An idea for your week",
+                          line: evidence.isEmpty ? line : "\(line) (\(evidence))") { apply(action, params, dayLogger) }
+        }
+        update { $0["queued"] = asked ? Array(live.dropFirst()) : live }
+    }
+
+    /// What a yes to a weekly offer does, per catalogue action.
+    private static func apply(_ action: String, _ p: [String: String], _ dayLogger: DayLogger) {
+        switch action {
+        case "summaryTime":
+            guard let m = Int(p["minutes"] ?? "") else { return }
+            NikxelSettings.summaryMinutes = m
+            DispatchQueue.main.async { dayLogger.reschedule() }
+        case "autoRecordCalls": NikxelSettings.autoRecordCalls = true
+        case "waDraftOnly": NikxelSettings.waDraftOnly = true
+        case "waChatTasks": NikxelSettings.waChatTasks = true
+        case "waQuietHours":
+            guard let f = Int(p["from"] ?? ""), let t = Int(p["to"] ?? "") else { return }
+            NikxelSettings.waQuietHours = true; NikxelSettings.waQuietFrom = f; NikxelSettings.waQuietTo = t
+        case "summaryTemplate": if let n = p["name"] { NikxelSettings.summaryTemplate = n }
+        case "summaryRule": if let t = p["text"] { addRule(t) }
+        default: cblog("Learning: unknown weekly action \(action)")
         }
     }
 }

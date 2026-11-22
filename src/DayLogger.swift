@@ -425,6 +425,19 @@ class DayLogger {
         }
     }
 
+    /// The week's activity samples with their window titles -- the seven days before `end`, as the week in review reads them.
+    func weekSamples(end: Date) -> [Suggestions.Sample] {
+        (1...7).flatMap { offset -> [Suggestions.Sample] in
+            guard let d = Calendar.current.date(byAdding: .day, value: -offset, to: end),
+                  let content = try? String(contentsOf: logFileURL(for: d), encoding: .utf8) else { return [] }
+            return content.split(separator: "\n").compactMap { line in
+                guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                      let t = obj["t"] as? TimeInterval, let app = obj["app"] as? String else { return nil }
+                return Suggestions.Sample(t: t, app: app, title: obj["title"] as? String ?? "")
+            }
+        }
+    }
+
     /// On the wall clock, not a Timer: a Timer's countdown stops while the
     /// Mac sleeps, so every nap in the evening pushed 10pm later.
     private func scheduleSummary() {
@@ -568,7 +581,9 @@ class DayLogger {
             let stats = self.weekStats(end: end)
             do {
                 let report = days.map { "### \($0.day)\n\($0.text)" }.joined(separator: "\n\n")
-                let output = try self.momGenerator.runPrompt(self.weekPrompt(report: report, sunday: end), kind: "weekly-summary")
+                var output = try self.momGenerator.runPrompt(self.weekPrompt(report: report, sunday: end), kind: "weekly-summary")
+                let ideas = Learning.weekly(dayLogger: self, agent: self.momGenerator, weekKey: Self.dayKey(end))
+                if !ideas.isEmpty { output += (output.hasSuffix("\n") ? "\n" : "\n\n") + ideas }
                 try? FileManager.default.createDirectory(at: Self.weekDirectory, withIntermediateDirectories: true)
                 let fileURL = self.weekFileURL(for: end)
                 try output.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -1165,7 +1180,7 @@ DAILY SUMMARIES:
     /// Role-specific emphasis for the daily/weekly summary, taken from the
     /// chosen summary-template slug (the user's role, asked once). Empty for
     /// "default", which leaves the summary as the general-purpose journal.
-    private func roleGuidance() -> String {
+    func roleGuidance() -> String {
         switch NikxelSettings.summaryTemplate {
         case "developer":
             return "Shape this for a DEVELOPER. Make code the spine: lead with what was built, fixed or shipped, tied to the session prompts and Git (commits, files/lines changed, which repos and branches). Keep the technical specifics — bug causes, modules, endpoints. Meetings and chats are secondary."

@@ -103,4 +103,207 @@ enum Suggestions {
         }
         return n.filter { $0.value >= 2 }.map { (app: $0.key, meetings: $0.value) }.sorted { ($1.meetings, $0.app) < ($0.meetings, $1.app) }
     }
+
+    // MARK: The weekly AI review -- digest in, checked items out.
+
+    /// The settings the catalogue can change, as they stand now.
+    struct Settings {
+        var summaryMinutes: Int; var autoRecordCalls: Bool; var waDraftOnly: Bool; var waQuietHours: Bool; var waQuietFrom: Int; var waQuietTo: Int
+        var waChatTasks: Bool; var summaryTemplate: String; var templates: [String]
+    }
+    /// One week of what Nikxel keeps; `chats`/`bot` are the raw WhatsApp log rows `replies` reads, `declined` the answered keys.
+    struct Input {
+        var samples: [Sample]; var meetings: [Meeting]; var chats: [[String: Any]]; var bot: [[String: Any]]; var edits: [String]
+        var erp: [(day: String, name: String, project: String)]; var settings: Settings; var declined: [String]
+    }
+
+    /// One line, at most `n` characters.
+    private static func cut(_ s: String, _ n: Int) -> String { String(s.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(n)) }
+    /// Lower middle of an even count, so it's always a wait that really happened.
+    private static func median(_ x: [Double]) -> Double { x.sorted()[(x.count - 1) / 2] }
+    private static func mins(_ seconds: Double) -> Int { Int((seconds / 60).rounded()) }
+    private static func hour(_ h: Int) -> String { String(format: "%02d:00", h) }
+    /// "10pm", "2:30am" -- `Habits.clock`'s twin, so this file compiles alone.
+    private static func clock(_ minutes: Int) -> String {
+        let m = minutes % 1440, h = m / 60, mm = m % 60
+        return "\(h % 12 == 0 ? 12 : h % 12)\(mm == 0 ? "" : String(format: ":%02d", mm))\(h < 12 ? "am" : "pm")"
+    }
+    /// Most first, ties by name.
+    private static func ranked<T: Comparable>(_ n: [String: T]) -> [(key: String, value: T)] { n.sorted { ($1.value, $0.key) < ($0.value, $1.key) } }
+
+    /// The week as plain text for the AI: counts and times only, titles cut to 90, chat names only among the five slowest, no message text.
+    static func digest(_ i: Input, calendar cal: Calendar = .current) -> String {
+        func day(_ t: TimeInterval) -> String {
+            let c = cal.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: t))
+            return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
+        }
+        func hm(_ t: TimeInterval) -> String {
+            let c = cal.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: t))
+            return String(format: "%02d:%02d", c.hour!, c.minute!)
+        }
+        func hr(_ t: TimeInterval) -> Int { cal.component(.hour, from: Date(timeIntervalSince1970: t)) }
+        var out: [String] = []
+        func section(_ head: String, _ lines: [String]) { out.append(head + ":\n" + (lines.isEmpty ? "(none)" : lines.map { "- " + $0 }.joined(separator: "\n"))) }
+        func on(_ b: Bool) -> String { b ? "on" : "off" }
+        func list(_ x: [String]) -> String { x.isEmpty ? "(none)" : x.joined(separator: ", ") }
+
+        let a = awake(i.samples)  // one sample is 15 seconds on screen
+        var apps: [String: Int] = [:], windows: [String: Int] = [:], days: [String: (first: TimeInterval, last: TimeInterval)] = [:]
+        for x in a {
+            apps[x.app, default: 0] += 1
+            let t = cut(x.title, 90)
+            if !t.isEmpty { windows[x.app + " — " + t, default: 0] += 1 }
+            let d = day(x.t)
+            days[d] = (days[d]?.first ?? x.t, x.t)
+        }
+        section("Minutes per app (top 10)", ranked(apps).prefix(10).map { "\($0.key): \(mins(Double($0.value) * 15)) min" })
+        section("Minutes per window title (top 10)", ranked(windows).prefix(10).map { "\($0.key): \(mins(Double($0.value) * 15)) min" })
+        section("First and last activity per day", days.sorted { $0.key < $1.key }.map { "\($0.key): \(hm($0.value.first))–\(hm($0.value.last))" })
+        section("App switches per hour of day (average per active hour)",
+                switchesByHour(i.samples, calendar: cal).sorted { $0.key < $1.key }.map { "\(hour($0.key)): \(String(format: "%.1f", $0.value))" })
+        section("Most frequent back-and-forth app pairs", topPairs(i.samples, calendar: cal).map { "\($0.a) ↔ \($0.b) x\($0.count)" })
+
+        var starts: [Int: Int] = [:], titles: [String: Int] = [:]
+        for m in i.meetings { starts[hr(m.start), default: 0] += 1; titles[cut(m.title, 90), default: 0] += 1 }
+        section("Meetings (\(i.meetings.count) this week)", [
+            "start hours: " + list(starts.sorted { $0.key < $1.key }.map { "\(hour($0.key)) x\($0.value)" }),
+            "recurring titles: " + list(ranked(titles.filter { $0.value >= 2 && !$0.key.isEmpty }).prefix(10).map { "\($0.key) x\($0.value)" }),
+            "apps opened within 30 min after a meeting: " + list(afterMeetings(i.meetings, i.samples).prefix(10).map { "\($0.app) (after \($0.meetings))" }),
+        ])
+
+        let r = replies(chats: i.chats, bot: i.bot)
+        let done = r.compactMap { x in x.repliedAt.map { (x, $0 - x.incomingAt) } }
+        let byHour = Dictionary(grouping: done) { hr($0.0.incomingAt) }, byChat = Dictionary(grouping: done) { $0.0.chat }
+        let kinds = [("1:1", false), ("group", true)].compactMap { k -> String? in
+            let w = done.filter { $0.0.group == k.1 }.map(\.1)
+            return w.isEmpty ? nil : "\(k.0) \(mins(median(w)))"
+        }
+        let unanswered = Dictionary(grouping: r.filter { $0.repliedAt == nil }) { day($0.incomingAt) }
+        section("WhatsApp reply waits (median minutes, replied messages; \(done.count) replied, \(r.count - done.count) unanswered)", [
+            "by hour the message arrived: " + list(byHour.sorted { $0.key < $1.key }.map { "\(hour($0.key)) \(mins(median($0.value.map(\.1))))" }),
+            "1:1 vs group: " + list(kinds),
+            "5 slowest chats: " + list(ranked(byChat.mapValues { median($0.map(\.1)) }).prefix(5).map { "\($0.key) \(mins($0.value))" }),
+            "unanswered by day: " + list(unanswered.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value.count)" }),
+        ])
+
+        section("Fixes typed into meeting summaries (last 20)", i.edits.suffix(20).map { cut($0, 120) })
+        section("ERP tasks logged (last 40)", i.erp.suffix(40).map { "\($0.day) \(cut($0.name, 90)) (\(cut($0.project, 90)))" })
+        let s = i.settings
+        section("Current settings", [
+            "summary time: \(clock(s.summaryMinutes)) (minutes=\(s.summaryMinutes))",
+            "auto-record calls: \(on(s.autoRecordCalls))",
+            "WhatsApp draft-only: \(on(s.waDraftOnly))",
+            "WhatsApp quiet hours: \(on(s.waQuietHours)), from \(s.waQuietFrom) to \(s.waQuietTo)",
+            "WhatsApp chat tasks: \(on(s.waChatTasks))",
+            "summary template: \(s.summaryTemplate) (installed: \(s.templates.joined(separator: ", ")))",
+        ])
+        section("Already answered -- don't suggest these again", i.declined)
+        return out.joined(separator: "\n\n")
+    }
+
+    /// What Nikxel can take on: id, params, what a yes does. `offerParams` is the matching check.
+    static let catalogue: [(id: String, params: String, meaning: String)] = [
+        ("summaryTime", #"{"minutes": <1080-1740>}"#, "write the daily summary at this time; minutes after midnight, 1080 = 6pm, 1740 = 5am next morning"),
+        ("autoRecordCalls", "{}", "record and summarize calls as soon as one starts, instead of asking each time"),
+        ("summaryRule", #"{"text": "<instruction, under 120 characters>"}"#, "add a standing instruction for how every meeting summary is written"),
+        ("waQuietHours", #"{"from": <0-23>, "to": <0-23>}"#, "the WhatsApp bot doesn't answer between these hours; wraps past midnight when to < from"),
+        ("waDraftOnly", "{}", "the WhatsApp bot types its reply into the chat and leaves sending to the person"),
+        ("waChatTasks", "{}", "a WhatsApp message that plainly asks for something becomes a Google Task"),
+        ("summaryTemplate", #"{"name": "<an installed template>"}"#, "switch meeting summaries to another installed template"),
+    ]
+
+    /// The weekly review prompt: the digest, the catalogue and who the person is; the reply is one line of JSON.
+    static func prompt(digest: String, context: String) -> String {
+        """
+        Below is a digest of the user's last 7 days, from what Nikxel logs on their computer: apps and window titles, meetings, WhatsApp reply times, ERP tasks, and fixes they typed into meeting summaries.
+
+        Suggest at most 3 things that would make their work easier, each one of two kinds:
+        - advice: something they can change themselves.
+        - offer: a task Nikxel takes on for them from now on. ONLY the actions in the list below -- never invent one. If the idea isn't on the list, it can only be advice.
+
+        Rules:
+        - Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "on 4 of 5 days you answered WhatsApp after 40+ min between 2pm and 5pm"). An item you can't back with a number from the digest is left out.
+        - Nothing generic (take breaks, use a to-do list, turn off notifications) unless the digest shows why it fits this person.
+        - One sharp item beats three weak ones. If nothing is clearly worth saying, return no items.
+        - Don't repeat anything under "Already answered", or anything that means the same.
+        - Don't offer what their current settings already do.
+        - An offer's "line" is the question Nikxel will ask them, in plain words, starting "I'm thinking of" (e.g. "I'm thinking of writing your daily summary at 1am, since you're usually still working at midnight.").
+
+        WHAT NIKXEL CAN DO (action, params, what a yes does):
+        \(catalogue.map { "- \($0.id) \($0.params) -- \($0.meaning)" }.joined(separator: "\n"))
+
+        ABOUT THE USER:
+        \(context.isEmpty ? "(nothing given)" : context)
+
+        Reply with exactly one line of JSON and nothing else:
+        {"items": [{"kind": "advice", "text": "<what to try, under 30 words>", "evidence": "<their numbers>"}, {"kind": "offer", "action": "<an action from the list>", "params": {<its params>}, "line": "I'm thinking of …", "evidence": "<their numbers>"}]}
+        or {"items": []} when nothing is worth saying.
+
+        DIGEST:
+        \(digest)
+        """
+    }
+
+    enum Item: Equatable {
+        case advice(text: String, evidence: String)
+        case offer(action: String, params: [String: String], line: String, evidence: String)
+    }
+
+    /// The answered-key for an offer; a summary rule shares `rule:<text>` with the daily rule check.
+    static func key(action: String, params: [String: String]) -> String {
+        if action == "summaryRule" { return "rule:" + (params["text"] ?? "") }
+        return "weekly:\(action):" + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+    }
+
+    /// An offer's params checked against the catalogue and written canonically; nil when invalid or when it would change nothing.
+    private static func offerParams(_ action: String, _ raw: [String: Any], _ s: Settings) -> [String: String]? {
+        func val(_ k: String) -> String? {
+            if let v = raw[k] as? String { return v }
+            if let n = raw[k] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { return n.stringValue }  // 1560 or 1560.0, not true
+            return nil
+        }
+        func int(_ k: String, _ r: ClosedRange<Int>) -> Int? { val(k).flatMap { Int($0) }.flatMap { r.contains($0) ? $0 : nil } }
+        switch action {
+        case "summaryTime":
+            guard let m = int("minutes", 1080...1740), m != s.summaryMinutes else { return nil }
+            return ["minutes": "\(m)"]
+        case "autoRecordCalls": return s.autoRecordCalls ? nil : [:]
+        case "waDraftOnly": return s.waDraftOnly ? nil : [:]
+        case "waChatTasks": return s.waChatTasks ? nil : [:]
+        case "summaryRule":
+            guard let t = val("text")?.trimmingCharacters(in: .whitespacesAndNewlines), (1...120).contains(t.count) else { return nil }
+            return ["text": t]
+        case "waQuietHours":
+            guard let f = int("from", 0...23), let t = int("to", 0...23), f != t,
+                  !(s.waQuietHours && f == s.waQuietFrom && t == s.waQuietTo) else { return nil }
+            return ["from": "\(f)", "to": "\(t)"]
+        case "summaryTemplate":
+            guard let n = val("name"), s.templates.contains(n), n != s.summaryTemplate else { return nil }
+            return ["name": n]
+        default: return nil
+        }
+    }
+
+    /// The items out of the reply to `prompt`: up to 3 in reply order, offers only from the catalogue, valid, changing
+    /// something and not answered before. Prose, a code fence or NONE around or instead of the JSON is fine.
+    static func parse(_ reply: String, settings: Settings, answered: Set<String>) -> [Item] {
+        guard let a = reply.firstIndex(of: "{"), let b = reply.lastIndex(of: "}"), a < b,
+              let obj = try? JSONSerialization.jsonObject(with: Data(reply[a...b].utf8)) as? [String: Any],
+              let list = obj["items"] as? [Any] else { return [] }
+        var out: [Item] = [], seen = Set<String>()
+        for case let x as [String: Any] in list where out.count < 3 {
+            func str(_ k: String) -> String { ((x[k] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            switch x["kind"] as? String {
+            case "advice":
+                if !str("text").isEmpty { out.append(.advice(text: str("text"), evidence: str("evidence"))) }
+            case "offer":
+                guard !str("line").isEmpty, let p = offerParams(str("action"), x["params"] as? [String: Any] ?? [:], settings) else { continue }
+                let k = key(action: str("action"), params: p)
+                if answered.contains(k) || !seen.insert(k).inserted { continue }  // and not twice in one reply
+                out.append(.offer(action: str("action"), params: p, line: str("line"), evidence: str("evidence")))
+            default: continue
+            }
+        }
+        return out
+    }
 }

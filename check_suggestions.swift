@@ -53,6 +53,83 @@ import Foundation
         check(am.count == 1 && am[0].app == "Odoo" && am[0].meetings == 2, "after two meetings: Odoo x2 once each; Mail x1 and 30 min edge dropped")
         check(Suggestions.afterMeetings([], [smp(1, "A")]).isEmpty, "no meetings")
 
+        // Digest, catalogue and the AI's reply.
+        let st = Suggestions.Settings(summaryMinutes: 1320, autoRecordCalls: true, waDraftOnly: false, waQuietHours: true, waQuietFrom: 22, waQuietTo: 8,
+                                      waChatTasks: true, summaryTemplate: "default", templates: ["default", "sales"])
+        func items(_ json: String, answered: Set<String> = []) -> [Suggestions.Item] { Suggestions.parse(json, settings: st, answered: answered) }
+        func offer(_ action: String, _ params: String) -> String { #"{"kind":"offer","action":"\#(action)","params":\#(params),"line":"I'm thinking of it","evidence":"e"}"# }
+        let advice = #"{"kind":"advice","text":"Batch Slack","evidence":"40 switches/h"}"#
+        check(items("Sure! Here you go:\n```json\n{\"items\":[\(advice),\(offer("summaryTime", #"{"minutes":1560}"#))]}\n```\nHope it helps.")
+              == [.advice(text: "Batch Slack", evidence: "40 switches/h"),
+                  .offer(action: "summaryTime", params: ["minutes": "1560"], line: "I'm thinking of it", evidence: "e")], "prose and fence around: advice and summaryTime kept")
+        check(items(#"{"items":["# + offer("postToSlack", "{}") + "]}").isEmpty, "action outside the catalogue dropped")
+        check(items(#"{"items":["# + offer("waQuietHours", #"{"from":22,"to":8}"#) + "]}").isEmpty, "quiet hours as they are: no-op dropped")
+        check(items(#"{"items":["# + offer("waQuietHours", #"{"from":"21","to":8}"#) + "]}")
+              == [.offer(action: "waQuietHours", params: ["from": "21", "to": "8"], line: "I'm thinking of it", evidence: "e")], "quiet hours changed: kept (string or number)")
+        check(items(#"{"items":["# + offer("summaryTemplate", #"{"name":"legal"}"#) + "]}").isEmpty, "template not installed dropped")
+        check(items(#"{"items":["# + offer("autoRecordCalls", "{}") + "]}").isEmpty, "autoRecordCalls already on dropped")
+        check(items(#"{"items":["# + offer("summaryRule", #"{"text":"Lead with decisions"}"#) + "]}", answered: ["rule:Lead with decisions"]).isEmpty, "answered rule dropped")
+        check(items(#"{"items":["# + Array(repeating: advice, count: 5).joined(separator: ",") + "]}").count == 3, "at most 3")
+        check(items("NONE").isEmpty, "NONE: nothing")
+        check(items(#"{"items":["# + offer("summaryTime", #"{"minutes":1560.5}"#) + "," + offer("summaryTime", #"{"minutes":1320}"#) + "]}").isEmpty, "fractional minutes and current time dropped")
+        check(Suggestions.key(action: "waQuietHours", params: ["to": "8", "from": "21"]) == "weekly:waQuietHours:from=21,to=8", "key sorts params")
+        check(Suggestions.key(action: "summaryRule", params: ["text": "Lead with decisions"]) == "rule:Lead with decisions", "rule key shared with the daily check")
+
+        let title = String(repeating: "0123456789", count: 20)
+        let input = Suggestions.Input(samples: [.init(t: at(5, 10, 0), app: "Code", title: title), .init(t: at(5, 10, 1), app: "Slack", title: "general")],
+                                      meetings: [.init(start: at(5, 9, 0), end: at(5, 9, 30), title: "Standup"), .init(start: at(6, 9, 0), end: at(6, 9, 30), title: "Standup")], chats: [row(at(5, 10, 0), "Asha", "pineapple pie"), row(at(5, 10, 30), "Asha", "You: mango"), row(at(5, 11, 0), "Ben", "hey")],
+                                      bot: [], edits: ["Put decisions first"], erp: [(day: "2026-01-05", name: "Fix invoice export", project: "Acme")],
+                                      settings: st, declined: ["weekly:waDraftOnly:"])
+        let dg = Suggestions.digest(input, calendar: cal)
+        check(dg.contains(title.prefix(90)) && !dg.contains(title.prefix(91)) && dg.contains("Code"), "digest: titles cut to 90")
+        check(!dg.contains("pineapple") && !dg.contains("mango") && dg.contains("Asha"), "digest: chat names but no message text")
+        check(dg == """
+        Minutes per app (top 10):
+        - Code: 0 min
+        - Slack: 0 min
+
+        Minutes per window title (top 10):
+        - Code — 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: 0 min
+        - Slack — general: 0 min
+
+        First and last activity per day:
+        - 2026-01-05: 10:00–10:01
+
+        App switches per hour of day (average per active hour):
+        - 10:00: 1.0
+
+        Most frequent back-and-forth app pairs:
+        - Code ↔ Slack x1
+
+        Meetings (2 this week):
+        - start hours: 09:00 x2
+        - recurring titles: Standup x2
+        - apps opened within 30 min after a meeting: (none)
+
+        WhatsApp reply waits (median minutes, replied messages; 1 replied, 1 unanswered):
+        - by hour the message arrived: 10:00 30
+        - 1:1 vs group: 1:1 30
+        - 5 slowest chats: Asha 30
+        - unanswered by day: 2026-01-05 1
+
+        Fixes typed into meeting summaries (last 20):
+        - Put decisions first
+
+        ERP tasks logged (last 40):
+        - 2026-01-05 Fix invoice export (Acme)
+
+        Current settings:
+        - summary time: 10pm (minutes=1320)
+        - auto-record calls: on
+        - WhatsApp draft-only: off
+        - WhatsApp quiet hours: on, from 22 to 8
+        - WhatsApp chat tasks: on
+        - summary template: default (installed: default, sales)
+
+        Already answered -- don't suggest these again:
+        - weekly:waDraftOnly:
+        """, "digest: whole text, same as the Windows check")
+
         if failed { exit(1) }
     }
 }

@@ -50,7 +50,13 @@ enum Learning {
 
     private static func answer(_ key: String, _ yes: Bool) {
         cblog("Learning: \(key) → \(yes ? "yes" : "no")")
-        update { s in var a = s["answered"] as? [String: Bool] ?? [:]; a[key] = yes; s["answered"] = a }
+        update { s in
+            var a = s["answered"] as? [String: Bool] ?? [:]; a[key] = yes; s["answered"] = a
+            // A JSON object keeps no order, so the order answers came in is kept beside it for the weekly "latest 30".
+            var o = s["answeredOrder"] as? [String] ?? []
+            if !o.contains(key) { o.append(key) }
+            s["answeredOrder"] = o
+        }
     }
 
     static func count(_ name: String) {
@@ -177,13 +183,18 @@ enum Learning {
     /// The weekly review, run inside the week in review's background work: the week's digest to the AI once per `weekKey`,
     /// advice back as an "## Ideas for you" section, offers queued for `offerQueued`. "" when there's nothing or it already ran.
     static func weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey: String) -> String {
-        var fresh = false
-        update { s in if s["suggestedWeek"] as? String != weekKey { s["suggestedWeek"] = weekKey; fresh = true } }  // before the call: never twice
-        guard fresh else { return "" }
+        var fresh = false, shown = ""
+        update { s in  // before the call: never twice; a repeat gets the ideas already shown
+            if s["suggestedWeek"] as? String == weekKey { shown = s["suggestedIdeas"] as? String ?? ""; return }
+            s["suggestedWeek"] = weekKey; s["suggestedIdeas"] = ""; fresh = true
+        }
+        guard fresh else { return shown }
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
         let end = f.date(from: weekKey) ?? Date()  // that day's midnight: the seven days before it are the week's
         let days = (1...7).compactMap { Calendar.current.date(byAdding: .day, value: -$0, to: end) }
-        let answered = (load()["answered"] as? [String: Bool] ?? [:]).keys.sorted()
+        let state = load(), order = state["answeredOrder"] as? [String] ?? []
+        let keys = Set((state["answered"] as? [String: Bool] ?? [:]).keys)
+        let answered = keys.subtracting(order).sorted() + order.filter(keys.contains)  // older answers first, latest last
         let settings = settingsNow()
         let input = Suggestions.Input(
             samples: dayLogger.weekSamples(end: end), meetings: meetings(on: Set(days.map(dayKey))),
@@ -209,29 +220,33 @@ enum Learning {
                 queued.append(["action": action, "params": params, "line": line, "evidence": evidence, "at": Date().timeIntervalSince1970])
             }
         }
-        update { $0["queued"] = queued }
+        let ideas = advice.isEmpty ? "" : "## Ideas for you\n" + advice.joined(separator: "\n") + "\n"
+        update { $0["queued"] = queued; $0["suggestedIdeas"] = ideas }
         cblog("Learning: weekly suggestions \(weekKey): \(advice.count) advice, \(queued.count) offers")
-        return advice.isEmpty ? "" : "## Ideas for you\n" + advice.joined(separator: "\n") + "\n"
+        return ideas
     }
 
     /// The weekly review's offers, one a day: older than 14 days, answered, or no longer changing anything drops out first.
     private static func offerQueued(_ dayLogger: DayLogger) {
-        let s = load(), now = Date().timeIntervalSince1970
-        let answered = Set((s["answered"] as? [String: Bool] ?? [:]).keys), settings = settingsNow()
-        let live = (s["queued"] as? [[String: Any]] ?? []).filter { q in
-            guard let at = q["at"] as? TimeInterval, now - at < 14 * 86_400 else { return false }
-            // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
-            guard let data = try? JSONSerialization.data(withJSONObject: ["items": [q.merging(["kind": "offer"]) { a, _ in a }]]) else { return false }
-            return !Suggestions.parse(String(decoding: data, as: UTF8.self), settings: settings, answered: answered).isEmpty
+        let now = Date().timeIntervalSince1970, settings = settingsNow(), today = dayKey(Date())
+        var next: [String: Any]?
+        update { s in  // filter and take the head in one go, so a weekly run's fresh queue is never overwritten by a stale one
+            let answered = Set((s["answered"] as? [String: Bool] ?? [:]).keys)
+            var live = (s["queued"] as? [[String: Any]] ?? []).filter { q in
+                guard let at = q["at"] as? TimeInterval, now - at < 14 * 86_400 else { return false }
+                // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
+                guard let data = try? JSONSerialization.data(withJSONObject: ["items": [q.merging(["kind": "offer"]) { a, _ in a }]]) else { return false }
+                return !Suggestions.parse(String(decoding: data, as: UTF8.self), settings: settings, answered: answered).isEmpty
+            }
+            if s["askedDay"] as? String != today, !live.isEmpty { next = live.removeFirst() }
+            s["queued"] = live
         }
-        var asked = false
-        if let q = live.first, let action = q["action"] as? String, let params = q["params"] as? [String: String],
-           let line = q["line"] as? String {
-            let evidence = q["evidence"] as? String ?? ""
-            asked = offer(key: Suggestions.key(action: action, params: params), title: "An idea for your week",
+        guard let q = next, let action = q["action"] as? String, let params = q["params"] as? [String: String],
+              let line = q["line"] as? String else { return }
+        let evidence = q["evidence"] as? String ?? ""
+        let asked = offer(key: Suggestions.key(action: action, params: params), title: "An idea for your week",
                           line: evidence.isEmpty ? line : "\(line) (\(evidence))") { apply(action, params, dayLogger) }
-        }
-        update { $0["queued"] = asked ? Array(live.dropFirst()) : live }
+        if !asked { update { $0["queued"] = [q] + ($0["queued"] as? [[String: Any]] ?? []) } }  // something else asked first: back in line
     }
 
     /// What a yes to a weekly offer does, per catalogue action.

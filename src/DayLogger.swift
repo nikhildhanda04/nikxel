@@ -582,7 +582,10 @@ class DayLogger {
             do {
                 let report = days.map { "### \($0.day)\n\($0.text)" }.joined(separator: "\n\n")
                 var output = try self.momGenerator.runPrompt(self.weekPrompt(report: report, sunday: end), kind: "weekly-summary")
-                let ideas = Learning.weekly(dayLogger: self, agent: self.momGenerator, weekKey: Self.dayKey(end))
+                // Keyed by the week's Sunday 9am, so "write my week now" midweek shares that week's one AI run.
+                let sunday = Calendar.current.nextDate(after: end.addingTimeInterval(1), matching: Self.weekFire,
+                                                       matchingPolicy: .nextTime, direction: .backward) ?? end
+                let ideas = Learning.weekly(dayLogger: self, agent: self.momGenerator, weekKey: Self.dayKey(sunday))
                 if !ideas.isEmpty { output += (output.hasSuffix("\n") ? "\n" : "\n\n") + ideas }
                 try? FileManager.default.createDirectory(at: Self.weekDirectory, withIntermediateDirectories: true)
                 let fileURL = self.weekFileURL(for: end)

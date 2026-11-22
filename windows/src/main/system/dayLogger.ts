@@ -627,7 +627,8 @@ export class DayLogger {
         }
         const report = days.map(d => `### ${d.day}\n${d.text}`).join("\n\n");
         let output = await this.momGenerator.runPrompt(this.weekPrompt(report, end), "weekly-summary");
-        const ideas = await Learning.weekly(this, this.momGenerator, dayStamp(end));
+        // Keyed by the week's Sunday 9am, so "write my week now" midweek shares that week's one AI run.
+        const ideas = await Learning.weekly(this, this.momGenerator, dayStamp(DayLogger.lastWeekFire(end)));
         if (ideas) output += (output.endsWith("\n") ? "\n" : "\n\n") + ideas;
         const file = this.weekFile(end);
         ensureDir(DayLogger.weekDirectory);

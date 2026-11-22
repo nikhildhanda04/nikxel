@@ -21,7 +21,7 @@ import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 interface Queued { action: string; params: Record<string, string>; line: string; evidence: string; at: number }
 interface State {
   answered?: Record<string, boolean>; askedDay?: string; counts?: Record<string, number>; reviewedEditsAt?: number
-  suggestedWeek?: string; queued?: Queued[]
+  suggestedWeek?: string; suggestedIdeas?: string; queued?: Queued[]; answeredOrder?: string[]
 }
 const file = () => nikxelPath("learning.json");
 const editsFile = () => nikxelPath("edits", "instructions.jsonl");
@@ -53,7 +53,11 @@ export function offer(key: string, title: string, line: string, apply: () => voi
 
 function answer(key: string, yes: boolean): void {
   cblog(`Learning: ${key} → ${yes ? "yes" : "no"}`);
-  update(s => { s.answered = { ...s.answered, [key]: yes }; });
+  update(s => {
+    s.answered = { ...s.answered, [key]: yes };
+    // A JSON object keeps no order, so the order answers came in is kept beside it for the weekly "latest 30".
+    if (!s.answeredOrder?.includes(key)) s.answeredOrder = [...(s.answeredOrder ?? []), key];
+  });
 }
 
 export function count(name: string): void {
@@ -171,12 +175,14 @@ function meetings(days: Set<string>): Suggestions.Meeting[] {
 /// The weekly review, run inside the week in review's background work: the week's digest to the AI once per `weekKey`,
 /// advice back as an "## Ideas for you" section, offers queued for `offerQueued`. "" when there's nothing or it already ran.
 export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey: string): Promise<string> {
-  if (load().suggestedWeek === weekKey) return "";
-  update(s => { s.suggestedWeek = weekKey; });  // before the call: never twice
+  const before = load();
+  if (before.suggestedWeek === weekKey) return before.suggestedIdeas ?? "";  // a repeat gets the ideas already shown
+  update(s => { s.suggestedWeek = weekKey; s.suggestedIdeas = ""; });  // before the call: never twice
   try {
     const [y, mo, d] = weekKey.split("-").map(Number), end = new Date(y, mo - 1, d);  // that day's midnight
     const days = [1, 2, 3, 4, 5, 6, 7].map(back => new Date(y, mo - 1, d - back, 12));
-    const answered = Object.keys(load().answered ?? {}).sort();
+    const state = load(), order = state.answeredOrder ?? [], keys = Object.keys(state.answered ?? {});
+    const answered = [...keys.filter(k => !order.includes(k)).sort(), ...order.filter(k => keys.includes(k))];  // older answers first, latest last
     const settings = settingsNow(), erp: Suggestions.Input["erp"] = [];
     for (const day of [...days].reverse()) for (const t of await ERP.tasksTouched(day)) erp.push({ day: dayStamp(day), name: t.name, project: t.project });
     const input: Suggestions.Input = {
@@ -193,9 +199,10 @@ export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey:
       if (item.kind === "advice") advice.push(`- ${item.text}${item.evidence ? ` — ${item.evidence}` : ""}`);
       else queued.push({ action: item.action, params: item.params, line: item.line, evidence: item.evidence, at: Date.now() / 1000 });
     }
-    update(s => { s.queued = queued; });
+    const ideas = advice.length ? "## Ideas for you\n" + advice.join("\n") + "\n" : "";
+    update(s => { s.queued = queued; s.suggestedIdeas = ideas; });
     cblog(`Learning: weekly suggestions ${weekKey}: ${advice.length} advice, ${queued.length} offers`);
-    return advice.length ? "## Ideas for you\n" + advice.join("\n") + "\n" : "";
+    return ideas;
   } catch (e) {
     cblog(`Learning: weekly suggestions failed: ${e instanceof Error ? e.message : e}`);
     return "";
@@ -204,14 +211,21 @@ export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey:
 
 /// The weekly review's offers, one a day: older than 14 days, answered, or no longer changing anything drops out first.
 function offerQueued(dayLogger: DayLogger): void {
-  const s = load(), now = Date.now() / 1000, answered = new Set(Object.keys(s.answered ?? {})), settings = settingsNow();
-  // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
-  const live = (s.queued ?? []).filter(q => typeof q.at === "number" && now - q.at < 14 * 86_400
-    && Suggestions.parse(JSON.stringify({ items: [{ ...q, kind: "offer" }] }), settings, answered).length > 0);
-  const q = live[0];
-  const asked = !!q && offer(Suggestions.key(q.action, q.params), "An idea for your week",
-    q.evidence ? `${q.line} (${q.evidence})` : q.line, () => apply(q.action, q.params, dayLogger));
-  update(x => { x.queued = asked ? live.slice(1) : live; });
+  const now = Date.now() / 1000, settings = settingsNow(), today = dayStamp(new Date());
+  let q: Queued | undefined;
+  update(s => {  // filter and take the head in one go, so a weekly run's fresh queue is never overwritten by a stale one
+    const answered = new Set(Object.keys(s.answered ?? {}));
+    // Through `parse` again so the same rules decide: valid, unanswered, still changing something.
+    const live = (s.queued ?? []).filter(x => typeof x.at === "number" && now - x.at < 14 * 86_400
+      && Suggestions.parse(JSON.stringify({ items: [{ ...x, kind: "offer" }] }), settings, answered).length > 0);
+    if (s.askedDay !== today) q = live.shift();
+    s.queued = live;
+  });
+  if (!q) return;
+  const item = q;
+  const asked = offer(Suggestions.key(item.action, item.params), "An idea for your week",
+    item.evidence ? `${item.line} (${item.evidence})` : item.line, () => apply(item.action, item.params, dayLogger));
+  if (!asked) update(s => { s.queued = [item, ...(s.queued ?? [])]; });  // something else asked first: back in line
 }
 
 /// What a yes to a weekly offer does, per catalogue action.

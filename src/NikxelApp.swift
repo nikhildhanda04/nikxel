@@ -745,6 +745,30 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let state = MeetingDetector.shared.isInMeeting
         cblog("NikxelApp: handleMeetingStateChanged → isInMeeting=\(state)")
         window.nikxelView?.isInMeeting = state
+        offerToRecord(state)
+    }
+
+    private var callPromptAt = Date.distantPast
+    private let callPromptTitle = "You're in "
+
+    /// A call or Meet just started and nothing is recording: ask once. At most every 30 min, since a
+    /// Meet tab moved to the background drops out of detection and comes back as a "new" call.
+    private func offerToRecord(_ inMeeting: Bool) {
+        guard inMeeting else {
+            // The call ended with the question still up: it's moot now.
+            if let v = NikxelView.main, v.card?.title.hasPrefix(callPromptTitle) == true { v.dismissCard() }
+            return
+        }
+        guard let source = meetingDetector.source, !meetingCoordinator.isRecording,
+              Date().timeIntervalSince(callPromptAt) > 30 * 60 else { return }
+        callPromptAt = Date()
+        NikxelView.ask(icon: "🎙️", title: callPromptTitle + source, lines: ["Want me to record it and write the notes?"], buttons: [
+            ("Record", { [weak self] in
+                guard let mc = self?.meetingCoordinator, !mc.isRecording else { return }
+                mc.toggleRecording()
+            }),
+            ("Not now", {}),
+        ])
     }
 
     @objc func summarizeNow() {

@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import ApplicationServices
+import CoreAudio
 
 extension Notification.Name {
     static let meetingStateChanged = Notification.Name("meetingStateChanged")
@@ -11,6 +12,8 @@ class MeetingDetector {
 
     private var timer: Timer?
     private var autoDetected = false
+    /// What the auto-detection saw, for the "record it?" prompt: "a WhatsApp call", "Google Meet". nil when none.
+    private(set) var source: String?
 
     /// When true, force `isInMeeting` regardless of auto-detection. Used for
     /// offline / in-person meetings where there's no Meet tab to detect.
@@ -50,12 +53,46 @@ class MeetingDetector {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             // Titles first: one AX read per window. The Arc scan is an Apple
             // Event per tab, so it only runs when the titles found nothing.
-            let detected = Self.checkWindowTitles() || Self.checkArcTabs()
+            // The mic first: one CoreAudio read says whether a call app has it open right now.
+            let source = Self.micCallSource() ?? (Self.checkWindowTitles() || Self.checkArcTabs() ? "Google Meet" : nil)
             DispatchQueue.main.async {
-                self?.autoDetected = detected
+                self?.source = source
+                self?.autoDetected = source != nil
                 self?.recomputeState()
             }
         }
+    }
+
+    /// Call apps by bundle-ID prefix (prefix, so their helper processes count too). Holding the mic
+    /// open is what separates being on a call from merely having the app running.
+    private static let callApps: [(String, String)] = [
+        ("net.whatsapp.WhatsApp", "a WhatsApp call"), ("desktop.WhatsApp", "a WhatsApp call"),
+        ("us.zoom.xos", "a Zoom call"), ("com.microsoft.teams", "a Teams call"),
+        ("com.apple.FaceTime", "a FaceTime call"), ("com.tinyspeck.slackmacgap", "a Slack huddle"),
+        ("com.hnc.Discord", "a Discord call"), ("Cisco-Systems.Spark", "a Webex call"),
+    ]
+
+    /// The first call app with microphone input running, via CoreAudio's per-process objects (macOS 14.2+).
+    private static func micCallSource() -> String? {
+        func addr(_ sel: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+            AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        }
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var a = addr(kAudioHardwarePropertyProcessObjectList), size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &a, 0, nil, &size) == noErr, size > 0 else { return nil }
+        var procs = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &a, 0, nil, &size, &procs) == noErr else { return nil }
+        for p in procs {
+            var running: UInt32 = 0, rs = UInt32(MemoryLayout<UInt32>.size)
+            var ra = addr(kAudioProcessPropertyIsRunningInput)
+            guard AudioObjectGetPropertyData(p, &ra, 0, nil, &rs, &running) == noErr, running != 0 else { continue }
+            var bundle: Unmanaged<CFString>?, bs = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            var ba = addr(kAudioProcessPropertyBundleID)
+            guard AudioObjectGetPropertyData(p, &ba, 0, nil, &bs, &bundle) == noErr,
+                  let id = bundle?.takeRetainedValue() as String? else { continue }
+            if let hit = callApps.first(where: { id.lowercased().hasPrefix($0.0.lowercased()) }) { return hit.1 }  // helpers report lowercase IDs
+        }
+        return nil
     }
 
     private static func checkArcTabs() -> Bool {

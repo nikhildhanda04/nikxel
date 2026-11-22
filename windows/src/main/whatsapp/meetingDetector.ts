@@ -32,11 +32,20 @@ export function isMeetTitle(title: string): boolean {
 /// the one signal that separates being in a call from merely having the app
 /// running. Nikxel's own recorder never matches: it isn't on this list.
 export function isMeetingMicUser(key: string): boolean {
-  if (key.includes("#")) {
-    const exe = (key.split("#").pop() ?? "").toLowerCase();
-    return /^(zoom|teams|ms-teams|msteams|webexmta|ciscocollabhost|atmgr|slack)\.exe$/.test(exe);
-  }
-  return /zoom|teams|webex/i.test(key);
+  return micCallSource(key) !== null;
+}
+
+/// The call a mic-holding app means, for the "record it?" prompt ("a Zoom call"), or null.
+export function micCallSource(key: string): string | null {
+  const name = key.includes("#") ? (key.split("#").pop() ?? "").toLowerCase() : key.toLowerCase();
+  const packaged = !key.includes("#");
+  const is = (exe: RegExp, pkg: RegExp) => (packaged ? pkg.test(name) : exe.test(name));
+  if (is(/^zoom\.exe$/, /zoom/)) return "a Zoom call";
+  if (is(/^(teams|ms-teams|msteams)\.exe$/, /teams/)) return "a Teams call";
+  if (is(/^(webexmta|ciscocollabhost|atmgr)\.exe$/, /webex/)) return "a Webex call";
+  if (is(/^whatsapp\.exe$/, /whatsapp/)) return "a WhatsApp call";
+  if (is(/^slack\.exe$/, /^$/)) return "a Slack huddle";
+  return null;
 }
 
 /// Zoom titles its in-call window "Zoom Meeting" / "Zoom Webinar" — enough on
@@ -46,11 +55,17 @@ export function isZoomMeetingWindow(proc: string, title: string): boolean {
 }
 
 export function detectMeeting(s: DesktopSnapshot): boolean {
+  return meetingSource(s) !== null;
+}
+
+/// What the meeting is, for the "record it?" prompt: "Google Meet", "a Zoom call", … or null.
+export function meetingSource(s: DesktopSnapshot): string | null {
+  for (const k of s.mic) { const src = micCallSource(k); if (src) return src; }
   for (const w of s.windows) {
-    if (BROWSERS.has(w.proc.toLowerCase()) && isMeetTitle(w.title)) return true;
-    if (isZoomMeetingWindow(w.proc, w.title)) return true;
+    if (BROWSERS.has(w.proc.toLowerCase()) && isMeetTitle(w.title)) return "Google Meet";
+    if (isZoomMeetingWindow(w.proc, w.title)) return "a Zoom call";
   }
-  return s.mic.some(isMeetingMicUser);
+  return null;
 }
 
 /// One look at the desktop, or null when the helper can't answer.
@@ -77,6 +92,8 @@ export class MeetingDetector {
 
   private timer: NodeJS.Timeout | null = null;
   private autoDetected = false;
+  /// What the auto-detection saw, for the "record it?" prompt. null when none.
+  source: string | null = null;
   private _manualOverride = false;
   private _isInMeeting = false;
   private checking = false;
@@ -127,7 +144,8 @@ export class MeetingDetector {
         // A failed probe keeps the last answer rather than ending a meeting
         // because PowerShell hiccuped.
         if (s === null || this.timer === null) return;
-        this.autoDetected = detectMeeting(s);
+        this.source = meetingSource(s);
+        this.autoDetected = this.source !== null;
         this.recomputeState();
       })
       .catch(() => {})

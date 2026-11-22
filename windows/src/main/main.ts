@@ -74,6 +74,20 @@ class NikxelApp {
   private reminderDismissTimer?: NodeJS.Timeout;
   private checkingForUpdates = false;
   private terminated = false;
+  private callPromptAt = 0;
+
+  /// A call or Meet just started and nothing is recording: ask once. At most every 30 min, since a
+  /// Meet tab moved to the background drops out of detection and comes back as a "new" call.
+  /// Port of NikxelApp.offerToRecord.
+  private offerToRecord(inMeeting: boolean): void {
+    const source = this.meetingDetector.source;
+    if (!inMeeting || !source || this.meetingCoordinator.isRecording || Date.now() - this.callPromptAt < 30 * 60_000) return;
+    this.callPromptAt = Date.now();
+    ui.ask({ icon: "🎙️", title: "You're in " + source, lines: ["Want me to record it and write the notes?"], buttons: [
+      { title: "Record", action: () => { if (!this.meetingCoordinator.isRecording) this.meetingCoordinator.toggleRecording(false); } },
+      { title: "Not now", action: () => {} },
+    ] });
+  }
 
   launch(): void {
     const sm = this.stateMachine;
@@ -129,6 +143,7 @@ class NikxelApp {
     bus.on("meetingStateChanged", inMeeting => {
       cblog(`NikxelApp: handleMeetingStateChanged → isInMeeting=${inMeeting}`);
       ui.setInMeeting(inMeeting);
+      this.offerToRecord(inMeeting);
     });
 
     SummaryTemplates.seedIfMissing();

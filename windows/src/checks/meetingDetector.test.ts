@@ -3,7 +3,7 @@
 // the parts that are new on Windows plus the Meet title rules carried over.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { detectMeeting, isMeetTitle, isMeetingMicUser, isZoomMeetingWindow } from "../main/whatsapp/meetingDetector";
+import { detectMeeting, isMeetTitle, isMeetingMicUser, isZoomMeetingWindow, meetingSource } from "../main/whatsapp/meetingDetector";
 
 test("Google Meet in a browser: same title rules as the Mac", () => {
   assert.ok(isMeetTitle("Meet - abc-defg-hij - Google Chrome"));
@@ -42,4 +42,12 @@ test("Zoom's in-call window", () => {
   assert.ok(isZoomMeetingWindow("zoom", "Zoom Webinar"));
   assert.ok(!isZoomMeetingWindow("Zoom", "Zoom Workplace"));
   assert.ok(!isZoomMeetingWindow("chrome", "Zoom Meeting"));
+});
+
+test("what the meeting is, for the record prompt", () => {
+  assert.equal(meetingSource({ windows: [], mic: ["C:#Users#asha#AppData#Local#WhatsApp#WhatsApp.exe"] }), "a WhatsApp call");
+  assert.equal(meetingSource({ windows: [], mic: ["5319275A.WhatsAppDesktop_cv1g1gvanyjgm"] }), "a WhatsApp call");
+  assert.equal(meetingSource({ windows: [], mic: ["MSTeams_8wekyb3d8bbwe"] }), "a Teams call");
+  assert.equal(meetingSource({ windows: [{ proc: "chrome", title: "Meet - abc-defg-hij - Google Chrome" }], mic: [] }), "Google Meet");
+  assert.equal(meetingSource({ windows: [], mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), null);
 });

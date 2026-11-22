@@ -83,13 +83,20 @@ import Foundation
         let dg = Suggestions.digest(input, calendar: cal)
         check(dg.contains(title.prefix(90)) && !dg.contains(title.prefix(91)) && dg.contains("Code"), "digest: titles cut to 90")
         check(!dg.contains("pineapple") && !dg.contains("mango") && dg.contains("Asha"), "digest: chat names but no message text")
+        var capped = input
+        capped.samples = [.init(t: at(5, 10, 0), app: "Code", title: ""), .init(t: at(5, 10, 20), app: "Slack", title: ""),
+                          .init(t: at(5, 10, 22), app: "loginwindow", title: ""), .init(t: at(5, 10, 40), app: "Slack", title: "")]
+        capped.declined = (0..<35).map { "k\($0)" }
+        let dc = Suggestions.digest(capped, calendar: cal)
+        check(dc.contains("- Code: 5 min\n- Slack: 2 min\n") && dc.contains("10:00–10:40"), "digest: gap capped at 5 min, lock screen counts nothing, last sample 15s")
+        check(dc.contains("- k5\n") && !dc.contains("- k4\n"), "digest: latest 30 answered keys")
         check(dg == """
         Minutes per app (top 10):
-        - Code: 0 min
+        - Code: 1 min
         - Slack: 0 min
 
         Minutes per window title (top 10):
-        - Code — 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: 0 min
+        - Code — 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: 1 min
         - Slack — general: 0 min
 
         First and last activity per day:
@@ -126,7 +133,7 @@ import Foundation
         - WhatsApp chat tasks: on
         - summary template: default (installed: default, sales)
 
-        Already answered -- don't suggest these again:
+        Already answered -- don't suggest these again (latest 30):
         - weekly:waDraftOnly:
         """, "digest: whole text, same as the Windows check")
 

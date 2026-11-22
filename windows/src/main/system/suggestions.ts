@@ -45,7 +45,8 @@ export interface Sample { t: number; app: string; title: string }
 export interface Meeting { start: number; end: number; title: string }
 
 /** Samples in time order with lock-screen ones dropped. */
-const awake = (s: Sample[]) => s.filter((x) => x.app !== "LockApp").sort((a, b) => a.t - b.t);
+const locked = (app: string) => app === "LockApp";
+const awake = (s: Sample[]) => s.filter((x) => !locked(x.app)).sort((a, b) => a.t - b.t);
 const slot = (t: number) => { const d = new Date(t * 1000); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}`; };
 
 /** App changes between consecutive samples in the same clock hour of the same day; a change across an hour boundary isn't counted. */
@@ -126,15 +127,21 @@ export function digest(i: Input): string {
   const list = (x: string[]) => (x.length === 0 ? "(none)" : x.join(", "));
 
   const apps = new Map<string, number>(), windows = new Map<string, number>(), days = new Map<string, { first: number; last: number }>();
-  for (const x of awake(i.samples)) {  // one sample is 15 seconds on screen
-    bump(apps, x.app);
+  // The log is written on change, so a sample owns the gap to the next one, capped at 5 min, the last one 15s —
+  // as DayLogger counts it. Gaps run over every sample; a lock-screen one then counts for nothing.
+  const all = [...i.samples].sort((a, b) => a.t - b.t);
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  all.forEach((x, n) => {
+    if (locked(x.app)) return;
+    const dur = n + 1 < all.length ? Math.min(all[n + 1].t - x.t, 300) : 15;
+    add(apps, x.app, dur);
     const t = cut(x.title, 90);
-    if (t !== "") bump(windows, x.app + " — " + t);
+    if (t !== "") add(windows, x.app + " — " + t, dur);
     const d = day(x.t);
-    days.set(d, { first: days.get(d)?.first ?? x.t, last: x.t });
-  }
-  section("Minutes per app (top 10)", ranked(apps).slice(0, 10).map(([k, n]) => `${k}: ${mins(n * 15)} min`));
-  section("Minutes per window title (top 10)", ranked(windows).slice(0, 10).map(([k, n]) => `${k}: ${mins(n * 15)} min`));
+    days.set(d, { first: days.get(d)?.first ?? x.t, last: x.t + dur });
+  });
+  section("Minutes per app (top 10)", ranked(apps).slice(0, 10).map(([k, s]) => `${k}: ${mins(s)} min`));
+  section("Minutes per window title (top 10)", ranked(windows).slice(0, 10).map(([k, s]) => `${k}: ${mins(s)} min`));
   section("First and last activity per day", byKey(days).map(([d, v]) => `${d}: ${hm(v.first)}–${hm(v.last)}`));
   section("App switches per hour of day (average per active hour)",
     Object.entries(switchesByHour(i.samples)).map(([h, v]) => [Number(h), v]).sort((x, y) => x[0] - y[0]).map(([h, v]) => `${hour(h)}: ${v.toFixed(1)}`));
@@ -175,7 +182,7 @@ export function digest(i: Input): string {
     `WhatsApp chat tasks: ${on(s.waChatTasks)}`,
     `summary template: ${s.summaryTemplate} (installed: ${s.templates.join(", ")})`,
   ]);
-  section("Already answered -- don't suggest these again", i.declined);
+  section("Already answered -- don't suggest these again (latest 30)", i.declined.slice(-30));
   return out.join("\n\n");
 }
 
@@ -199,7 +206,7 @@ Suggest at most 3 things that would make their work easier, each one of two kind
 - offer: a task Nikxel takes on for them from now on. ONLY the actions in the list below -- never invent one. If the idea isn't on the list, it can only be advice.
 
 Rules:
-- Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "on 4 of 5 days you answered WhatsApp after 40+ min between 2pm and 5pm"). An item you can't back with a number from the digest is left out.
+- Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "median WhatsApp wait 45 min for messages arriving at 14:00 and 15:00, against 8 min at 10:00"). An item you can't back with a number from the digest is left out.
 - Nothing generic (take breaks, use a to-do list, turn off notifications) unless the digest shows why it fits this person.
 - One sharp item beats three weak ones. If nothing is clearly worth saying, return no items.
 - Don't repeat anything under "Already answered", or anything that means the same.

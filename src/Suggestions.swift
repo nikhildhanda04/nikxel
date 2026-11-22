@@ -59,10 +59,9 @@ enum Suggestions {
     /// A meeting's span.
     struct Meeting { let start: TimeInterval; let end: TimeInterval; let title: String }
 
+    private static func locked(_ app: String) -> Bool { app == "loginwindow" || app == "ScreenSaverEngine" }
     /// Samples in time order with lock-screen ones dropped.
-    private static func awake(_ s: [Sample]) -> [Sample] {
-        s.filter { $0.app != "loginwindow" && $0.app != "ScreenSaverEngine" }.sorted { $0.t < $1.t }
-    }
+    private static func awake(_ s: [Sample]) -> [Sample] { s.filter { !locked($0.app) }.sorted { $0.t < $1.t } }
 
     /// App changes between consecutive samples in the same clock hour of the same day; a change across an hour boundary isn't counted.
     private static func switches(_ s: [Sample], _ cal: Calendar) -> [(from: String, to: String, hour: Int)] {
@@ -147,17 +146,20 @@ enum Suggestions {
         func on(_ b: Bool) -> String { b ? "on" : "off" }
         func list(_ x: [String]) -> String { x.isEmpty ? "(none)" : x.joined(separator: ", ") }
 
-        let a = awake(i.samples)  // one sample is 15 seconds on screen
-        var apps: [String: Int] = [:], windows: [String: Int] = [:], days: [String: (first: TimeInterval, last: TimeInterval)] = [:]
-        for x in a {
-            apps[x.app, default: 0] += 1
+        // The log is written on change, so a sample owns the gap to the next one, capped at 5 min, the last one 15s --
+        // as DayLogger counts it. Gaps run over every sample; a lock-screen one then counts for nothing.
+        let all = i.samples.sorted { $0.t < $1.t }
+        var apps: [String: Double] = [:], windows: [String: Double] = [:], days: [String: (first: TimeInterval, last: TimeInterval)] = [:]
+        for (n, x) in all.enumerated() where !locked(x.app) {
+            let dur = n + 1 < all.count ? min(all[n + 1].t - x.t, 300) : 15
+            apps[x.app, default: 0] += dur
             let t = cut(x.title, 90)
-            if !t.isEmpty { windows[x.app + " — " + t, default: 0] += 1 }
+            if !t.isEmpty { windows[x.app + " — " + t, default: 0] += dur }
             let d = day(x.t)
-            days[d] = (days[d]?.first ?? x.t, x.t)
+            days[d] = (days[d]?.first ?? x.t, x.t + dur)
         }
-        section("Minutes per app (top 10)", ranked(apps).prefix(10).map { "\($0.key): \(mins(Double($0.value) * 15)) min" })
-        section("Minutes per window title (top 10)", ranked(windows).prefix(10).map { "\($0.key): \(mins(Double($0.value) * 15)) min" })
+        section("Minutes per app (top 10)", ranked(apps).prefix(10).map { "\($0.key): \(mins($0.value)) min" })
+        section("Minutes per window title (top 10)", ranked(windows).prefix(10).map { "\($0.key): \(mins($0.value)) min" })
         section("First and last activity per day", days.sorted { $0.key < $1.key }.map { "\($0.key): \(hm($0.value.first))–\(hm($0.value.last))" })
         section("App switches per hour of day (average per active hour)",
                 switchesByHour(i.samples, calendar: cal).sorted { $0.key < $1.key }.map { "\(hour($0.key)): \(String(format: "%.1f", $0.value))" })
@@ -197,7 +199,7 @@ enum Suggestions {
             "WhatsApp chat tasks: \(on(s.waChatTasks))",
             "summary template: \(s.summaryTemplate) (installed: \(s.templates.joined(separator: ", ")))",
         ])
-        section("Already answered -- don't suggest these again", i.declined)
+        section("Already answered -- don't suggest these again (latest 30)", Array(i.declined.suffix(30)))
         return out.joined(separator: "\n\n")
     }
 
@@ -222,7 +224,7 @@ enum Suggestions {
         - offer: a task Nikxel takes on for them from now on. ONLY the actions in the list below -- never invent one. If the idea isn't on the list, it can only be advice.
 
         Rules:
-        - Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "on 4 of 5 days you answered WhatsApp after 40+ min between 2pm and 5pm"). An item you can't back with a number from the digest is left out.
+        - Ground every item in this person's own numbers from the digest and put them in "evidence" (e.g. "median WhatsApp wait 45 min for messages arriving at 14:00 and 15:00, against 8 min at 10:00"). An item you can't back with a number from the digest is left out.
         - Nothing generic (take breaks, use a to-do list, turn off notifications) unless the digest shows why it fits this person.
         - One sharp item beats three weak ones. If nothing is clearly worth saying, return no items.
         - Don't repeat anything under "Already answered", or anything that means the same.

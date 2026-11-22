@@ -1,7 +1,7 @@
 // Runnable check for suggestions.ts — port of check_suggestions.swift.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { replies, switchesByHour, topPairs, afterMeetings, digest, parse, key, type Settings } from "../main/system/suggestions";
+import { replies, switchesByHour, topPairs, afterMeetings, digest, parse, key, type Settings, type Input } from "../main/system/suggestions";
 
 const row = (t: number, name: string, preview: string) => ({ t, name, preview });
 
@@ -75,18 +75,23 @@ test("digest, catalogue and the AI's reply", () => {
   assert.equal(key("summaryRule", { text: "Lead with decisions" }), "rule:Lead with decisions", "rule key shared with the daily check");
 
   const title = "0123456789".repeat(20);
-  const dg = digest({ samples: [{ t: at(5, 10, 0), app: "Code", title }, { t: at(5, 10, 1), app: "Slack", title: "general" }],
+  const input: Input = { samples: [{ t: at(5, 10, 0), app: "Code", title }, { t: at(5, 10, 1), app: "Slack", title: "general" }],
     meetings: [{ start: at(5, 9, 0), end: at(5, 9, 30), title: "Standup" }, { start: at(6, 9, 0), end: at(6, 9, 30), title: "Standup" }],
     chats: [row(at(5, 10, 0), "Asha", "pineapple pie"), row(at(5, 10, 30), "Asha", "You: mango"), row(at(5, 11, 0), "Ben", "hey")],
-    bot: [], edits: ["Put decisions first"], erp: [{ day: "2026-01-05", name: "Fix invoice export", project: "Acme" }], settings: st, declined: ["weekly:waDraftOnly:"] });
+    bot: [], edits: ["Put decisions first"], erp: [{ day: "2026-01-05", name: "Fix invoice export", project: "Acme" }], settings: st, declined: ["weekly:waDraftOnly:"] };
+  const dg = digest(input);
   assert.ok(dg.includes(title.slice(0, 90)) && !dg.includes(title.slice(0, 91)) && dg.includes("Code"), "digest: titles cut to 90");
   assert.ok(!dg.includes("pineapple") && !dg.includes("mango") && dg.includes("Asha"), "digest: chat names but no message text");
+  const dc = digest({ ...input, declined: Array.from({ length: 35 }, (_, n) => `k${n}`),
+    samples: [{ t: at(5, 10, 0), app: "Code", title: "" }, { t: at(5, 10, 20), app: "Slack", title: "" }, { t: at(5, 10, 22), app: "LockApp", title: "" }, { t: at(5, 10, 40), app: "Slack", title: "" }] });
+  assert.ok(dc.includes("- Code: 5 min\n- Slack: 2 min\n") && dc.includes("10:00–10:40"), "digest: gap capped at 5 min, lock screen counts nothing, last sample 15s");
+  assert.ok(dc.includes("- k5\n") && !dc.includes("- k4\n"), "digest: latest 30 answered keys");
   assert.equal(dg, "Minutes per app (top 10):\n" +
-    "- Code: 0 min\n" +
+    "- Code: 1 min\n" +
     "- Slack: 0 min\n" +
     "\n" +
     "Minutes per window title (top 10):\n" +
-    "- Code — 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: 0 min\n" +
+    "- Code — 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: 1 min\n" +
     "- Slack — general: 0 min\n" +
     "\n" +
     "First and last activity per day:\n" +
@@ -123,6 +128,6 @@ test("digest, catalogue and the AI's reply", () => {
     "- WhatsApp chat tasks: on\n" +
     "- summary template: default (installed: default, sales)\n" +
     "\n" +
-    "Already answered -- don't suggest these again:\n" +
+    "Already answered -- don't suggest these again (latest 30):\n" +
     "- weekly:waDraftOnly:", "digest: whole text, same as the Swift check");
 });

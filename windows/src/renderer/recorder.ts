@@ -29,6 +29,7 @@ interface RecorderBridge {
   chunk(track: Track, pcm: Uint8Array): void;
   stopped(): void;
   log(msg: string): void;
+  silent(): void;
 }
 
 declare global {
@@ -133,7 +134,15 @@ class Downsampler {
   }
 }
 
-interface Tap { track: Track; node: AudioWorkletNode; ds: Downsampler; flushed: Promise<void> }
+interface Tap {
+  track: Track; node: AudioWorkletNode; ds: Downsampler; flushed: Promise<void>;
+  /// Level bookkeeping for the logs and the "hearing nothing" check.
+  samples: number; soundSamples: number; peak: number; lastSound: number;
+}
+
+/// About -54 dBFS: under any real room or voice, over a digitally silent stream.
+const SOUND_FLOOR = 0.002;
+const db = (peak: number) => peak > 0 ? `${Math.round(20 * Math.log10(peak))} dBFS` : "silent";
 
 interface Session {
   ctx: AudioContext;
@@ -173,14 +182,21 @@ function makeTap(ctx: AudioContext, track: Track, sink: AudioNode): Tap {
   const ds = new Downsampler(ctx.sampleRate, pcm => api.chunk(track, pcm));
   let resolveFlushed!: () => void;
   const flushed = new Promise<void>(r => { resolveFlushed = r; });
+  const tap: Tap = { track, node, ds, flushed, samples: 0, soundSamples: 0, peak: 0, lastSound: Date.now() };
   node.port.onmessage = (e: MessageEvent<{ frames: Float32Array; last: boolean }>) => {
-    ds.push(e.data.frames);
+    const f = e.data.frames;
+    let p = 0;
+    for (let i = 0; i < f.length; i++) { const v = Math.abs(f[i]); if (v > p) p = v; }
+    tap.samples += f.length;
+    if (p > tap.peak) tap.peak = p;
+    if (p >= SOUND_FLOOR) { tap.lastSound = Date.now(); tap.soundSamples += f.length; }
+    ds.push(f);
     if (e.data.last) resolveFlushed();
   };
   // The tap's output is silence; routing it to the destination keeps the
   // node pulled by the graph on every render quantum.
   node.connect(sink);
-  return { track, node, ds, flushed };
+  return tap;
 }
 
 async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Promise<void> {
@@ -266,6 +282,8 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     if (micGain) micGain.gain.value = muted ? 0 : micBase;
 
     session = { ctx, streams, taps, nodes, micGain, micBase, micSrc, micStream: mic, sysSrc, sysDest };
+    api.log(`mic: "${mic?.getAudioTracks()[0]?.label ?? "none"}"${muted ? " (muted)" : ""}`);
+    silenceRestarted = silenceWarned = false;
     api.started({ tracks: taps.map(t => t.track), inputRate: ctx.sampleRate });
     if (stopRequested) void stop();
   } catch (e) {
@@ -289,14 +307,14 @@ const openMic = () => navigator.mediaDevices.getUserMedia({
 /// device nobody's talking into. The new source feeds the same gain node, so the mic track's
 /// timeline never breaks (the tap records silence for the moment there's none).
 let following = false;
-async function followMic(why: string): Promise<void> {
+async function followMic(why: string, force = false): Promise<void> {
   const s = session;
   if (!s?.micGain || following) return;
   following = true;
   try {
     const current = s.micStream?.getAudioTracks()[0];
     const def = (await navigator.mediaDevices.enumerateDevices()).find(d => d.kind === "audioinput" && d.deviceId === "default");
-    if (current?.readyState === "live" && def && current.getSettings().groupId === def.groupId) return;
+    if (!force && current?.readyState === "live" && def && current.getSettings().groupId === def.groupId) return;
     const mic = await openMic();
     if (session !== s) { stopStreams([mic]); return; }
     try { s.micSrc?.disconnect(); } catch { /* already gone */ }
@@ -341,11 +359,33 @@ async function followSys(attempt: number): Promise<void> {
 
 navigator.mediaDevices.addEventListener("devicechange", () => { void followMic("device change"); });
 
+/// Both tracks silent. A capture can run dead silent with nothing reporting an error (a whole
+/// 17-minute meeting came out empty that way on a Mac) and a fresh start brought it back, so
+/// reacquire both at 45 s; if that doesn't help, tell the user at 90 s while the call is on.
+let silenceRestarted = false, silenceWarned = false;
+setInterval(() => {
+  const s = session;
+  if (!s || s.taps.length === 0) return;
+  const quiet = (Date.now() - Math.max(...s.taps.map(t => t.lastSound))) / 1000;
+  if (quiet < 45) { silenceRestarted = silenceWarned = false; return; }
+  if (!silenceRestarted) {
+    silenceRestarted = true;
+    api.log(`no sound from the call or the mic for ${Math.round(quiet)} s — restarting both`);
+    void followSys(1);
+    void followMic("silent", true);
+  } else if (quiet >= 90 && !silenceWarned) {
+    silenceWarned = true;
+    api.log(`still silent after ${Math.round(quiet)} s — warning the user (mic muted: ${muted})`);
+    api.silent();
+  }
+}, 2000);
+
 async function stop(): Promise<void> {
   if (starting) { stopRequested = true; return; }
   const s = session;
   session = null;
   if (!s) { api.stopped(); return; }
+  api.log("stopped — " + s.taps.map(t => `${t.track}: ${Math.round(t.samples / s.ctx.sampleRate)} s, sound in ${Math.round(t.soundSamples / s.ctx.sampleRate)} s, peak ${db(t.peak)}`).join("; "));
   try {
     // Ask each tap for its partial block, but don't hang the stop on it.
     for (const t of s.taps) t.node.port.postMessage("flush");

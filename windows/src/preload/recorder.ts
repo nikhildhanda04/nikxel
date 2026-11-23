@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld("nikxelRecorder", {
   chunk: (track: Track, pcm: Uint8Array) => ipcRenderer.send("recorder:chunk", track, pcm),
   stopped: () => ipcRenderer.send("recorder:stopped"),
   log: (msg: string) => ipcRenderer.send("recorder:log", msg),
+  silent: () => ipcRenderer.send("recorder:silent"),
 });

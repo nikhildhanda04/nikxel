@@ -11,6 +11,20 @@ enum RecordingArtifacts {
 protocol AudioRecorderDelegate: AnyObject {
     func recorderDidStart()
     func recorderDidStop(artifacts: RecordingArtifacts?, error: Error?)
+    /// Neither the call nor the mic has had any sound for a while, even after a restart.
+    func recorderHearsNothing(micMuted: Bool)
+}
+
+/// Peak levels for the logs and the silence check.
+enum AudioLevel {
+    /// About -54 dBFS: under any real room or voice, over a digitally silent stream.
+    static let soundFloor: Float = 0.002
+    static func peak(_ p: UnsafePointer<Float>, _ n: Int) -> Float {
+        var m: Float = 0
+        for i in 0..<n { m = max(m, abs(p[i])) }
+        return m
+    }
+    static func db(_ peak: Float) -> String { peak > 0 ? String(format: "%.0f dBFS", 20 * log10(peak)) : "silent" }
 }
 
 class AudioRecorder: NSObject {
@@ -27,6 +41,12 @@ class AudioRecorder: NSObject {
     private var sysFrames: Int64 = 0
     private var lastSampleAt = Date()
     private var watchdog: DispatchSourceTimer?
+    private var lastSysSound = Date()
+    private var sysSoundFrames: Int64 = 0
+    private var sysPeak: Float = 0
+    /// Once per stretch of total silence: restart both captures at 45 s, warn at 90 s.
+    private var silenceRestarted = false
+    private var silenceWarned = false
     // Write raw Float32 interleaved via ExtAudioFile to avoid AVAudioFile format mismatch
     private var extAudioFile: ExtAudioFileRef?
     private var sysURL: URL?     // raw system audio capture
@@ -84,6 +104,9 @@ class AudioRecorder: NSObject {
         guard isRecording else { return }
         isRecording = false
         watchdog?.cancel(); watchdog = nil
+        let secs = Int(Date().timeIntervalSince(startedAt ?? Date()))
+        let sysLine = audioQueue.sync { "\(sysFrames / 48000) s, sound in \(sysSoundFrames / 48000) s, peak \(AudioLevel.db(sysPeak))" }
+        cblog("AudioRecorder: stopped after \(secs) s — call audio: \(sysLine); mic: \(mic.isRecording ? mic.summary : "not recording")")
         let sysURL = self.sysURL
         let micURL = self.micURL
         let finalURL = self.outputURL
@@ -255,7 +278,8 @@ class AudioRecorder: NSObject {
 
             self.filter = filter
             self.config = config
-            audioQueue.sync { self.sysFrames = 0 }
+            audioQueue.sync { self.sysFrames = 0; self.sysSoundFrames = 0; self.sysPeak = 0 }
+            lastSysSound = Date(); silenceRestarted = false; silenceWarned = false
             startedAt = nil
             let stream = try makeStream(filter: filter, config: config)
             self.stream = stream
@@ -291,11 +315,31 @@ class AudioRecorder: NSObject {
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now() + 2, repeating: 2)
         t.setEventHandler { [weak self] in
-            guard let self = self, self.isRecording, Date().timeIntervalSince(self.lastSampleAt) > 4 else { return }
-            self.restartStream(why: "no system audio for 4 s")
+            guard let self = self, self.isRecording else { return }
+            if Date().timeIntervalSince(self.lastSampleAt) > 4 { self.restartStream(why: "no system audio for 4 s") }
+            self.checkSilence()
         }
         t.resume()
         watchdog = t
+    }
+
+    /// Both tracks silent. A capture can run dead silent with nothing reporting
+    /// an error (a whole 17-minute meeting came out empty that way) and a fresh
+    /// start brought it back, so restart both; if that doesn't help, tell the
+    /// user while the call is still on.
+    private func checkSilence() {
+        let quiet = Date().timeIntervalSince(max(lastSysSound, mic.isRecording ? mic.lastSound : .distantPast))
+        if quiet < 45 { silenceRestarted = false; silenceWarned = false; return }
+        if !silenceRestarted {
+            silenceRestarted = true
+            cblog("AudioRecorder: no sound from the call or the mic for \(Int(quiet)) s — restarting both")
+            restartStream(why: "silent")
+            if mic.isRecording { mic.restartNow() }
+        } else if quiet >= 90 && !silenceWarned {
+            silenceWarned = true
+            cblog("AudioRecorder: still silent after \(Int(quiet)) s — warning the user (mic muted: \(mic.isMuted))")
+            delegate?.recorderHearsNothing(micMuted: mic.isMuted)
+        }
     }
 
     private func restartStream(why: String) {
@@ -385,6 +429,10 @@ class AudioRecorder: NSObject {
                 }
             }
         }
+
+        let p = max(AudioLevel.peak(ch0, fc), AudioLevel.peak(ch1, fc))
+        sysPeak = max(sysPeak, p)
+        if p >= AudioLevel.soundFloor { lastSysSound = Date(); sysSoundFrames += Int64(fc) }
 
         // Use AudioBufferList.allocate for multi-buffer layout (Swift can't init >1 mBuffers inline)
         ch0.withUnsafeMutableBufferPointer { p0 in

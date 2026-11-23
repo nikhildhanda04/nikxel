@@ -57,6 +57,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
     private var switching = false
 
     func recorderDidStart() {
+        cblog("MeetingCoordinator: recording started (\(recorder.captureMode.rawValue), mic muted: \(recorder.isMicMuted))")
         switching = false
         stateMachine.startRecording()
         nikxelView?.recordingStartedAt = CACurrentMediaTime()
@@ -69,6 +70,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         nikxelView?.recordingStartedAt = nil
 
         if let error = error {
+            cblog("MeetingCoordinator: couldn't record — \(error.localizedDescription)")
             DispatchQueue.main.async {
                 self.nikxelView?.showCard(
                     icon: "⚠️",
@@ -83,6 +85,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         }
 
         guard let artifacts = artifacts else {
+            cblog("MeetingCoordinator: recording produced no audio file")
             isProcessing = false
             notify(title: "Recording failed", body: "No audio file produced.")
             return
@@ -101,6 +104,32 @@ class MeetingCoordinator: AudioRecorderDelegate {
         }
     }
 
+    func recorderHearsNothing(micMuted: Bool) {
+        DispatchQueue.main.async {
+            self.nikxelView?.showCard(
+                icon: "🔇",
+                title: "Nikxel can't hear this call",
+                lines: micMuted
+                    ? ["No sound from the call for 90 seconds, and your mic is muted in Nikxel.",
+                       "If people are talking, play the call on this Mac, or unmute the mic in the menu bar."]
+                    : ["No sound from the call or your mic for 90 seconds.",
+                       "If people are talking, stop and start the recording again (⌘R in the menu bar)."],
+                kind: .warning,
+                lifetime: 30)
+        }
+    }
+
+    /// Words a whisper .srt/.txt actually heard: no timestamps, cue numbers,
+    /// or [BLANK_AUDIO] / (music) tags. For the logs.
+    static func spokenWords(_ url: URL?) -> Int {
+        guard let url = url, let text = try? String(contentsOf: url, encoding: .utf8) else { return 0 }
+        return text.components(separatedBy: .newlines)
+            .filter { !$0.contains("-->") && Int($0.trimmingCharacters(in: .whitespaces)) == nil }
+            .joined(separator: " ")
+            .replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)"#, with: " ", options: .regularExpression)
+            .split(whereSeparator: { $0.isWhitespace }).count
+    }
+
     // MARK: - Notes pipeline
 
     private func runNotesPipeline(audioURL: URL, startedAt: Date, durationSec: Int) {
@@ -110,6 +139,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
             case .failure(let err):
                 self.reportTranscribeFailure(err)
             case .success(let txtURL):
+                cblog("MeetingCoordinator: transcribed — \(Self.spokenWords(txtURL)) words")
                 guard let text = try? String(contentsOf: txtURL, encoding: .utf8) else {
                     self.reportTranscribeFailure(Transcriber.TranscriberError.failed("could not read transcript at \(txtURL.path)"))
                     return
@@ -149,6 +179,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
         group.notify(queue: .global(qos: .userInitiated)) { [weak self] in
             guard let self = self else { return }
+            cblog("MeetingCoordinator: transcribed — call: \(sysSRT == nil ? "failed" : "\(Self.spokenWords(sysSRT)) words"), mic: \(micURL == nil ? "none" : micSRT == nil ? "failed" : "\(Self.spokenWords(micSRT)) words")")
             if let err = firstError, sysSRT == nil && micSRT == nil {
                 self.reportTranscribeFailure(err)
                 return
@@ -282,6 +313,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
         let reason = full.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && !$0.hasPrefix("Logs: ") } ?? "Unknown error."
+        cblog("MeetingCoordinator: \(title) — \(String(full.prefix(300)).replacingOccurrences(of: "\n", with: " | "))")
 
         nikxelView?.showCard(
             icon: "⚠️",

@@ -23,6 +23,8 @@ export interface AudioRecorderDelegate {
   /// The mic couldn't start; recording carries on with system audio only.
   /// `blocked` is Windows microphone privacy saying no.
   recorderMicUnavailable?(reason: string, blocked: boolean): void;
+  /// Neither the call nor the mic has had any sound for a while, even after a restart.
+  recorderHearsNothing?(micMuted: boolean): void;
 }
 
 /// A failed start. `stage` is where: "system" (loopback capture), "audio"
@@ -146,6 +148,7 @@ export class AudioRecorder {
       this.pendingStop?.();
     });
     ipcMain.on("recorder:log", (e, msg: string) => { if (fromUs(e)) diag("Recorder", String(msg)); });
+    ipcMain.on("recorder:silent", e => { if (fromUs(e) && this.capturing) this.delegate?.recorderHearsNothing?.(this.muted); });
   }
 
   /// Windows asks nobody for loopback audio and has no prompt to raise for the

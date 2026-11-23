@@ -76,6 +76,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
   }
 
   recorderDidStart(): void {
+    diag("MeetingCoordinator", `recording started (${this.recorder.captureMode}, mic muted: ${this.recorder.isMicMuted})`);
     this.switching = false;
     this.stateMachine.startRecording();
     ui.setRecordingStartedAt(Date.now());
@@ -95,6 +96,33 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     });
   }
 
+  recorderHearsNothing(micMuted: boolean): void {
+    ui.showCard({
+      icon: "🔇",
+      title: "Nikxel can't hear this call",
+      lines: micMuted
+        ? ["No sound from the call for 90 seconds, and your mic is muted in Nikxel.",
+          "If people are talking, play the call on this PC, or unmute the mic."]
+        : ["No sound from the call or your mic for 90 seconds.",
+          "If people are talking, stop and start the recording again."],
+      kind: "warning",
+      lifetime: 30,
+    });
+  }
+
+  /// Words a whisper .srt/.txt actually heard: no timestamps, cue numbers,
+  /// or [BLANK_AUDIO] / (music) tags. For the logs.
+  static spokenWords(file: string | null): number {
+    if (!file) return 0;
+    let text: string;
+    try { text = fs.readFileSync(file, "utf8"); } catch { return 0; }
+    return text.split(/\r?\n/)
+      .filter(l => !l.includes("-->") && !/^\s*\d+\s*$/.test(l))
+      .join(" ")
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, " ")
+      .split(/\s+/).filter(Boolean).length;
+  }
+
   recorderDidStop(artifacts: RecordingArtifacts | null, error: Error | null): void {
     this.switching = false;
     const meet = MeetSpeakers.shared.stop();
@@ -103,11 +131,13 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     bus.emit("menuChanged");
 
     if (error) {
+      diag("MeetingCoordinator", `couldn't record: ${error.message}`);
       this.showRecordErrorCard(error);
       return;
     }
 
     if (!artifacts) {
+      diag("MeetingCoordinator", "recording produced no audio file");
       this._isProcessing = false;
       this.notify("Recording failed", "No audio file produced.");
       return;
@@ -151,6 +181,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     let text: string;
     try {
       const txtPath = await this.transcriber.transcribe(audioPath, "txt");
+      diag("MeetingCoordinator", `transcribed — ${MeetingCoordinator.spokenWords(txtPath)} words`);
       try { text = await fs.promises.readFile(txtPath, "utf8"); }
       catch { throw new TranscriberError("failed", `could not read transcript at ${txtPath}`); }
     } catch (e) {
@@ -173,6 +204,8 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     const sysSRT = sys.status === "fulfilled" ? sys.value : null;
     const micSRT = mic.status === "fulfilled" ? mic.value : null;
     const firstError = sys.status === "rejected" ? sys.reason : mic.status === "rejected" ? mic.reason : null;
+    const words = (p: string | null, ok: boolean) => !ok ? "failed" : `${MeetingCoordinator.spokenWords(p)} words`;
+    diag("MeetingCoordinator", `transcribed — call: ${words(sysSRT, sys.status === "fulfilled")}, mic: ${micPath ? words(micSRT, mic.status === "fulfilled") : "none"}`);
     if (firstError && !sysSRT && !micSRT) {
       this.reportTranscribeFailure(firstError);
       return;

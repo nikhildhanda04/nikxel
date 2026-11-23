@@ -19,6 +19,11 @@ class MicRecorder {
     private(set) var url: URL?
     private(set) var isRecording = false
     var isMuted: Bool = false
+    /// Level bookkeeping for the logs and the "hearing nothing" check (AudioRecorder).
+    private(set) var lastSound = Date()
+    private var soundFrames: AVAudioFramePosition = 0
+    private var peak: Float = 0
+    private var deviceName = "?"
 
     enum MicError: Error { case permissionDenied, fileCreateFailed, engineStartFailed(String) }
 
@@ -37,6 +42,7 @@ class MicRecorder {
         }
         url = outputURL
         startedAt = Date(); framesWritten = 0
+        lastSound = Date(); soundFrames = 0; peak = 0
         do { try startEngine() } catch { file = nil; throw error }
         isRecording = true
         observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] n in
@@ -56,7 +62,8 @@ class MicRecorder {
             throw MicError.engineStartFailed("no input device")
         }
         converter.downmix = true
-        cblog("MicRecorder: input \(Int(fmt.sampleRate)) Hz, \(fmt.channelCount) ch")
+        deviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "?"
+        cblog("MicRecorder: input \"\(deviceName)\" \(Int(fmt.sampleRate)) Hz, \(fmt.channelCount) ch")
         input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, _ in
             guard let self, let out = self.convert(buf, converter) else { return }
             self.queue.async { self.write(out) }
@@ -69,6 +76,9 @@ class MicRecorder {
 
     /// The device changed under a running engine. Right after a Bluetooth switch there can be
     /// no input for a moment, so a few tries a second apart.
+    /// Restarts the engine on the current default input, e.g. when it has gone silent.
+    func restartNow() { queue.async { self.restart(attempt: 1) } }
+
     private func restart(attempt: Int) {
         guard isRecording else { return }
         engine.inputNode.removeTap(onBus: 0)
@@ -104,10 +114,20 @@ class MicRecorder {
             try? f.write(from: gap)
             framesWritten += AVAudioFramePosition(gap.frameLength)
         }
+        let p = AudioLevel.peak(buf.floatChannelData![0], Int(buf.frameLength))
+        peak = max(peak, p)
+        if p >= AudioLevel.soundFloor { lastSound = Date(); soundFrames += AVAudioFramePosition(buf.frameLength) }
         // Muted: silence, which keeps the mic timeline aligned with the system-audio one.
         if isMuted, let ch = buf.floatChannelData { memset(ch[0], 0, Int(buf.frameLength) * MemoryLayout<Float>.size) }
         try? f.write(from: buf)
         framesWritten += AVAudioFramePosition(buf.frameLength)
+    }
+
+    /// One line for the logs: how long, how much of it had sound, how loud.
+    var summary: String {
+        queue.sync {
+            "\"\(deviceName)\"\(isMuted ? " (muted)" : "") \(framesWritten / 48000) s, sound in \(soundFrames / 48000) s, peak \(AudioLevel.db(peak))"
+        }
     }
 
     func stop() {

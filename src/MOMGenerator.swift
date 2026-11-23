@@ -91,6 +91,28 @@ private struct AgentBackend {
                 usesStdin: false,
                 parseOutput: { String(data: $0, encoding: .utf8) }
             )
+        case .antigravity:
+            // Antigravity CLI (`agy`), shaped from its docs
+            // (antigravity.google/docs/cli/headless) -- not yet run against a
+            // real install. -p takes the prompt as an argument; plain stdin is
+            // not supported. Tools needing approval are soft-denied in -p
+            // runs, so it can't stall on a permission prompt. Headless runs
+            // use the login cached by one interactive `agy` session.
+            return AgentBackend(
+                candidatePaths: { home in [
+                    "\(home)/.local/bin/agy",
+                    "/opt/homebrew/bin/agy",
+                    "/usr/local/bin/agy"
+                ]},
+                whichName: "agy",
+                buildArgs: { prompt in ["-p", prompt, "--output-format", "json", "--disable-slash-commands"] },
+                usesStdin: false,
+                parseOutput: { data in
+                    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { return String(data: data, encoding: .utf8) }
+                    return obj["response"] as? String
+                }
+            )
         }
     }
 

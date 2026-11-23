@@ -6,12 +6,14 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
     case claude
     case opencode
     case codex
+    case antigravity
 
     var displayName: String {
         switch self {
         case .claude: return "Claude Code"
         case .opencode: return "OpenCode"
         case .codex: return "Codex"
+        case .antigravity: return "Antigravity CLI"
         }
     }
 
@@ -22,6 +24,7 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
         case .claude: return "npm install -g @anthropic-ai/claude-code"
         case .opencode: return "curl -fsSL https://opencode.ai/install | bash"
         case .codex: return "npm install -g @openai/codex"
+        case .antigravity: return "curl -fsSL https://antigravity.google/cli/install.sh | bash"
         }
     }
 
@@ -32,6 +35,7 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
         case .claude: return ["claude", "claude-code"]
         case .opencode: return ["opencode"]
         case .codex: return ["codex"]
+        case .antigravity: return ["agy"]
         }
     }
 }

@@ -8,8 +8,8 @@ import { ErpContext } from "../system/erpContext";
 /// Port of NikxelSettings.swift. Backed by ~/.nikxel/settings.json — the same
 /// file and keys as the Mac app, so it stays easy to open and edit by hand.
 
-export type CodingAgent = "claude" | "opencode" | "codex";
-export const CODING_AGENTS: CodingAgent[] = ["claude", "opencode", "codex"];
+export type CodingAgent = "claude" | "opencode" | "codex" | "antigravity";
+export const CODING_AGENTS: CodingAgent[] = ["claude", "opencode", "codex", "antigravity"];
 
 export const AGENT_INFO: Record<CodingAgent, { displayName: string; installCommand: string; processNames: string[] }> = {
   claude: {
@@ -26,6 +26,11 @@ export const AGENT_INFO: Record<CodingAgent, { displayName: string; installComma
     displayName: "Codex",
     installCommand: "npm install -g @openai/codex",
     processNames: ["codex"],
+  },
+  antigravity: {
+    displayName: "Antigravity CLI",
+    installCommand: "irm https://antigravity.google/cli/install.ps1 | iex",
+    processNames: ["agy"],
   },
 };
 

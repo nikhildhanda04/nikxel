@@ -15,7 +15,7 @@ import { clientSummarySpec, meetingPrompt, notesPrompt } from "./momPrompts";
 // one-shot headless text-generation prompt, and how to pull plain text back
 // out of whatever format that agent prints.
 //
-// On Windows all three get the prompt on stdin. A transcript is far past the
+// On Windows every agent gets the prompt on stdin. A transcript is far past the
 // 32 KB a Windows command line can carry (8 KB through cmd.exe, which npm's
 // .cmd shims can end up going through), so the Mac's positional-argument
 // shape for opencode and codex can't carry over.
@@ -23,6 +23,8 @@ interface AgentBackend {
   candidatePaths: () => string[];
   whichName: string;
   buildArgs: () => string[];
+  /// What goes on stdin for `prompt`; the prompt itself when absent.
+  stdin?: (prompt: string) => string;
   parseOutput: (out: string) => string | null;
 }
 
@@ -92,6 +94,22 @@ function backendFor(agent: CodingAgent): AgentBackend {
         buildArgs: () => ["exec", "--skip-git-repo-check", "-"],
         parseOutput: out => out,
       };
+    case "antigravity":
+      return {
+        candidatePaths: () => isWin
+          ? [path.join(process.env.LOCALAPPDATA ?? path.join(HOME, "AppData", "Local"), "agy", "bin", "agy.exe")]
+          : [path.join(HOME, ".local/bin/agy"), "/opt/homebrew/bin/agy", "/usr/local/bin/agy"],
+        whichName: "agy",
+        // Antigravity CLI (`agy`), shaped from its docs
+        // (antigravity.google/docs/cli/headless) -- not yet run against a
+        // real install. Plain text on stdin isn't supported, so the prompt
+        // goes in as one stream-json user event (the -p value is ignored in
+        // that mode) and the reply comes back in the "result" event. Tools
+        // needing approval are soft-denied in -p runs, so it can't stall.
+        buildArgs: () => ["-p", "-", "--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"],
+        stdin: prompt => JSON.stringify({ event: "user", message: { content: prompt } }) + "\n",
+        parseOutput: parseAgyStreamJSON,
+      };
   }
 }
 
@@ -107,6 +125,21 @@ function parseOpenCodeNDJSON(text: string): string | null {
     } catch { /* not an event line */ }
   }
   return out === "" ? null : out;
+}
+
+// agy's stream-json output: one event per line, the reply in the final
+// "result" event (its `response`, as in the --output-format json envelope).
+export function parseAgyStreamJSON(text: string): string | null {
+  for (const line of text.split("\n").reverse()) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if ((obj?.event ?? obj?.type) !== "result") continue;
+      const r = obj.response ?? obj.result ?? obj.text;
+      return typeof r === "string" ? r : null;
+    } catch { /* not an event line */ }
+  }
+  return null;
 }
 
 /// Plain text, not a wrapped object: the failure card splits the message on
@@ -323,7 +356,7 @@ export class MOMGenerator {
     const r: RunResult = await Promise.race([
       run(binary, args, {
         cwd: workspace,
-        input: prompt,
+        input: backend.stdin ? backend.stdin(prompt) : prompt,
         timeoutMs: timeout * 1000,
         onStdout: d => { outSoFar += d; },
         onStderr: d => { errSoFar += d; },

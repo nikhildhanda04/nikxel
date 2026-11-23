@@ -51,6 +51,7 @@ export function extraPathDirs(): string[] {
       path.join(local, "Microsoft", "WinGet", "Links"),
       path.join(local, "Programs", "Git", "cmd"),
       path.join(HOME, ".opencode", "bin"),
+      path.join(local, "agy", "bin"),
       path.join(HOME, ".nikxel", "bin"),
       "C:\\Program Files\\Git\\cmd",
       "C:\\Program Files\\nodejs",

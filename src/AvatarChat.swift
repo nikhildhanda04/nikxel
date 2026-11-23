@@ -39,6 +39,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private var hits: [NSRect] = []  // page coordinates, top-left origin
     // Fetched once as the box opens, while the user types; every question reuses it.
     private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
+    private var waSnapshot = ""   // a read of WhatsApp at open time (unread, recent chats, open thread)
     private let feedReady = DispatchGroup()
     private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
 
@@ -71,6 +72,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         feedReady.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             self.feed = CloudSync.projectFeed(get: CloudSync.getter(timeout: 3))
+            self.waSnapshot = AvatarChat.waContextBlock() ?? ""   // read WhatsApp once; every question reuses it
             self.feedReady.leave()
         }
 
@@ -132,7 +134,10 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
                 self.feedReady.wait()
                 let (feed, offline) = self.feed
                 // What Nikxel has learned about the user (names, projects, people) goes first.
-                let context = [NikxelSettings.userContextBlock,
+                // What Nikxel is doing right now and has done today (apps, code, agent asks),
+                // then the WhatsApp read, then the written summaries/notes/projects.
+                let live = (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting)).map { "### right now\n\($0)" } ?? ""
+                let context = [NikxelSettings.userContextBlock, live, self.waSnapshot,
                                ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
                                                  cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
                 // "make a task to …" creates one in ERP, drafted from the same
@@ -201,11 +206,9 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         guard ERP.hasLiveSession() else {
             return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again."
         }
-        var ctx = context
-        if let wa = waContextBlock() { ctx = wa + "\n\n" + ctx }   // pull the open WhatsApp thread when there is one
-        let draftReply: String
+        let draftReply: String   // context already carries the live activity + WhatsApp read
         do {
-            draftReply = try agent.runPrompt(ERP.taskDraftPrompt(request: request, context: ctx, today: today),
+            draftReply = try agent.runPrompt(ERP.taskDraftPrompt(request: request, context: context, today: today),
                                              kind: "erp-task", claudeModel: "haiku", timeout: 30)
         } catch MOMGenerator.MOMError.agentNotFound {
             return "Connect Claude in Settings to use chat."
@@ -225,14 +228,32 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         return line + ". Opening it so you can review and edit."
     }
 
-    /// The WhatsApp thread on screen right now, if the WA browser is up and
-    /// logged in — a best-effort read, no chat switching. nil when there's none.
+    /// A read of WhatsApp for the chat: who's waiting (unread), the recent chats,
+    /// and the thread on screen in full — best-effort, no chat switching, only
+    /// when the WA browser is up and logged in. nil when there's nothing.
     private static func waContextBlock() -> String? {
         guard ChromeBot.isPortOpen(), ChromeWhatsApp.isLoggedIn() else { return nil }
-        let msgs = ChromeWhatsApp.readMessages(count: 12)
-        guard !msgs.isEmpty else { return nil }
-        let who = ChromeWhatsApp.conversationHeader() ?? "a chat"
-        return "### whatsapp · open thread with \(who)\n" + msgs.joined(separator: "\n")
+        var parts: [String] = []
+        let unread = ChromeWhatsApp.unreadChats()
+        if !unread.isEmpty {
+            parts.append("Unread (who's waiting on you):\n" + unread.prefix(15).map {
+                "- \($0.name) (\($0.unread)): \($0.preview.prefix(140))" }.joined(separator: "\n"))
+        }
+        let recent = ChromeWhatsApp.allChatsPreview(limit: 25)
+        if !recent.isEmpty {
+            parts.append("Recent chats (newest first):\n" + recent.map {
+                "- \($0.name): \($0.preview.prefix(140))" }.joined(separator: "\n"))
+        }
+        // readThread (not readMessages) keeps direction, so each line is labelled
+        // by who sent it — otherwise the chat can't tell your words from theirs.
+        let thread = ChromeWhatsApp.readThread()
+        if !thread.isEmpty {
+            let who = ChromeWhatsApp.conversationHeader() ?? "them"
+            let lines = thread.suffix(14).map { "\($0.outgoing ? "You" : who): \($0.text)" }
+            parts.append("Open thread with \(who) (each line is labelled with who sent it):\n" + lines.joined(separator: "\n"))
+        }
+        guard !parts.isEmpty else { return nil }
+        return "### whatsapp\n" + parts.joined(separator: "\n\n")
     }
 
     /// Same markup and CSS as windows/src/renderer/avatarChat.html.
@@ -250,6 +271,12 @@ body{display:flex;flex-direction:column;padding:6px 10px 10px;color:var(--fg);fo
 .msg{max-width:86%;padding:8px 13px;border-radius:18px;white-space:pre-wrap;word-wrap:break-word;-webkit-user-select:text;user-select:text;animation:in .22s ease-out;box-shadow:var(--shade)}
 .bot{align-self:flex-start;background:var(--glass);border:1px solid var(--rim);border-bottom-left-radius:6px}
 .me{align-self:flex-end;background:var(--me);color:var(--me-fg);border-bottom-right-radius:6px}
+.msg.md{white-space:normal}
+.msg.md p{margin:0 0 6px}.msg.md p:last-child{margin:0}
+.msg.md ul,.msg.md ol{margin:4px 0;padding-left:18px}.msg.md li{margin:2px 0}
+.msg.md strong{font-weight:650}.msg.md em{font-style:italic}
+.msg.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--line);padding:1px 4px;border-radius:4px}
+.msg.md .h{display:block;font-weight:650;margin:5px 0 2px}.msg.md .h:first-child{margin-top:0}
 body.flip .bot{align-self:flex-end;border-bottom-left-radius:18px;border-bottom-right-radius:6px}
 body.flip .me{align-self:flex-start;border-bottom-right-radius:18px;border-bottom-left-radius:6px}
 .dots{display:inline-flex;gap:4px;padding:4px 0}
@@ -314,7 +341,28 @@ function typing(label) {
   var s = document.createElement("span"); s.className = "hint"; s.textContent = label; d.appendChild(s);
   return d;
 }
-function settle(d, text) { d.textContent = text; log.scrollTop = log.scrollHeight; }
+// A small, safe markdown subset so replies (bold, bullets, headings, code) read
+// cleanly instead of showing raw ** and - . Everything is escaped first.
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
+function mdInline(s){return esc(s)
+  .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
+  .replace(/`([^`]+)`/g,"<code>$1</code>")
+  .replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>");}
+function md(text){
+  var lines=String(text).split(/\r?\n/),out=[],list=null,para=[];
+  function fp(){ if(para.length){ out.push("<p>"+para.join("<br>")+"</p>"); para=[]; } }
+  function fl(){ if(list){ out.push("<"+list.t+">"+list.i.join("")+"</"+list.t+">"); list=null; } }
+  for(var k=0;k<lines.length;k++){
+    var t=lines[k].trim(), b=t.match(/^[-*]\s+(.*)/), o=t.match(/^\d+[.)]\s+(.*)/), h=t.match(/^#{1,6}\s+(.*)/);
+    if(b){ fp(); if(!list||list.t!=="ul"){fl();list={t:"ul",i:[]};} list.i.push("<li>"+mdInline(b[1])+"</li>"); }
+    else if(o){ fp(); if(!list||list.t!=="ol"){fl();list={t:"ol",i:[]};} list.i.push("<li>"+mdInline(o[1])+"</li>"); }
+    else if(h){ fp(); fl(); out.push('<span class="h">'+mdInline(h[1])+"</span>"); }
+    else if(t===""){ fp(); fl(); }
+    else { fl(); para.push(mdInline(t)); }
+  }
+  fp(); fl(); return out.join("");
+}
+function settle(d, text) { d.className = "msg bot md"; d.innerHTML = md(text); log.scrollTop = log.scrollHeight; }
 function run(text) {
   bubble("me", text);
   var w = typing("thinking…"); busy = true; sync();

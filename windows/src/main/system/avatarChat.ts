@@ -10,6 +10,8 @@ import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
+import { DayLogger } from "./dayLogger";
+import { MeetingDetector } from "../whatsapp/meetingDetector";
 
 /// The chat a single click on the avatar opens (no panel, just bubbles and a field floating beside it): ask about your last two weeks of meetings, days, notes and
 /// projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Port of src/AvatarChat.swift.
@@ -23,12 +25,9 @@ const W = 340, H = 460, gap = 4;
 async function makeERPTask(request: string, context: string, today: Date, agent: MOMGenerator): Promise<string> {
   if (!ERP.isConnected()) return "Connect Forklyft ERP in Nikxel first, then ask again.";
   if (!(await ERP.hasLiveSession())) return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again.";
-  let ctx = context;
-  const wa = await waContextBlock(); // pull the open WhatsApp thread when there is one
-  if (wa) ctx = wa + "\n\n" + ctx;
-  let draftReply: string;
+  let draftReply: string; // context already carries the live activity + WhatsApp read
   try {
-    draftReply = await agent.runPrompt(ERP.taskDraftPrompt(request, ctx, today), "erp-task", "haiku", 30);
+    draftReply = await agent.runPrompt(ERP.taskDraftPrompt(request, context, today), "erp-task", "haiku", 30);
   } catch (e) {
     return e instanceof MOMError && e.kind === "agentNotFound" ? "Connect Claude in Settings to use chat." : "⚠︎ " + (e as Error).message;
   }
@@ -44,15 +43,27 @@ async function makeERPTask(request: string, context: string, today: Date, agent:
   return line + ". Opening it so you can review and edit.";
 }
 
-/// The WhatsApp thread on screen right now, if WA is up and logged in — a
-/// best-effort read, no chat switching. null when there's none.
+/// A read of WhatsApp for the chat: who's waiting (unread), the recent chats,
+/// and the thread on screen in full — best-effort, no chat switching, only when
+/// WA is up and logged in. null when there's nothing.
 async function waContextBlock(): Promise<string | null> {
   try {
     if (!(await ChromeWhatsApp.isLoggedIn())) return null;
-    const msgs = await ChromeWhatsApp.readMessages(12);
-    if (!msgs.length) return null;
-    const who = (await ChromeWhatsApp.conversationHeader()) ?? "a chat";
-    return `### whatsapp · open thread with ${who}\n` + msgs.join("\n");
+    const parts: string[] = [];
+    const unread = await ChromeWhatsApp.unreadChats();
+    if (unread.length) parts.push("Unread (who's waiting on you):\n" + unread.slice(0, 15).map(c => `- ${c.name} (${c.unread}): ${c.preview.slice(0, 140)}`).join("\n"));
+    const recent = await ChromeWhatsApp.allChatsPreview(25);
+    if (recent.length) parts.push("Recent chats (newest first):\n" + recent.map(c => `- ${c.name}: ${c.preview.slice(0, 140)}`).join("\n"));
+    // readThread (not readMessages) keeps direction, so each line is labelled by
+    // who sent it — otherwise the chat can't tell your words from theirs.
+    const thread = await ChromeWhatsApp.readThread();
+    if (thread.length) {
+      const who = (await ChromeWhatsApp.conversationHeader()) ?? "them";
+      const lines = thread.slice(-14).map(m => `${m.outgoing ? "You" : who}: ${m.text}`);
+      parts.push(`Open thread with ${who} (each line is labelled with who sent it):\n` + lines.join("\n"));
+    }
+    if (!parts.length) return null;
+    return "### whatsapp\n" + parts.join("\n\n");
   } catch { return null; }
 }
 
@@ -89,12 +100,16 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
   const history: { q: string; a: string }[] = [];
   // Fetched once as the box opens, while the user types; every question reuses it.
   const feedP = CloudSync.projectFeed(CloudSync.getter(3000));
+  const waP = waContextBlock(); // read WhatsApp once; every question reuses it
 
   ipcMain.handle(`chat:send:${id}`, async (_e, text: string) => {
     const today = new Date();
     const { feed, offline } = await feedP;
-    // What Nikxel has learned about the user (names, projects, people) goes first.
-    const context = [Settings.userContextBlock,
+    // What Nikxel has learned about the user goes first, then what it's doing right
+    // now and has done today, then the WhatsApp read, then the written summaries.
+    const live = DayLogger.current ? "### right now\n" + (await DayLogger.current.liveContextAsync(MeetingDetector.shared.isInMeeting)) : "";
+    const wa = await waP;
+    const context = [Settings.userContextBlock, live, wa ?? "",
       build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
     // "make a task to …" creates one in ERP, drafted from the same
     // meeting/WhatsApp/project context, then opens it to review.

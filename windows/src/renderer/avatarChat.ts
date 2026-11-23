@@ -82,8 +82,34 @@ function typing(label: string): HTMLDivElement {
   return d;
 }
 
+// A small, safe markdown subset so replies (bold, bullets, headings, code) read
+// cleanly instead of showing raw ** and - . Everything is escaped first.
+function esc(s: string): string { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as Record<string, string>)[c]); }
+function mdInline(s: string): string {
+  return esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+}
+function md(text: string): string {
+  const lines = String(text).split(/\r?\n/), out: string[] = [];
+  let list: { t: string; i: string[] } | null = null, para: string[] = [];
+  const fp = () => { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } };
+  const fl = () => { if (list) { out.push("<" + list.t + ">" + list.i.join("") + "</" + list.t + ">"); list = null; } };
+  for (const ln of lines) {
+    const t = ln.trim(), b = t.match(/^[-*]\s+(.*)/), o = t.match(/^\d+[.)]\s+(.*)/), h = t.match(/^#{1,6}\s+(.*)/);
+    if (b) { fp(); if (!list || list.t !== "ul") { fl(); list = { t: "ul", i: [] }; } list.i.push("<li>" + mdInline(b[1]) + "</li>"); }
+    else if (o) { fp(); if (!list || list.t !== "ol") { fl(); list = { t: "ol", i: [] }; } list.i.push("<li>" + mdInline(o[1]) + "</li>"); }
+    else if (h) { fp(); fl(); out.push('<span class="h">' + mdInline(h[1]) + "</span>"); }
+    else if (t === "") { fp(); fl(); }
+    else { fl(); para.push(mdInline(t)); }
+  }
+  fp(); fl(); return out.join("");
+}
+
 function settle(d: HTMLElement, text: string): void {
-  d.textContent = text;
+  d.className = "msg bot md";
+  d.innerHTML = md(text);
   log.scrollTop = log.scrollHeight;
 }
 

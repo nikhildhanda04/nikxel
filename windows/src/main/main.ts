@@ -722,7 +722,7 @@ class NikxelApp {
     // The script waits for this process to exit before it touches anything,
     // so quitting IS the next step.
     this.presentCard({ icon: "⬇️", title: "Updating…",
-      lines: ["Nikxel will quit, rebuild and come back in a moment."], kind: "info", lifetime: 10 });
+      lines: ["Nikxel will quit, rebuild and come back in a few minutes.", "A window shows how far along it is."], kind: "info", lifetime: 10 });
     setTimeout(() => app.quit(), 1400);
   }
 

@@ -246,6 +246,13 @@ $launchExe = ${psq(relaunch.exe)}
 $launchArgs = ${psq(relaunch.args)}
 
 function Log([string]$m) { Add-Content -LiteralPath $log -Value $m -Encoding UTF8 }
+# What the update window shows: the rebuild takes minutes, and with nothing on
+# screen it looked as if Nikxel had closed for good.
+function Say([string]$m) { Write-Host $m; Log ("--- " + $m) }
+$Host.UI.RawUI.WindowTitle = 'Updating Nikxel'
+Write-Host "Updating Nikxel. This takes a few minutes; Nikxel comes back by itself."
+Write-Host "You don't need to do anything, and this window closes when it's done."
+Write-Host ""
 # Runs a native command with its output appended to the log; returns the exit code.
 function Run([string]$exe, [string[]]$argv, [string]$cwd) {
   Push-Location -LiteralPath $cwd
@@ -279,6 +286,7 @@ Log ""
 Log ("=== update started " + (Get-Date))
 if (-not (Test-Path -LiteralPath $repo)) { Log "repo gone: $repo"; exit 1 }
 
+Say "Step 1 of 3: waiting for Nikxel to close..."
 # Wait for the old process to go away (up to 30s), then for Electron's own
 # helper processes from this folder (GPU, renderers), which keep
 # electron.exe and its DLLs locked.
@@ -292,11 +300,12 @@ for ($i = 0; $i -lt 30; $i++) {
   Start-Sleep -Milliseconds 500
 }
 
+Say "Step 2 of 3: downloading the update..."
 $prev = (& $git -C $repo rev-parse HEAD 2>$null)
 Log ("--- before: " + (& $git -C $repo log --oneline -1 2>$null))
 if ((Run $git @('pull', '--ff-only') $repo) -ne 0) {
   # Nothing changed on disk; the old build is still whole.
-  Log "--- pull failed; relaunching the current build"
+  Say "Couldn't download the update. Starting the current version again."
   Relaunch
   exit 1
 }
@@ -304,20 +313,25 @@ Log ("--- after:  " + (& $git -C $repo log --oneline -1 2>$null))
 & $git -C $repo diff --quiet $prev HEAD -- ${psq(appRel + "/package.json")} ${psq(appRel + "/package-lock.json")} 2>$null
 $script:depsChanged = ($LASTEXITCODE -ne 0)
 
+Say "Step 3 of 3: building the new version (the slow part)..."
 if (-not (Build)) {
-  Log "--- update failed; restoring the previous build"
+  Say "The update failed. Putting the previous version back..."
   # --keep rather than --hard: it refuses instead of discarding anything
   # local, and the tree was clean (canAutoUpdate) before the pull.
   if ((Run $git @('reset', '--keep', $prev) $repo) -ne 0) { Log "--- couldn't reset to $prev" }
   $script:depsChanged = $true
   if (Build) { Stamp; Log ("--- restored: " + (& $git -C $repo log --oneline -1 2>$null)) }
-  else { Log "--- restore build failed too; run npm ci and npm run build in $app by hand" }
+  else {
+    Say "Couldn't restore it either. In $app run: npm ci, then npm run build"
+    Read-Host "Press Enter to close"
+  }
   Relaunch
   exit 1
 }
 
 Stamp
 Log "=== update complete"
+Write-Host "Done. Starting Nikxel..."
 Relaunch
 `;
 
@@ -333,8 +347,9 @@ Relaunch
   try {
     // Detached with no handles of ours, so it survives this process quitting.
     const child = spawn("powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", file],
-      { detached: true, stdio: "ignore", windowsHide: true, env: augmentedEnv(), cwd: os.tmpdir() });
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file],
+      // A visible window of its own (detached gives it a new console) shows the progress.
+      { detached: true, stdio: "ignore", windowsHide: false, env: augmentedEnv(), cwd: os.tmpdir() });
     // Before anything can return: an 'error' with no listener would throw
     // and take the main process down with it.
     child.on("error", e => diag("update", `update script failed to start: ${e}`));

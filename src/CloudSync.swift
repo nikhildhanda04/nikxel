@@ -7,8 +7,8 @@ import CryptoKit
 /// (never the transcript or audio), plus the device token as bearer. Never logs, twin, erp.md, raw activity or email.
 /// Mirrors cloudSync.ts.
 enum CloudSync {
-    /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
-    static var backendBase: String { ProcessInfo.processInfo.environment["NIKXEL_BACKEND"] ?? "http://localhost:3001" }
+    /// Production dashboard API; set NIKXEL_BACKEND to point at a local dev server.
+    static var backendBase: String { ProcessInfo.processInfo.environment["NIKXEL_BACKEND"] ?? "https://nikxel-api.viziontools.com" }
     private static var tokenFile: String { NSHomeDirectory() + "/.nikxel/cloud-token" }
 
     static var token: String? {

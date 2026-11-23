@@ -20,8 +20,8 @@ export interface Project { id: string; name: string }
 const SECTION_TYPES: Record<string, string> = { "what you worked on": "other", "meetings": "meeting", "browsing & reading": "research", "erp tasks": "planning" };
 
 export class CloudSync {
-  /// Dev default; set NIKXEL_BACKEND to point elsewhere. No production URL yet.
-  static backendBase(): string { return process.env.NIKXEL_BACKEND || "http://localhost:3001"; }
+  /// Production dashboard API; set NIKXEL_BACKEND to point at a local dev server.
+  static backendBase(): string { return process.env.NIKXEL_BACKEND || "https://nikxel-api.viziontools.com"; }
   static tokenFile(): string { return nikxelPath("cloud-token"); }
 
   static token(): string | null {

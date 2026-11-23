@@ -155,8 +155,8 @@ function html(markdown: string, stats: DayStats | null = null, morning = false, 
 <main>
 ${hero(title, find("summary"), morning, daily)}
 ${stats ? tiles(stats) : ""}
-${body}
 ${daily ? `<div class="nx-send" hidden><p>Cross out anything you don't want to share, then send.</p><button>Send to dashboard</button><button class="nx-prev">Preview what's shared</button><span class="nx-sent"></span></div>` : ""}
+${body}
 ${preview}
 <footer>Written by Nikxel from ${morning ? "this week's daily summaries" : "today's activity"} on this computer. Nothing here left it.</footer>
 </main>

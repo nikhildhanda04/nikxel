@@ -38,6 +38,11 @@ enum PageEdit {
         guard editable(page), let current = try? String(contentsOf: md, encoding: .utf8) else {
             throw edit("This summary can't be edited.")
         }
+        #if NIKXEL_PRIVATE
+        // Owner-only: stat-tile edits are applied directly, before the agent (which
+        // won't insert the raw markers they need). Falls through for anything else.
+        if let note = try PrivateEdits.statEdit(instruction, md: md, current: current, page: page) { return note }
+        #endif
         let transcript = (try? String(contentsOf: transcriptURL, encoding: .utf8)) ?? ""
         let out = try agent.runPrompt(prompt(instruction, current, transcript), kind: "summary-edit", claudeModel: "sonnet")
         guard let split = out.range(of: "\n---\n") else { throw edit("The agent's reply wasn't a summary. Nothing changed.") }

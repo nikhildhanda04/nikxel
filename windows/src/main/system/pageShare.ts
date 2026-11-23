@@ -38,10 +38,14 @@ function token(): string {
 }
 
 /// Goes right before </body>. Marked, so a sent copy goes out without it.
-/// `editable` adds the Edit button (PageEdit) beside Share.
+/// `editable` adds the "tell Nikxel what to change" chat bar (PageEdit).
+/// The inline chat bar docked at the bottom of an editable summary (replaces
+/// the old Edit window). Same markup as chatBar in PageShare.swift.
+const chatBar = String.raw`<div id="nx-chat"><div class="nxc-log" hidden><div class="nxc-head"><button type="button" class="nxc-undo" title="Undo the last change">↺ Undo</button><button type="button" class="nxc-clear" title="Clear the chat">Clear</button></div><div class="nxc-msgs"></div></div><form class="nxc-form"><button type="button" class="nxc-mic" title="Speak" aria-label="Speak"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></button><input class="nxc-in" placeholder="Tell Nikxel what to change…" autocomplete="off"><button class="nxc-send" title="Send" aria-label="Send">↑</button></form></div>`;
+
 export function widget(editable: boolean): string {
   return widgetTemplate.replace("__NIKXEL_TOKEN__", token())
-    .replace("__NIKXEL_EDIT__", editable ? `<button class="nx-btn nx-edit" type="button">Edit</button>` : "");
+    .replace("__NIKXEL_CHAT__", editable ? chatBar : "");
 }
 
 export function strip(html: string): string {
@@ -76,8 +80,17 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
   switch (url.pathname) {
     case "/edit":
       if (!PageEdit.editable(file)) return { error: "This summary can't be edited." };
-      PageEdit.showChat(file);
-      return { ok: true };
+      if (q("undo") === "1") {
+        let ok = false;
+        try { ok = PageEdit.undo(file); } catch { /* reported as nothing to undo */ }
+        return { note: ok ? "Undone — back to before the last change." : "Nothing to undo." };
+      }
+      if (!q("text")?.trim()) return { error: "Nothing to change." };
+      try { return { note: await PageEdit.apply(q("text")!, file) }; } catch (e) { return { error: (e as Error).message }; }
+    case "/mic":
+      // ponytail: the page runs in the user's browser and this server is GET-only, so
+      // Windows has no way to hear it yet; record in a hidden window if people ask for it.
+      return { error: "Voice isn't on Windows yet. Type it instead." };
     case "/task": {
       // A ticked box on a day page. The .md is what tomorrow's summary
       // and the morning card read, so "— done" there drops the task.
@@ -214,8 +227,8 @@ function migrateWidgets(): void {
       if (e.isDirectory()) { walk(full); continue; }
       if (!e.name.toLowerCase().endsWith(".html")) continue;
       const html = readText(full);
-      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxw5-->")) continue;
-      const block = widget(html.includes("nx-edit"));
+      if (!html || !html.includes("<!--nikxel-share-->") || html.includes("<!--nxwa-->")) continue;
+      const block = widget(html.includes("nx-edit") || html.includes("nx-chat"));
       // Replacer function so "$1" inside the block isn't treated specially.
       const out = html.replace(/<!--nikxel-share-->[\s\S]*?<!--\/nikxel-share-->/, () => block);
       try { writeAtomic(full, out); } catch { /* leave the page as it was */ }
@@ -237,13 +250,45 @@ function allowedFile(p: string | null): string | null {
 // MARK: - The button
 
 /// Same markup as src/PageShare.swift.
-const widgetTemplate = String.raw`<!--nikxel-share--><!--nxw5--><div id="nx-share">__NIKXEL_EDIT__<button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+const widgetTemplate = String.raw`<!--nikxel-share--><!--nxwa--><div id="nx-share"><button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
+__NIKXEL_CHAT__
 <style>
 #nx-share{position:fixed;right:20px;bottom:20px;z-index:99;font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1d1d1f}
 #nx-share .nx-btn{background:#1d1d1f;color:#fff;border:0;border-radius:999px;padding:10px 18px;font:inherit;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.18)}
-#nx-share .nx-edit{margin-right:8px;background:#fff;color:#1d1d1f}
+#nx-chat{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(720px,calc(100vw - 32px));z-index:98;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+#nx-chat .nxc-log{max-height:44vh;overflow:auto;margin-bottom:8px;background:rgba(255,255,255,.66);-webkit-backdrop-filter:blur(20px) saturate(1.7);backdrop-filter:blur(20px) saturate(1.7);border:1px solid rgba(0,0,0,.08);border-radius:18px;box-shadow:0 12px 44px rgba(0,0,0,.18)}
+#nx-chat .nxc-log[hidden]{display:none}
+#nx-chat .nxc-head{position:sticky;top:0;display:flex;justify-content:space-between;gap:8px;padding:8px 12px;background:inherit;border-bottom:1px solid rgba(0,0,0,.06)}
+#nx-chat .nxc-head button{border:0;background:none;color:#6e6e73;font:inherit;font-size:12px;cursor:pointer;padding:3px 8px;border-radius:7px}
+#nx-chat .nxc-head button:hover{background:rgba(0,0,0,.06);color:#1d1d1f}
+#nx-chat .nxc-msgs{display:flex;flex-direction:column;gap:8px;padding:12px}
+#nx-chat .nxc-msg{max-width:85%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;font-size:13.5px}
+#nx-chat .nxc-me{align-self:flex-end;background:#1d1d1f;color:#fff;border-bottom-right-radius:5px}
+#nx-chat .nxc-bot{align-self:flex-start;background:rgba(0,0,0,.06);color:#1d1d1f;border-bottom-left-radius:5px}
+#nx-chat .nxc-form{display:flex;align-items:center;gap:4px;padding:5px 5px 5px 8px;background:rgba(255,255,255,.58);-webkit-backdrop-filter:blur(20px) saturate(1.7);backdrop-filter:blur(20px) saturate(1.7);border:1px solid rgba(0,0,0,.1);border-radius:999px;box-shadow:0 8px 30px rgba(0,0,0,.16)}
+#nx-chat .nxc-in{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;color:#1d1d1f;padding:9px 6px}
+#nx-chat .nxc-mic,#nx-chat .nxc-send{width:34px;height:34px;border:0;border-radius:50%;cursor:pointer;flex:none;display:grid;place-items:center}
+#nx-chat .nxc-mic{background:transparent;color:#6e6e73}
+#nx-chat .nxc-mic:hover{background:rgba(0,0,0,.08)}
+#nx-chat .nxc-mic.rec{background:#ff3b30;color:#fff;animation:nxc-pulse 1.3s infinite}
+#nx-chat .nxc-send{background:#5e5ce6;color:#fff;font:17px/1 system-ui}
+#nx-chat .nxc-send:disabled{opacity:.5;cursor:default}
+@keyframes nxc-pulse{0%{box-shadow:0 0 0 0 rgba(255,59,48,.5)}100%{box-shadow:0 0 0 10px rgba(255,59,48,0)}}
+body.nx-has-chat{padding-bottom:104px}
+@media (prefers-color-scheme:dark){
+#nx-chat .nxc-log{background:rgba(28,28,32,.62);border-color:rgba(255,255,255,.1)}
+#nx-chat .nxc-head{border-bottom-color:rgba(255,255,255,.08)}
+#nx-chat .nxc-head button{color:#a0a0a8}
+#nx-chat .nxc-head button:hover{background:rgba(255,255,255,.1);color:#fff}
+#nx-chat .nxc-bot{background:rgba(255,255,255,.12);color:#f5f5f7}
+#nx-chat .nxc-form{background:rgba(36,36,40,.55);border-color:rgba(255,255,255,.14)}
+#nx-chat .nxc-in{color:#f5f5f7}
+#nx-chat .nxc-mic{color:#a0a0a8}
+#nx-chat .nxc-mic:hover{background:rgba(255,255,255,.1)}
+}
+@media print{#nx-chat{display:none}}
 #nx-share .nx-pop{position:absolute;right:0;bottom:52px;width:290px;background:#fff;border-radius:14px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.22)}
 #nx-share .nx-pop[hidden]{display:none}
 #nx-share .nx-copy{width:100%;padding:9px;border:1px solid #d2d2d7;border-radius:9px;background:#f5f5f7;font:inherit;cursor:pointer}
@@ -301,14 +346,94 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     });
   }
   try { if (sessionStorage.getItem("nx-editing")) watch(); } catch (e) {}
-  var edit = root.querySelector(".nx-edit");
-  if (edit) edit.onclick = function () {
-    call("edit").then(function (r) {
-      if (r.error) { pop.hidden = false; say(r.error); return; }
-      try { sessionStorage.setItem("nx-editing", "1"); } catch (e) {}
-      if (!v) watch();
-    });
-  };
+  // Inline "tell Nikxel what to change" bar (replaces the old Edit dialog).
+  // Talks to /edit over the same bridge; the chat log survives the reload that
+  // shows each applied change, via sessionStorage.
+  var chat = document.getElementById("nx-chat");
+  if (chat) {
+    document.body.classList.add("nx-has-chat");
+    var clog = chat.querySelector(".nxc-log"), cmsgs = chat.querySelector(".nxc-msgs"), cin = chat.querySelector(".nxc-in");
+    var csend = chat.querySelector(".nxc-send"), cmic = chat.querySelector(".nxc-mic");
+    var cundo = chat.querySelector(".nxc-undo"), cclear = chat.querySelector(".nxc-clear"), LK = "nx-chatlog";
+    var cbubble = function (role, text) {
+      var d = document.createElement("div"); d.className = "nxc-msg " + (role === "me" ? "nxc-me" : "nxc-bot");
+      d.textContent = text; cmsgs.appendChild(d); clog.hidden = false; clog.scrollTop = clog.scrollHeight; return d;
+    };
+    var cstore = function (role, text) { try { var a = JSON.parse(sessionStorage.getItem(LK) || "[]"); a.push([role, text]); sessionStorage.setItem(LK, JSON.stringify(a.slice(-20))); } catch (e) {} };
+    try { JSON.parse(sessionStorage.getItem(LK) || "[]").forEach(function (m) { cbubble(m[0], m[1]); }); } catch (e) {}
+    var cbusy = false, rec = false;
+    var csync = function () { csend.disabled = cbusy || !cin.value.trim(); cin.disabled = cbusy; cmic.disabled = cbusy; };
+    var creload = function () { setTimeout(function () { location.reload(); }, 600); };
+    var crun = function (text) {
+      cbubble("me", text); cstore("me", text);
+      var w = cbubble("bot", "…"); cbusy = true; csync();
+      call("edit", { text: text }).then(function (r) {
+        var note = (r && (r.note || r.error)) || "Something went wrong.";
+        w.textContent = note; cstore("bot", note); cbusy = false; csync();
+        if (r && r.note) creload();   // applied — reload to show it; the log survives in sessionStorage
+      });
+    };
+    chat.querySelector(".nxc-form").onsubmit = function (e) { e.preventDefault(); var t = cin.value.trim(); if (!t || cbusy) return; cin.value = ""; csync(); crun(t); };
+    cin.oninput = csync;
+    cundo.onclick = function () {
+      if (cbusy) return; cbusy = true; csync();
+      call("edit", { undo: "1" }).then(function (r) {
+        var note = (r && (r.note || r.error)) || "Nothing to undo."; cbubble("bot", note); cstore("bot", note);
+        cbusy = false; csync(); if (r && r.note && r.note.indexOf("Nothing") < 0) creload();
+      });
+    };
+    cclear.onclick = function () { cmsgs.innerHTML = ""; clog.hidden = true; try { sessionStorage.removeItem(LK); } catch (e) {} };
+    // Voice: recorded and transcribed on-device by Nikxel (no audio leaves the machine).
+    cmic.onclick = function () {
+      if (cbusy) return;
+      if (!rec) {
+        call("mic", { do: "start" }).then(function (r) {
+          if (r && r.ok) { rec = true; cmic.classList.add("rec"); cin.placeholder = "Listening… tap the mic to stop"; }
+          else cbubble("bot", (r && r.error) || "Couldn't use the microphone.");
+        });
+        return;
+      }
+      rec = false; cmic.classList.remove("rec"); cin.placeholder = "Tell Nikxel what to change…";
+      cbusy = true; csync();
+      call("mic", { do: "stop" }).then(function (r) {
+        cbusy = false; csync();
+        var heard = (r && r.text) || "";
+        if (heard) { cin.value = (cin.value ? cin.value + " " : "") + heard; cin.focus(); csync(); }
+      });
+    };
+    csync();
+    // On open: a quick hand-drawn arrow from the title down to the chat bar, so
+    // people notice they can edit. Draws in, holds, fades out (~2.5s total).
+    function cHint() {
+      try {
+        var titleEl = document.querySelector(".date") || document.querySelector("h1") || document.querySelector("main");
+        if (!titleEl) return;
+        var tr = titleEl.getBoundingClientRect(), cr = chat.getBoundingClientRect(), NS = "http://www.w3.org/2000/svg";
+        var sx = tr.left, sy = tr.bottom + 4, ex = cr.left + 26, ey = cr.top - 14;
+        var leftX = Math.max(8, Math.min(sx, ex) - 90);    // bow well out into the left gutter
+        var svg = document.createElementNS(NS, "svg");
+        svg.setAttribute("width", innerWidth); svg.setAttribute("height", innerHeight);
+        svg.style.cssText = "position:fixed;inset:0;z-index:97;pointer-events:none";
+        svg.innerHTML = '<defs><marker id="nxc-ah" markerWidth="10" markerHeight="10" refX="6.5" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5e5ce6"/></marker></defs>';
+        var p = document.createElementNS(NS, "path");
+        p.setAttribute("d", "M " + sx + " " + sy + " C " + leftX + " " + (sy + 50) + " " + leftX + " " + (ey - 70) + " " + ex + " " + ey);
+        p.setAttribute("fill", "none"); p.setAttribute("stroke", "#5e5ce6"); p.setAttribute("stroke-width", "3");
+        p.setAttribute("stroke-linecap", "round"); p.setAttribute("marker-end", "url(#nxc-ah)");
+        svg.appendChild(p); document.body.appendChild(svg);
+        var cap = document.createElement("div"); cap.textContent = "Edit anything here";
+        cap.style.cssText = "position:fixed;left:" + ex + "px;top:" + (ey - 46) + "px;z-index:97;pointer-events:none;background:#5e5ce6;color:#fff;font:600 12px/1 system-ui,-apple-system,sans-serif;padding:6px 11px;border-radius:999px;white-space:nowrap;box-shadow:0 6px 20px rgba(94,92,230,.45)";
+        document.body.appendChild(cap);
+        var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches, len = p.getTotalLength();
+        p.style.strokeDasharray = len; p.style.strokeDashoffset = reduce ? 0 : len;
+        if (!reduce) p.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 850, fill: "forwards", easing: "ease-out" });
+        cap.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 400, delay: reduce ? 0 : 500, fill: "both", easing: "ease-out" });
+        setTimeout(function () {
+          [svg, cap].forEach(function (el) { var f = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, fill: "forwards" }); f.onfinish = function () { el.remove(); }; });
+        }, 2500);
+      } catch (e) {}
+    }
+    setTimeout(cHint, 500);   // let layout and fonts settle first
+  }
   document.querySelectorAll("input.nx-todo").forEach(function (b) {
     b.disabled = false;
     b.onchange = function () {

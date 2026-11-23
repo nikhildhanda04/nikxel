@@ -71,6 +71,15 @@ import Foundation
         _ = CloudSync.pushDay(summary: md, day: "d", skip: ["headline"], post: { _, b, _ in hl = b; return Data() })
         check((hl?["headline"] as? String) == "" && (hl?["items"] as? [[String: Any]])?.count == 3, "skip headline blanks it, keeps items")
 
+        // measured stats: owner markers parse to minutes/counts; pushDay carries them, omits when nil
+        let sm = CloudSync.statsFromMarkers("# D\n<!--stat computer=17h 6m-->\n<!--stat coding=14h 2m-->\n<!--stat meetings=3-->")
+        check(sm["computer"] == 1026 && sm["coding"] == 842 && sm["meetings"] == 3, "stat markers -> minutes/counts: \(sm)")
+        check(CloudSync.statMinutes("45m") == 45 && CloudSync.statMinutes("2h") == 120 && CloudSync.statMinutes("9h 7m split") == 547, "statMinutes parses h/m")
+        var ws: [String: Any]?
+        _ = CloudSync.pushDay(summary: md, day: "d", skip: [], stats: ["coding": 842], post: { _, b, _ in ws = b; return Data() })
+        check((ws?["stats"] as? [String: Int]) == ["coding": 842], "pushDay includes stats")
+        check(sent?["stats"] == nil, "pushDay omits stats when none")
+
         let mom = "# Meeting — 21 Nov\n\n## Summary\nShipped it.\n\n## Client Summary\nDear client, all good.\n### Next\n- more\n\n## Action Items\n- [ ] Ravi: fix login"
         let sb = CloudSync.meetingShareBody(mom)
         check(!sb.contains("Client Summary") && !sb.contains("Dear client") && !sb.contains("### Next"), "share body drops the client summary: \(sb)")

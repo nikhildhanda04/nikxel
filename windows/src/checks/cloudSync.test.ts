@@ -42,7 +42,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.deepEqual([est[3].minutes, est[3].what], [0, "Raise SLA to 2h — In Progress"]);
 
   let calls = 0;
-  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => { calls++; return null; }), false);
+  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), null, async () => { calls++; return null; }), false);
   assert.equal(calls, 0); // no token: no-op
 
   assert.equal(await CS.pair("123456", async () => null), false);
@@ -58,7 +58,7 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.ok(!fs.existsSync(CS.projectsFile()), "pair clears the previous project cache");
 
   let sent: any, bearer: any;
-  const r = await CS.pushDay(md, "2026-11-20", new Set([items[0].id]), async (_p: string, b: any, t: any) => { sent = b; bearer = t; return {}; });
+  const r = await CS.pushDay(md, "2026-11-20", new Set([items[0].id]), null, async (_p: string, b: any, t: any) => { sent = b; bearer = t; return {}; });
   assert.equal(r, true);
   assert.equal(bearer, "tok123");
   assert.deepEqual(Object.keys(sent).sort(), ["date", "headline", "items", "kind"]);
@@ -66,15 +66,24 @@ test("CloudSync: dayItems, stable id, no-token no-op, pair, pushDay body", async
   assert.equal(sent.items.length, 2);
   assert.ok(!sent.items.some((i: any) => i.id === items[0].id));
   assert.deepEqual(Object.keys(sent.items[0]).sort(), ["details", "id", "minutes", "project", "section", "type", "what"]);
-  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), async () => null), false);
+  assert.equal(await CS.pushDay(md, "2026-11-20", new Set(), null, async () => null), false);
   const all = new Set(items.map((i: any) => i.id));
-  assert.equal(await CS.pushDay(md, "d", all, async () => ({})), false, "all skipped, never sent");
+  assert.equal(await CS.pushDay(md, "d", all, null, async () => ({})), false, "all skipped, never sent");
   let e: any, h: any;
-  assert.equal(await CS.pushDay(md, "d", all, async (_p: string, b: any) => { e = b; return {}; }, true), true);
+  assert.equal(await CS.pushDay(md, "d", all, null, async (_p: string, b: any) => { e = b; return {}; }, true), true);
   assert.deepEqual(e.items, []);
-  await CS.pushDay(md, "d", new Set(["headline"]), async (_p: string, b: any) => { h = b; return {}; });
+  await CS.pushDay(md, "d", new Set(["headline"]), null, async (_p: string, b: any) => { h = b; return {}; });
   assert.equal(h.headline, "");
   assert.equal(h.items.length, 3);
+
+  // measured stats: owner markers parse to minutes/counts; pushDay carries them, omits when none
+  const sm = CS.statsFromMarkers("# D\n<!--stat computer=17h 6m-->\n<!--stat coding=14h 2m-->\n<!--stat meetings=3-->");
+  assert.deepEqual(sm, { computer: 1026, coding: 842, meetings: 3 });
+  assert.deepEqual([CS.statMinutes("45m"), CS.statMinutes("2h"), CS.statMinutes("9h 7m split")], [45, 120, 547]);
+  let ws: any;
+  await CS.pushDay(md, "d", new Set(), { coding: 842 }, async (_p: string, b: any) => { ws = b; return {}; });
+  assert.deepEqual(ws.stats, { coding: 842 });
+  assert.equal(sent.stats, undefined); // earlier push had no stats
 
   const mom = "# Meeting — 21 Nov\n\n## Summary\nShipped it.\n\n## Client Summary\nDear client, all good.\n### Next\n- more\n\n## Action Items\n- [ ] Ravi: fix login";
   const sb = CS.meetingShareBody(mom);

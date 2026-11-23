@@ -71,14 +71,39 @@ enum CloudSync {
     }
 
     /// Sends the day (minus `skip` ids; "headline" drops the headline) as kind "day". False on no token, no items (unless allowEmpty: retracts a sent day) or failed POST.
-    static func pushDay(summary: String, day: String, skip: Set<String>, allowEmpty: Bool = false, post: Poster = httpPost) -> Bool {
+    static func pushDay(summary: String, day: String, skip: Set<String>, stats: [String: Int]? = nil, allowEmpty: Bool = false, post: Poster = httpPost) -> Bool {
         guard let tok = token else { return false }
         let (headline, all) = dayItems(fromDailySummary: summary)
         let items = all.filter { !skip.contains($0.id) }.map {
             ["id": $0.id, "section": $0.section, "what": $0.what, "type": $0.type, "minutes": $0.minutes, "details": $0.details, "project": $0.project] as [String: Any]
         }
         guard !items.isEmpty || allowEmpty else { return false }
-        return post("/api/summaries", ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items], tok) != nil
+        var body: [String: Any] = ["kind": "day", "date": day, "headline": skip.contains("headline") ? "" : headline, "items": items]
+        if let stats = stats, !stats.isEmpty { body["stats"] = stats } // measured tiles, so the dashboard matches the day page
+        return post("/api/summaries", body, tok) != nil
+    }
+
+    /// Minutes from an owner stat value like "17h 6m", "14h", "45m" (nil if none).
+    static func statMinutes(_ s: String) -> Int? {
+        let ns = s as NSString, r = NSRange(location: 0, length: ns.length)
+        func g(_ p: String) -> Int { (try! NSRegularExpression(pattern: p, options: .caseInsensitive)).firstMatch(in: s, range: r).map { Int(ns.substring(with: $0.range(at: 1))) ?? 0 } ?? 0 }
+        let total = g(#"(\d+)\s*h"#) * 60 + g(#"(\d+)\s*m"#)
+        return total > 0 ? total : nil
+    }
+
+    /// Owner `<!--stat key=value-->` tile overrides (coding/computer in minutes,
+    /// meetings/messages as counts) — sent so the dashboard tiles match the page's.
+    static func statsFromMarkers(_ md: String) -> [String: Int] {
+        var out: [String: Int] = [:]
+        let ns = md as NSString
+        let re = try! NSRegularExpression(pattern: #"<!--stat\s+(coding|computer|meetings|messages)\s*=\s*([^>]*?)-->"#, options: .caseInsensitive)
+        for mt in re.matches(in: md, range: NSRange(location: 0, length: ns.length)) {
+            let key = ns.substring(with: mt.range(at: 1)).lowercased()
+            let val = ns.substring(with: mt.range(at: 2)).trimmingCharacters(in: .whitespaces)
+            if key == "meetings" || key == "messages" { if let n = Int(val) { out[key] = n } }
+            else if let m = statMinutes(val) { out[key] = m }
+        }
+        return out
     }
 
     /// Blocking GET (callers are off the main thread). Returns the 2xx body, nil on any failure.

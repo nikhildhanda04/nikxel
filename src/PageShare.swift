@@ -13,6 +13,7 @@ import Network
 enum PageShare {
     static let port: UInt16 = 47120
     private static let queue = DispatchQueue(label: "nikxel.share")
+    private static let ymd: DateFormatter = { let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"; return f }()
     private static var listener: NWListener?
 
     // Voice input for the inline chat bar: recorded and transcribed on-device,
@@ -220,9 +221,18 @@ enum PageShare {
             let skip = (q("skip") ?? "").split(separator: ",").map(String.init)
             let resend = FileManager.default.fileExists(atPath: sentURL.path)
             if !resend, CloudSync.dayItems(fromDailySummary: md).items.allSatisfy({ skip.contains($0.id) }) { return ["error": "Nothing left to send."] }
+            // Measured tiles so the dashboard shows the same numbers as this page:
+            // the day's stats, with any owner <!--stat--> marker overriding them.
+            var stats = CloudSync.statsFromMarkers(md)
+            if let d = Self.ymd.date(from: stem), let s = DayLogger.current?.dayStats(for: d) {
+                if stats["computer"] == nil, s.activeSeconds >= 60 { stats["computer"] = Int((s.activeSeconds / 60).rounded()) }
+                if stats["coding"] == nil, s.codingSeconds >= 60 { stats["coding"] = Int((s.codingSeconds / 60).rounded()) }
+                if stats["meetings"] == nil, s.meetings > 0 { stats["meetings"] = s.meetings }
+                if stats["messages"] == nil, s.messages > 0 { stats["messages"] = s.messages }
+            }
             // pushDay blocks for up to 20s; keep the listener free meanwhile.
             DispatchQueue.global().async {
-                guard CloudSync.pushDay(summary: md, day: stem, skip: Set(skip), allowEmpty: resend) else { return later(["error": "Couldn't reach the dashboard. Try again."]) }
+                guard CloudSync.pushDay(summary: md, day: stem, skip: Set(skip), stats: stats.isEmpty ? nil : stats, allowEmpty: resend) else { return later(["error": "Couldn't reach the dashboard. Try again."]) }
                 if let data = try? JSONSerialization.data(withJSONObject: ["skip": skip, "sentAt": Date().timeIntervalSince1970] as [String: Any]) {
                     try? data.write(to: sentURL, options: .atomic)
                 }

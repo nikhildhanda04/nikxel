@@ -14,6 +14,7 @@ import * as ERP from "./erp";
 import { NotePage } from "../recording/notePage";
 import { DayPage } from "./dayPage";
 import { CloudSync } from "./cloudSync";
+import { DayLogger } from "./dayLogger";
 import * as ProjectShare from "./projectShare";
 
 /// The Share button on summary pages. The page is a local file, so it can't
@@ -165,7 +166,16 @@ async function handle(url: URL): Promise<Record<string, unknown>> {
       const skip = (q("skip") ?? "").split(",").filter(Boolean);
       const resend = fs.existsSync(sentFile);
       if (!resend && CloudSync.dayItems(md).items.every(i => skip.includes(i.id))) return { error: "Nothing left to send." };
-      if (!(await CloudSync.pushDay(md, stem, new Set(skip), undefined, resend))) return { error: "Couldn't reach the dashboard. Try again." };
+      // Measured tiles so the dashboard shows the same numbers as this page.
+      const stats = CloudSync.statsFromMarkers(md);
+      const s = DayLogger.current?.dayStats(new Date(stem + "T00:00"));
+      if (s) {
+        if (stats.computer === undefined && s.activeSeconds >= 60) stats.computer = Math.round(s.activeSeconds / 60);
+        if (stats.coding === undefined && s.codingSeconds >= 60) stats.coding = Math.round(s.codingSeconds / 60);
+        if (stats.meetings === undefined && s.meetings > 0) stats.meetings = s.meetings;
+        if (stats.messages === undefined && s.messages > 0) stats.messages = s.messages;
+      }
+      if (!(await CloudSync.pushDay(md, stem, new Set(skip), Object.keys(stats).length ? stats : null, undefined, resend))) return { error: "Couldn't reach the dashboard. Try again." };
       try { writeAtomic(sentFile, JSON.stringify({ skip, sentAt: Date.now() / 1000 })); } catch { /* sent anyway */ }
       return { ok: true };
     }

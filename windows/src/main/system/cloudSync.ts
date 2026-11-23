@@ -71,13 +71,35 @@ export class CloudSync {
   }
 
   /// Sends the day (minus `skip` ids; "headline" drops the headline) as kind "day". False on no token, no items (unless allowEmpty: retracts a sent day) or failed POST.
-  static async pushDay(summary: string, day: string, skip: Set<string>, post: Poster = CloudSync.httpPost, allowEmpty = false): Promise<boolean> {
+  static async pushDay(summary: string, day: string, skip: Set<string>, stats: Record<string, number> | null = null, post: Poster = CloudSync.httpPost, allowEmpty = false): Promise<boolean> {
     const tok = CloudSync.token();
     if (!tok) return false;
     const { headline, items: all } = CloudSync.dayItems(summary);
     const items = all.filter((i) => !skip.has(i.id));
     if (items.length === 0 && !allowEmpty) return false;
-    return (await post("/api/summaries", { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items }, tok)) !== null;
+    const body: Record<string, unknown> = { kind: "day", date: day, headline: skip.has("headline") ? "" : headline, items };
+    if (stats && Object.keys(stats).length) body.stats = stats; // measured tiles, so the dashboard matches the day page
+    return (await post("/api/summaries", body, tok)) !== null;
+  }
+
+  /// Minutes from an owner stat value like "17h 6m", "14h", "45m" (null if none).
+  static statMinutes(s: string): number | null {
+    const h = /(\d+)\s*h/i.exec(s), m = /(\d+)\s*m/i.exec(s);
+    const total = (h ? +h[1] : 0) * 60 + (m ? +m[1] : 0);
+    return total > 0 ? total : null;
+  }
+
+  /// Owner `<!--stat key=value-->` tile overrides (coding/computer in minutes,
+  /// meetings/messages as counts) — sent so the dashboard tiles match the page's.
+  static statsFromMarkers(md: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    const re = /<!--stat\s+(coding|computer|meetings|messages)\s*=\s*([^>]*?)-->/gi;
+    for (let m = re.exec(md); m; m = re.exec(md)) {
+      const key = m[1].toLowerCase(), val = m[2].trim();
+      if (key === "meetings" || key === "messages") { const n = parseInt(val, 10); if (Number.isFinite(n)) out[key] = n; }
+      else { const mins = CloudSync.statMinutes(val); if (mins !== null) out[key] = mins; }
+    }
+    return out;
   }
 
   /// httpGet with its own timeout: the chat box's feed fetch gives up after a few seconds (the cache covers it).

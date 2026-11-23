@@ -389,7 +389,9 @@ const ZERO: Rect = { x: 0, y: 0, w: 0, h: 0 };
 
 interface ReminderBubble { id: string; title: string; addedAt: number; opacity: number; hitRect: Rect }
 let reminderBubbles: ReminderBubble[] = [];
-const reminderBubbleLifetime = 30;
+const reminderBubbleLifetime = 10;
+// Every card goes after 10 s unattended, errors and questions too.
+const cardMaxLifetime = 10;
 const reminderFadeOut = 0.4;
 const reminderFadeIn = 0.3;
 
@@ -547,6 +549,21 @@ function easeOutBounce(x: number): number {
 const fade = (v: number, target: number, step: number) =>
   target > v ? Math.min(target, v + step) : target < v ? Math.max(target, v - step) : v;
 
+// Let clicks fall through to apps behind us whenever the cursor isn't on
+// Nikxel or one of the bubbles. Also run on every cursor message, not only
+// from the frame loop: Windows can pause requestAnimationFrame, and then the
+// window stayed click-through over Nikxel and its cards.
+function updateInteractive(): void {
+  const nowInteractive = localDragging || currentState === "dragging"
+    || hitTestReminderBubble(pointer) !== null
+    || hitTestCard(pointer)
+    || hitTestAvatar(pointer);
+  if (nowInteractive !== interactive) {
+    interactive = nowInteractive;
+    post({ type: "interactive", on: interactive });
+  }
+}
+
 function tick(): void {
   const t = now();
   // Clamp the step after a hidden spell (rAF doesn't run while hidden).
@@ -556,16 +573,7 @@ function tick(): void {
   // Always face the cursor.
   if (currentState !== "dragging") facingRight = pointer.x > AC.x;
 
-  // Let clicks fall through to apps behind us whenever the cursor isn't on
-  // Nikxel or one of the bubbles.
-  const nowInteractive = localDragging || currentState === "dragging"
-    || hitTestReminderBubble(pointer) !== null
-    || hitTestCard(pointer)
-    || hitTestAvatar(pointer);
-  if (nowInteractive !== interactive) {
-    interactive = nowInteractive;
-    post({ type: "interactive", on: interactive });
-  }
+  updateInteractive();
 
   // Overheat decay (prune old keystrokes)
   keyTimestamps = keyTimestamps.filter(k => t - k < wpmWindow);
@@ -661,14 +669,14 @@ function tick(): void {
 
   if (card) {
     const age = t - card.addedAt;
-    // A null lifetime means "stay until clicked" -- used by errors and questions.
-    const finite = card.lifetime !== null;
-    const life = card.lifetime ?? Infinity;
+    const life = Math.min(card.lifetime ?? Infinity, cardMaxLifetime);
+    // The pointer on a card holds it: the 10 s only runs while nobody's at it.
+    if (age > cardFadeIn && hitTestCard(pointer)) card.addedAt = t - cardFadeIn;
     let target: number;
     if (age < cardFadeIn) target = age / cardFadeIn;
-    else if (finite && age > life - cardFadeOut) target = Math.max(0, (life - age) / cardFadeOut);
+    else if (age > life - cardFadeOut) target = Math.max(0, (life - age) / cardFadeOut);
     else target = 1;
-    if (finite && age > life) removeCard(true);
+    if (age > life) removeCard(true);
     else card.opacity = target;
   }
 
@@ -1368,6 +1376,7 @@ bridge.onMessage(raw => {
       break;
     case "cursor":
       pointer = { x: m.x, y: m.y };
+      updateInteractive();
       break;
     case "geom":
       geom = m.geom;

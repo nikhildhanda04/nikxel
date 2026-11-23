@@ -43,6 +43,10 @@ import { WhatsAppActivityLogger } from "./whatsapp/whatsAppActivityLogger";
 /// Port of NikxelApp.swift: starts every watcher, owns the tray menu (the Mac
 /// menu-bar item), and routes events between modules and the avatar.
 
+// Chromium stops painting a window it thinks is covered (a maximised app under
+// it, a locked screen), and missed the topmost, see-through avatar coming back.
+app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+
 // One Nikxel at a time: a second launch (Start menu while it's already in the
 // tray) just brings the avatar back.
 if (!app.requestSingleInstanceLock()) {

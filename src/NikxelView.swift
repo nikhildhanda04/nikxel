@@ -101,7 +101,8 @@ class NikxelView: NSView, StateMachineDelegate {
     }
     private var reminderBubbles: [ReminderBubble] = []
     var onReminderTapped: ((String) -> Void)?
-    private let reminderBubbleLifetime: TimeInterval = 30
+    private let cardMaxLifetime: TimeInterval = 10
+    private let reminderBubbleLifetime: TimeInterval = 10
     private let reminderFadeOut: TimeInterval = 0.4
     private let reminderFadeIn: TimeInterval = 0.3
 
@@ -132,7 +133,7 @@ class NikxelView: NSView, StateMachineDelegate {
         let lines: [String]
         let bulleted: Bool
         let kind: CardKind
-        let addedAt: TimeInterval
+        var addedAt: TimeInterval
         let lifetime: TimeInterval
         let action: (() -> Void)?
         /// Answers drawn on the card, in place of a modal dialog. First is primary.
@@ -468,6 +469,11 @@ class NikxelView: NSView, StateMachineDelegate {
                 || hitTestCard(at: viewPt)
                 || hitTestAvatar(at: viewPt)
             win.ignoresMouseEvents = !interactive
+            // The pointer on a card holds it: the 10 s only runs while nobody's at it.
+            if var c = card, c.opacity > 0.05, c.hitRect.contains(viewPt), now - c.addedAt > cardFadeIn {
+                c.addedAt = now - cardFadeIn
+                card = c
+            }
         }
 
         // Overheat decay (prune old keystrokes)
@@ -601,16 +607,18 @@ class NikxelView: NSView, StateMachineDelegate {
 
         if var c = card {
             let age = now - c.addedAt
+            // Every card goes after 10 s unattended, errors and questions too.
+            let life = min(c.lifetime, cardMaxLifetime)
             // A non-finite lifetime means "stay until clicked" -- used by errors.
             let target: CGFloat
             if age < cardFadeIn {
                 target = CGFloat(age / cardFadeIn)
-            } else if c.lifetime.isFinite && age > c.lifetime - cardFadeOut {
-                target = max(0, CGFloat((c.lifetime - age) / cardFadeOut))
+            } else if age > life - cardFadeOut {
+                target = max(0, CGFloat((life - age) / cardFadeOut))
             } else {
                 target = 1
             }
-            if c.lifetime.isFinite && age > c.lifetime {
+            if age > life {
                 card = nil
                 needsDisplay = true
             } else if abs(c.opacity - target) > 0.001 {

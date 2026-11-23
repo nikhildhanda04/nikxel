@@ -17,6 +17,16 @@ class AudioRecorder: NSObject {
     weak var delegate: AudioRecorderDelegate?
     private var stream: SCStream?
     private var streamOutput: AudioStreamOutput?
+    /// Kept so a stream macOS stops mid-meeting (a phone call or headset taking
+    /// over the audio device) can be restarted onto the same file.
+    private var filter: SCContentFilter?
+    private var config: SCStreamConfiguration?
+    private let audioQueue = DispatchQueue(label: "nikxel.audio")
+    /// Frames written to the system track; any shortfall against the wall clock
+    /// is filled with silence so it stays aligned with the mic and Meet's speakers.
+    private var sysFrames: Int64 = 0
+    private var lastSampleAt = Date()
+    private var watchdog: DispatchSourceTimer?
     // Write raw Float32 interleaved via ExtAudioFile to avoid AVAudioFile format mismatch
     private var extAudioFile: ExtAudioFileRef?
     private var sysURL: URL?     // raw system audio capture
@@ -73,6 +83,7 @@ class AudioRecorder: NSObject {
     func stop() {
         guard isRecording else { return }
         isRecording = false
+        watchdog?.cancel(); watchdog = nil
         let sysURL = self.sysURL
         let micURL = self.micURL
         let finalURL = self.outputURL
@@ -242,9 +253,11 @@ class AudioRecorder: NSObject {
             output.recorder = self
             streamOutput = output
 
-            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-            try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "nikxel.audio"))
-            try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "nikxel.vid"))
+            self.filter = filter
+            self.config = config
+            audioQueue.sync { self.sysFrames = 0 }
+            startedAt = nil
+            let stream = try makeStream(filter: filter, config: config)
             self.stream = stream
 
             try await stream.startCapture()
@@ -256,6 +269,8 @@ class AudioRecorder: NSObject {
             }
             isRecording = true
             startedAt = Date()
+            lastSampleAt = Date()
+            startWatchdog()
             DispatchQueue.main.async { [weak self] in self?.delegate?.recorderDidStart() }
         } catch {
             print("AudioRecorder error: \(error)")
@@ -263,13 +278,80 @@ class AudioRecorder: NSObject {
         }
     }
 
+    private func makeStream(filter: SCContentFilter, config: SCStreamConfiguration) throws -> SCStream {
+        let stream = SCStream(filter: filter, configuration: config, delegate: self)
+        try stream.addStreamOutput(streamOutput!, type: .audio, sampleHandlerQueue: audioQueue)
+        try stream.addStreamOutput(streamOutput!, type: .screen, sampleHandlerQueue: DispatchQueue(label: "nikxel.vid"))
+        return stream
+    }
+
+    /// No system audio for 4 s means the stream died quietly (macOS doesn't
+    /// always report it), so start a fresh one. Retries every 4 s until it takes.
+    private func startWatchdog() {
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 2, repeating: 2)
+        t.setEventHandler { [weak self] in
+            guard let self = self, self.isRecording, Date().timeIntervalSince(self.lastSampleAt) > 4 else { return }
+            self.restartStream(why: "no system audio for 4 s")
+        }
+        t.resume()
+        watchdog = t
+    }
+
+    private func restartStream(why: String) {
+        guard isRecording, let filter = filter, let config = config else { return }
+        lastSampleAt = Date()
+        cblog("AudioRecorder: restarting system audio (\(why))")
+        let old = stream
+        Task { [weak self] in
+            try? await old?.stopCapture()
+            guard let self = self, self.isRecording else { return }
+            do {
+                let s = try self.makeStream(filter: filter, config: config)
+                try await s.startCapture()
+                guard self.isRecording else { try? await s.stopCapture(); return }
+                self.stream = s
+                cblog("AudioRecorder: system audio restarted")
+            } catch {
+                cblog("AudioRecorder: system audio restart failed: \(error)")
+            }
+        }
+    }
+
+    /// On audioQueue. Writes `frames` of silence in 1 s blocks.
+    private func writeSilence(_ ef: ExtAudioFileRef, frames: Int64) {
+        var left = frames
+        var zeros = [Float](repeating: 0, count: 48000)
+        while left > 0 {
+            let n = Int(min(left, 48000))
+            zeros.withUnsafeMutableBufferPointer { z in
+                let abl = AudioBufferList.allocate(maximumBuffers: 2)
+                abl.count = 2
+                for i in 0..<2 {
+                    abl[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(n * 4), mData: UnsafeMutableRawPointer(z.baseAddress!))
+                }
+                ExtAudioFileWrite(ef, UInt32(n), abl.unsafeMutablePointer)
+                abl.unsafeMutablePointer.deallocate()
+            }
+            left -= Int64(n)
+        }
+        sysFrames += frames
+    }
+
     fileprivate func handleAudio(buffer: CMSampleBuffer) {
         guard let ef = extAudioFile else { return }
+        lastSampleAt = Date()
         guard let fmt = CMSampleBufferGetFormatDescription(buffer) else { return }
         guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee else { return }
 
         let fc = CMSampleBufferGetNumSamples(buffer)
         guard fc > 0 else { return }
+
+        // A gap of half a second or more (the stream was down) becomes silence.
+        if let started = startedAt {
+            let due = Int64(Date().timeIntervalSince(started) * 48000) - Int64(fc)
+            if due - sysFrames >= 24000 { writeSilence(ef, frames: due - sysFrames) }
+        }
 
         guard let block = CMSampleBufferGetDataBuffer(buffer) else { return }
         var len: Int = 0
@@ -319,6 +401,7 @@ class AudioRecorder: NSObject {
                 abl.unsafeMutablePointer.deallocate()
             }
         }
+        sysFrames += Int64(fc)
     }
 
     private func makeOutputURL() -> URL {
@@ -333,6 +416,16 @@ class AudioRecorder: NSObject {
 
     private func err(_ msg: String) -> Error {
         NSError(domain: "AudioRecorder", code: 1, userInfo: [NSLocalizedDescriptionKey: msg])
+    }
+}
+
+extension AudioRecorder: SCStreamDelegate {
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        cblog("AudioRecorder: system audio stopped by macOS: \(error.localizedDescription)")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, stream === self.stream else { return }
+            self.restartStream(why: "stopped by macOS")
+        }
     }
 }
 

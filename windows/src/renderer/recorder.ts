@@ -144,6 +144,9 @@ interface Session {
   micBase: number;
   micSrc: MediaStreamAudioSourceNode | null;
   micStream: MediaStream | null;
+  sysSrc: MediaStreamAudioSourceNode;
+  /// What the system-audio source feeds (the sys tap, or the Notes mix gain).
+  sysDest: AudioNode;
 }
 
 let session: Session | null = null;
@@ -202,7 +205,7 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
       api.failed({ stage: "system", name: "NoAudioTrack", message: "Windows didn't share any system audio." });
       return;
     }
-    sys.getAudioTracks()[0].addEventListener("ended", () => api.log("system audio track ended"));
+    watchSys(sys);
 
     // Mic capture runs in parallel. Failure to start is non-fatal --
     // recording continues with system audio only.
@@ -236,11 +239,13 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     }
 
     let micBase = 1;
+    let sysDest!: AudioNode;
     if (opts.mode === "notes") {
       const mixTap = makeTap(ctx, "mix", sink);
       const sysGain = ctx.createGain();
       sysGain.gain.value = MIX_SYS_GAIN;
       sysSrc.connect(sysGain).connect(mixTap.node);
+      sysDest = sysGain;
       nodes.push(sysGain);
       if (micGain) { micBase = MIX_MIC_GAIN; micGain.connect(mixTap.node); }
       taps.push(mixTap);
@@ -248,6 +253,7 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
       // Separate tracks for per-speaker transcription.
       const sysTap = makeTap(ctx, "sys", sink);
       sysSrc.connect(sysTap.node);
+      sysDest = sysTap.node;
       taps.push(sysTap);
       if (micGain) {
         const micTap = makeTap(ctx, "mic", sink);
@@ -259,7 +265,7 @@ async function start(opts: { mode: "notes" | "meeting"; micMuted: boolean }): Pr
     // with the system-audio one.
     if (micGain) micGain.gain.value = muted ? 0 : micBase;
 
-    session = { ctx, streams, taps, nodes, micGain, micBase, micSrc, micStream: mic };
+    session = { ctx, streams, taps, nodes, micGain, micBase, micSrc, micStream: mic, sysSrc, sysDest };
     api.started({ tracks: taps.map(t => t.track), inputRate: ctx.sampleRate });
     if (stopRequested) void stop();
   } catch (e) {
@@ -307,6 +313,32 @@ async function followMic(why: string): Promise<void> {
     following = false;
   }
 }
+const watchSys = (sys: MediaStream) =>
+  sys.getAudioTracks()[0]?.addEventListener("ended", () => { api.log("system audio track ended"); void followSys(1); });
+
+/// System audio that ends mid-meeting (an output device change) is picked up again on the
+/// same tap, so the rest of the meeting still has the other side. The tap records silence
+/// for the moment there's none, keeping the timeline aligned with the mic.
+async function followSys(attempt: number): Promise<void> {
+  const s = session;
+  if (!s) return;
+  try {
+    const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    for (const v of sys.getVideoTracks()) { v.stop(); sys.removeTrack(v); }
+    if (session !== s || sys.getAudioTracks().length === 0) { stopStreams([sys]); return; }
+    try { s.sysSrc.disconnect(); } catch { /* already gone */ }
+    s.sysSrc = s.ctx.createMediaStreamSource(sys);
+    s.sysSrc.connect(s.sysDest);
+    s.streams.push(sys);
+    s.nodes.push(s.sysSrc);
+    watchSys(sys);
+    api.log("system audio restarted");
+  } catch (e) {
+    api.log(`system audio restart ${attempt} failed: ${errInfo(e).message}`);
+    if (attempt < 5) setTimeout(() => { void followSys(attempt + 1); }, 1000);
+  }
+}
+
 navigator.mediaDevices.addEventListener("devicechange", () => { void followMic("device change"); });
 
 async function stop(): Promise<void> {

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, Rectangle, screen } from "electron";
+import { BrowserWindow, ipcMain, Rectangle, screen, shell } from "electron";
 import * as path from "path";
 import { cblog } from "../core/diag";
 import { Settings } from "../core/settings";
@@ -8,6 +8,8 @@ import { Transcriber } from "../recording/transcriber";
 import { wavHeader } from "../recording/wavWriter";
 import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
 import { CloudSync } from "./cloudSync";
+import * as ERP from "./erp";
+import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 
 /// The chat a single click on the avatar opens (no panel, just bubbles and a field floating beside it): ask about your last two weeks of meetings, days, notes and
 /// projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Port of src/AvatarChat.swift.
@@ -15,6 +17,44 @@ import { CloudSync } from "./cloudSync";
 let current: BrowserWindow | null = null;
 let seq = 0;
 const W = 340, H = 460, gap = 4;
+
+/// Draft an ERP task from the chat request plus context, create it, and open the
+/// record to review — the chat-side twin of the summary's Assign button.
+async function makeERPTask(request: string, context: string, today: Date, agent: MOMGenerator): Promise<string> {
+  if (!ERP.isConnected()) return "Connect Forklyft ERP in Nikxel first, then ask again.";
+  if (!(await ERP.hasLiveSession())) return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again.";
+  let ctx = context;
+  const wa = await waContextBlock(); // pull the open WhatsApp thread when there is one
+  if (wa) ctx = wa + "\n\n" + ctx;
+  let draftReply: string;
+  try {
+    draftReply = await agent.runPrompt(ERP.taskDraftPrompt(request, ctx, today), "erp-task", "haiku", 30);
+  } catch (e) {
+    return e instanceof MOMError && e.kind === "agentNotFound" ? "Connect Claude in Settings to use chat." : "⚠︎ " + (e as Error).message;
+  }
+  const draft = ERP.parseTaskDraft(draftReply);
+  if (!draft) return "I couldn't turn that into a task. Try naming what to do, e.g. “make a task to send Piyush the invoice by Friday”.";
+  const r = await ERP.createTaskFromDraft(draft);
+  if (!r.url) return r.error ?? "ERP didn't create the task.";
+  void shell.openExternal(r.url);
+  let line = `Created “${draft.title}” in ERP`;
+  if (draft.assignee) line += ` · for ${draft.assignee}`;
+  if (draft.project) line += ` · ${draft.project}`;
+  if (draft.due) line += ` · due ${draft.due}`;
+  return line + ". Opening it so you can review and edit.";
+}
+
+/// The WhatsApp thread on screen right now, if WA is up and logged in — a
+/// best-effort read, no chat switching. null when there's none.
+async function waContextBlock(): Promise<string | null> {
+  try {
+    if (!(await ChromeWhatsApp.isLoggedIn())) return null;
+    const msgs = await ChromeWhatsApp.readMessages(12);
+    if (!msgs.length) return null;
+    const who = (await ChromeWhatsApp.conversationHeader()) ?? "a chat";
+    return `### whatsapp · open thread with ${who}\n` + msgs.join("\n");
+  } catch { return null; }
+}
 
 /// Beside the avatar on the side with room (right first), the field level with its bottom, kept in the work area.
 /// flip: the box sits left of the avatar, so Nikxel's bubbles go on the right, next to it.
@@ -56,6 +96,13 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
     // What Nikxel has learned about the user (names, projects, people) goes first.
     const context = [Settings.userContextBlock,
       build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
+    // "make a task to …" creates one in ERP, drafted from the same
+    // meeting/WhatsApp/project context, then opens it to review.
+    if (ERP.looksLikeTaskRequest(text)) {
+      const reply = await makeERPTask(text, context, today, agent);
+      history.push({ q: text, a: reply });
+      return { text: reply, offline, error: false };
+    }
     let reply: string, error = false;
     try {
       reply = (await agent.runPrompt(prompt(context, history, text, today), "chat", "haiku", 30)).trim();

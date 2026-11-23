@@ -333,6 +333,86 @@ enum ERP {
             .map(String.init).filter { $0.count >= 4 })
     }
 
+    // === Chat-initiated tasks ===
+    // The avatar chat can create a task too, drafting it from the user's request
+    // plus the recent meetings/WhatsApp/projects it already has in context —
+    // the same ERP.createTask path the meeting summary's "Assign" button uses.
+
+    /// Does this chat message ask to create a task? A creation verb within a few
+    /// words of "task" — "make a task", "create an ERP task", "add a new task".
+    /// Questions about existing tasks ("what tasks did I create") don't match:
+    /// the verb has to come before "task".
+    static func looksLikeTaskRequest(_ text: String) -> Bool {
+        let re = try! NSRegularExpression(
+            pattern: #"\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b"#,
+            options: .caseInsensitive)
+        return re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// A task drafted by the chat agent from the request plus context.
+    struct TaskDraft: Equatable {
+        var title: String
+        var body: String            // markdown; rendered to the ERP's HTML on create
+        var assignee: String?       // person's name, matched to a user on create
+        var project: String?        // project name, matched on create
+        var due: String?            // "YYYY-MM-DD"
+    }
+
+    /// The prompt that turns a chat request + context into one TaskDraft as JSON.
+    static func taskDraftPrompt(request: String, context: String, today: Date) -> String {
+        let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"; df.timeZone = .current
+        return """
+        You turn a request into one ERP task. Reply with ONLY a JSON object — no prose, no code fences:
+        {"title": string, "body": string, "assignee": string|null, "project": string|null, "due": string|null}
+        - title: under 70 chars, imperative.
+        - body: markdown. Pull the concrete details — what to do, who, which project, any deadline — from the recent meetings, WhatsApp and project notes below when they relate to the request. If nothing relates, write a plain description from the request alone.
+        - assignee: a person's name if the request or context names who it's for, else null.
+        - project: a project name if clear from the context, else null.
+        - due: "YYYY-MM-DD" if a date or relative day is given ("tomorrow", "Friday"), else null. Today is \(df.string(from: today)).
+
+        Request: \(request)
+
+        Context:
+        \(context)
+        """
+    }
+
+    /// Parse the agent's reply into a TaskDraft, tolerating code fences and
+    /// surrounding prose. nil when there's no object or no title.
+    static func parseTaskDraft(_ reply: String) -> TaskDraft? {
+        guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close,
+              let data = String(reply[open...close]).data(using: .utf8),
+              let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func s(_ k: String) -> String? {
+            guard let v = o[k] as? String else { return nil }
+            let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (t.isEmpty || t.lowercased() == "null") ? nil : t
+        }
+        guard let title = s("title") else { return nil }
+        return TaskDraft(title: shortTitle(title), body: s("body") ?? title,
+                         assignee: s("assignee"), project: s("project"), due: s("due"))
+    }
+
+    /// Create a task from a drafted TaskDraft: match the assignee and project
+    /// names to the live roster, render the body, create the record. Returns the
+    /// new task's web URL on success, or an error message. Call only with a live
+    /// session (hits the network).
+    static func createTask(draft: TaskDraft) -> (url: String?, error: String?) {
+        let uid = draft.assignee.flatMap { matchUser($0, in: assignableUsers())?.id }
+        let pid = draft.project.flatMap { name in
+            projects().first { $0.name.range(of: name, options: .caseInsensitive) != nil }?.id
+        }
+        let deadline = draft.due.flatMap { $0.isEmpty ? nil : $0 + " 17:00:00" }
+        let descHTML = NoteExporter.richHTML(from: TwinProfile.correct(draft.body))
+        guard let id = createTask(title: draft.title, descriptionHTML: descHTML,
+                                  assigneeUserID: uid, projectID: pid, deadline: deadline) else {
+            return (nil, "ERP didn't create the task.")
+        }
+        cblog("ERP: chat created task \(id) — \(draft.title.prefix(60))")
+        return (taskURL(id: id), nil)
+    }
+
     /// Web URL for a task's form — opens the record in whatever browser the
     /// user clicks from. `/web#` is honoured across Odoo 17/18.
     static func taskURL(id: Int) -> String { "\(base)/web#id=\(id)&model=project.task&view_type=form" }

@@ -141,15 +141,84 @@ export async function tasksTouched(day: Date): Promise<TouchedTask[]> {
 
 // MARK: - Tasks
 
-export async function createTask(title: string, descriptionHTML: string, assigneeUserID: number | null, deadline: string | null): Promise<number | null> {
+export async function createTask(title: string, descriptionHTML: string, assigneeUserID: number | null, deadline: string | null, projectID: number | null = null): Promise<number | null> {
   const vals: Record<string, unknown> = { name: title, description: descriptionHTML };
   if (assigneeUserID != null) vals.user_ids = [[6, 0, [assigneeUserID]]]; // many2many replace
+  if (projectID != null) vals.project_id = projectID;
   if (deadline) vals.date_deadline = deadline; // "YYYY-MM-DD HH:MM:SS"
   const id = await callKw("project.task", "create", [vals]);
   return typeof id === "number" ? id : null;
 }
 
 export function taskURL(id: number): string { return `${BASE}/web#id=${id}&model=project.task&view_type=form`; }
+
+// === Chat-initiated tasks ===
+// The avatar chat can create a task too, drafting it from the user's request
+// plus the recent meetings/WhatsApp/projects it already has in context — the
+// same createTask path the meeting summary's "Assign" button uses.
+
+/// Does this chat message ask to create a task? A creation verb within a few
+/// words of "task" — "make a task", "create an ERP task", "add a new task".
+/// Questions about existing tasks ("what tasks did I create") don't match.
+export function looksLikeTaskRequest(text: string): boolean {
+  return /\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b/i.test(text);
+}
+
+/// A task drafted by the chat agent from the request plus context.
+export interface TaskDraft { title: string; body: string; assignee: string | null; project: string | null; due: string | null; }
+
+/// The prompt that turns a chat request + context into one TaskDraft as JSON.
+export function taskDraftPrompt(request: string, context: string, today: Date): string {
+  const d = today.toISOString().slice(0, 10);
+  return `You turn a request into one ERP task. Reply with ONLY a JSON object — no prose, no code fences:
+{"title": string, "body": string, "assignee": string|null, "project": string|null, "due": string|null}
+- title: under 70 chars, imperative.
+- body: markdown. Pull the concrete details — what to do, who, which project, any deadline — from the recent meetings, WhatsApp and project notes below when they relate to the request. If nothing relates, write a plain description from the request alone.
+- assignee: a person's name if the request or context names who it's for, else null.
+- project: a project name if clear from the context, else null.
+- due: "YYYY-MM-DD" if a date or relative day is given ("tomorrow", "Friday"), else null. Today is ${d}.
+
+Request: ${request}
+
+Context:
+${context}`;
+}
+
+/// Parse the agent's reply into a TaskDraft, tolerating code fences and prose.
+/// null when there's no object or no title.
+export function parseTaskDraft(reply: string): TaskDraft | null {
+  const open = reply.indexOf("{"), close = reply.lastIndexOf("}");
+  if (open < 0 || close <= open) return null;
+  let o: Record<string, unknown>;
+  try { o = JSON.parse(reply.slice(open, close + 1)) as Record<string, unknown>; } catch { return null; }
+  const s = (k: string): string | null => {
+    const v = o[k];
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    return (!t || t.toLowerCase() === "null") ? null : t;
+  };
+  const title = s("title");
+  if (!title) return null;
+  return { title: shortTitle(title), body: s("body") ?? title, assignee: s("assignee"), project: s("project"), due: s("due") };
+}
+
+/// Create a task from a drafted TaskDraft: match the assignee and project names
+/// to the live roster, render the body, create the record. Returns the new
+/// task's web URL on success, or an error message. Call only with a live session.
+export async function createTaskFromDraft(draft: TaskDraft): Promise<{ url?: string; error?: string }> {
+  const uid = draft.assignee ? (matchUser(draft.assignee, await assignableUsers())?.id ?? null) : null;
+  let pid: number | null = null;
+  if (draft.project) {
+    const want = draft.project.toLowerCase();
+    pid = (await projects()).find(p => p.name.toLowerCase().includes(want))?.id ?? null;
+  }
+  const deadline = draft.due ? draft.due + " 17:00:00" : null;
+  const descHTML = richHtml(TwinProfile.correct(draft.body));
+  const id = await createTask(draft.title, descHTML, uid, deadline, pid);
+  if (id == null) return { error: "ERP didn't create the task." };
+  cblog(`ERP: chat created task ${id} — ${draft.title.slice(0, 60)}`);
+  return { url: taskURL(id) };
+}
 
 /// Best-effort match of an action-item assignee name to an internal user.
 export function matchUser(name: string, users: User[]): User | null {

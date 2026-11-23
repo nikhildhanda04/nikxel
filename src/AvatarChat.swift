@@ -135,6 +135,16 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
                 let context = [NikxelSettings.userContextBlock,
                                ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
                                                  cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                // "make a task to …" creates one in ERP, drafted from the same
+                // meeting/WhatsApp/project context, then opens it to review.
+                if ERP.looksLikeTaskRequest(text) {
+                    let reply = AvatarChat.makeERPTask(request: text, context: context, today: today, agent: agent)
+                    DispatchQueue.main.async {
+                        self.history.append((q: text, a: reply))
+                        self.resolve(id, ["text": reply, "offline": offline, "error": false])
+                    }
+                    return
+                }
                 var answer: String?
                 let reply: String
                 do {
@@ -181,6 +191,48 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private func resolve(_ id: Int, _ value: Any) {
         let json = (try? JSONSerialization.data(withJSONObject: [value])).flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
         web.evaluateJavaScript("nx.resolve(\(id), \(json)[0])")
+    }
+
+    /// Draft an ERP task from the chat request plus context, create it, and open
+    /// the record to review — the chat-side twin of the summary's Assign button.
+    /// Runs on the send background queue, so the network calls are off main.
+    private static func makeERPTask(request: String, context: String, today: Date, agent: MOMGenerator) -> String {
+        guard ERP.isConnected else { return "Connect Forklyft ERP in Nikxel first, then ask again." }
+        guard ERP.hasLiveSession() else {
+            return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again."
+        }
+        var ctx = context
+        if let wa = waContextBlock() { ctx = wa + "\n\n" + ctx }   // pull the open WhatsApp thread when there is one
+        let draftReply: String
+        do {
+            draftReply = try agent.runPrompt(ERP.taskDraftPrompt(request: request, context: ctx, today: today),
+                                             kind: "erp-task", claudeModel: "haiku", timeout: 30)
+        } catch MOMGenerator.MOMError.agentNotFound {
+            return "Connect Claude in Settings to use chat."
+        } catch {
+            return "⚠︎ \(error)"
+        }
+        guard let draft = ERP.parseTaskDraft(draftReply) else {
+            return "I couldn't turn that into a task. Try naming what to do, e.g. “make a task to send Piyush the invoice by Friday”."
+        }
+        let r = ERP.createTask(draft: draft)
+        guard let url = r.url else { return r.error ?? "ERP didn't create the task." }
+        if let u = URL(string: url) { DispatchQueue.main.async { NSWorkspace.shared.open(u) } }
+        var line = "Created “\(draft.title)” in ERP"
+        if let a = draft.assignee { line += " · for \(a)" }
+        if let p = draft.project { line += " · \(p)" }
+        if let d = draft.due { line += " · due \(d)" }
+        return line + ". Opening it so you can review and edit."
+    }
+
+    /// The WhatsApp thread on screen right now, if the WA browser is up and
+    /// logged in — a best-effort read, no chat switching. nil when there's none.
+    private static func waContextBlock() -> String? {
+        guard ChromeBot.isPortOpen(), ChromeWhatsApp.isLoggedIn() else { return nil }
+        let msgs = ChromeWhatsApp.readMessages(count: 12)
+        guard !msgs.isEmpty else { return nil }
+        let who = ChromeWhatsApp.conversationHeader() ?? "a chat"
+        return "### whatsapp · open thread with \(who)\n" + msgs.joined(separator: "\n")
     }
 
     /// Same markup and CSS as windows/src/renderer/avatarChat.html.

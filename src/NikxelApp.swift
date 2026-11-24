@@ -378,6 +378,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         self.waChatTasksItem = chatTasks
 
         waMenu.addItem(NSMenuItem.separator())
+        let openWA = NSMenuItem(title: "Open WhatsApp Window", action: #selector(openWhatsAppWindow), keyEquivalent: "")
+        openWA.target = self; waMenu.addItem(openWA)
         let editPersonalityWA = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
         editPersonalityWA.target = self; waMenu.addItem(editPersonalityWA)
 
@@ -1024,6 +1026,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func connectAppleReminders() {
         reminderWatcher.reauthenticate()
     }
+
+    @objc func openWhatsAppWindow() { ChromeWhatsApp.activate() }
 
     @objc func editBotPersonality() {
         let dir = FileManager.default.homeDirectoryForCurrentUser

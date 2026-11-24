@@ -941,16 +941,40 @@ enum ChromeWhatsApp {
         return true
     }
 
-    /// Bring the bot's browser to the front, so the user can look at a draft
-    /// the bot left in a chat. Not used by the reply path itself — that runs
-    /// entirely over CDP and never needs focus.
+    /// Bring the bot's WhatsApp window to the front: for a draft the bot left in a
+    /// chat, or after the user closed it. Closing it quits the bot browser, or leaves
+    /// it running with no WhatsApp tab, so this brings back whichever is gone. Opening
+    /// the browser's app bundle instead found the user's own Chrome, not the bot's.
+    /// Not used by the reply path itself — that runs entirely over CDP.
     static func activate() {
-        guard let b = ChromeBot.availableBrowser() else { return }
-        // .../X.app/Contents/MacOS/X -> .../X.app
-        let bundle = URL(fileURLWithPath: b.path)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        NSWorkspace.shared.open(bundle)
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard ChromeBot.launchIfNeeded() else { return }
+            let port = ChromeBot.debugPort
+            let tabs = URL(string: "http://localhost:\(port)/json/list").flatMap { try? Data(contentsOf: $0) }
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+            let wa = tabs.first { ($0["url"] as? String)?.contains("web.whatsapp.com") == true }
+            if wa == nil, let b = ChromeBot.availableBrowser() {
+                // Same profile hands the URL to the running bot browser, which opens it as
+                // the same bare app window it started with (/json/new gave a tabbed one).
+                let t = Process()
+                t.launchPath = b.path
+                t.arguments = ["--user-data-dir=\(ChromeBot.profileDir)", "--app=https://web.whatsapp.com"]
+                try? t.run(); t.waitUntilExit()
+            } else if let id = wa?["id"] as? String, let u = URL(string: "http://localhost:\(port)/json/activate/\(id)") {
+                var req = URLRequest(url: u, timeoutInterval: 3); req.httpMethod = "PUT"
+                let sema = DispatchSemaphore(value: 0)
+                URLSession.shared.dataTask(with: req) { _, _, _ in sema.signal() }.resume()
+                _ = sema.wait(timeout: .now() + 3.5)
+            }
+            // The bot browser shares its bundle id with the user's own, so find it by its profile.
+            let p = Process(), out = Pipe()
+            p.launchPath = "/usr/bin/pgrep"
+            p.arguments = ["-o", "-f", "user-data-dir=\(ChromeBot.profileDir)"]
+            p.standardOutput = out
+            try? p.run(); p.waitUntilExit()
+            let pid = Int32(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            DispatchQueue.main.async { NSRunningApplication(processIdentifier: pid)?.activate() }
+        }
     }
 }

@@ -5,7 +5,7 @@ import { cblog } from "../core/diag";
 import { openUrl, revealFile, summaryOpener } from "../core/open";
 import { appendLine, HOME, nikxelPath, preloadPath, readText, rendererPath, writeAtomic } from "../core/paths";
 import {
-  AGENT_INFO, CODING_AGENTS, CodingAgent, NOTE_FORMATS, NOTE_FORMAT_INFO, NoteFormat, Settings, Sprites, WA_BOT_MODES,
+  AGENT_INFO, CODING_AGENTS, CodingAgent, NOTE_FORMATS, NOTE_FORMAT_INFO, NoteFormat, Settings, WA_BOT_MODES,
   WA_BOT_MODE_NAMES, WABotMode,
 } from "../core/settings";
 import { GoogleAuth } from "../google/googleAuth";
@@ -26,6 +26,7 @@ import * as DashboardData from "./dashboardData";
 import * as DayPage from "./dayPage";
 import * as ERP from "./erp";
 import * as Slack from "./slack";
+import { spriteRows } from "./spriteFrames";
 import * as SummaryLibrary from "./summaryLibrary";
 
 /// Port of DashboardWindow.swift: the Nikxel window, every setting the tray
@@ -154,20 +155,6 @@ function create(): void {
     push();
   });
   void win.loadFile(rendererPath("dashboard"));
-}
-
-/// Every row of the active sprite sheet as PNG data URIs, so the page greets
-/// the user with the character the avatar actually is.
-function spriteRows(): string[][] {
-  const sheet = nativeImage.createFromPath(Sprites.activePath());
-  if (sheet.isEmpty()) return [];
-  const f = Sprites.frameSize, rows: string[][] = [];
-  for (let r = 0; r < Sprites.rows; r++) {
-    const row: string[] = [];
-    for (let c = 0; c < Sprites.cols; c++) row.push(sheet.crop({ x: c * f, y: r * f, width: f, height: f }).toDataURL());
-    rows.push(row);
-  }
-  return rows;
 }
 
 function push(): void {

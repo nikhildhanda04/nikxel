@@ -285,6 +285,9 @@ var promptCopied = false;
 var CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 
 function post(m) { webkit.messageHandlers.nx.postMessage(m); }
+// The page is shared with the Windows app (windows/scripts/copy-static.js), whose state says platform: 'win'.
+function mac(onMac, onWindows) { return S && S.platform === 'win' ? onWindows : onMac; }
+var WIN_TERMINAL = 'Open PowerShell by pressing the <kbd>Windows</kbd> key, typing PowerShell and pressing <kbd>Enter</kbd>.';
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -509,7 +512,7 @@ function note(text) { return '<p class="note" data-in>' + text + '</p>'; }
 function track(texts, doneUpTo) {
   return texts.map(function (t, i) { return [t, i < doneUpTo ? 'done' : i === doneUpTo ? 'now' : '']; });
 }
-var MENU = '<b>Setup Wizard…</b> in the Nikxel menu bar icon';
+function menu() { return '<b>Setup Wizard…</b> in the Nikxel ' + mac('menu bar icon', 'tray icon (by the clock)'); }
 
 var VIEWS = {
   welcome: {
@@ -587,8 +590,16 @@ var VIEWS = {
     },
     guide: function (s) {
       var d = s.deps, tools = d.whisper && d.ffmpeg;
-      if (!d.checked) return [['Checking what’s already on your Mac…', 'now']];
+      if (!d.checked) return [['Checking what’s already on your ' + mac('Mac', 'PC') + '…', 'now']];
       if (d.ready) return [['Everything is installed. Click <b>Next</b>.', 'done']];
+      if (S.platform === 'win') {
+        // No Homebrew or Terminal on Windows: whisper downloads right here, and ffmpeg comes with Nikxel.
+        return track([
+          'Click <b>Install</b>. I download whisper here; there’s nothing else to run.',
+          'Wait while it downloads. This page updates by itself.',
+          'The speech model (' + esc(d.modelSize) + ') then downloads here too. When everything is ticked, click <b>Next</b>.'
+        ], tools ? 2 : d.installing ? 1 : 0);
+      }
       var items = [
         'Click <b>Install</b>. A Terminal window opens.',
         'If it asks for your Mac password, type it and press <kbd>Return</kbd>. The password stays hidden as you type.',
@@ -614,14 +625,16 @@ var VIEWS = {
       }
       if (d.checked && !(d.whisper && d.ffmpeg)) {
         if (d.installing) {
-          tools += '<p class="busy" style="margin-top:12px"><span class="spin"></span><span>Installing in Terminal. This page updates by itself.</span></p>';
+          tools += '<p class="busy" style="margin-top:12px"><span class="spin"></span><span>' + mac('Installing in Terminal. This page updates by itself.', esc(d.installMessage || 'Downloading whisper…')) + '</span></p>' +
+            (d.installProgress != null ? '<div class="bar"><i style="transform:scaleX(' + d.installProgress + ')"></i></div>' : '');
         } else {
+          if (d.installError) tools += '<p class="err" style="margin-top:12px">' + esc(d.installError) + ' Check your internet connection and try again.</p>';
           // Always a button: without Homebrew the script installs it first,
           // rather than leaving the user with a command to copy.
           tools += '<div style="display:flex;gap:16px;align-items:center;margin-top:12px">' +
             btn('Install', 'installDeps', '', 'primary') +
-            '<p class="fine">' + (d.brew ? 'Installs both with Homebrew, which you already have.'
-              : 'Installs Homebrew (a free Mac installer) first, then both tools.') + '</p></div>';
+            '<p class="fine">' + mac(d.brew ? 'Installs both with Homebrew, which you already have.'
+              : 'Installs Homebrew (a free Mac installer) first, then both tools.', 'Downloads whisper into Nikxel. ffmpeg comes with Nikxel.') + '</p></div>';
         }
       }
       var chosen = d.languages.filter(function (o) { return o.code === d.language; })[0] || d.languages[0];
@@ -644,14 +657,14 @@ var VIEWS = {
       return '<h1 class="display" data-in>Let me reply on WhatsApp</h1>' +
         '<p class="lead" data-in><b>Optional.</b> I can answer your WhatsApp messages the way you would while you’re in a meeting, or all day.</p>' +
         guideFor('whatsapp') + NAV +
-        note('Skip it and connect later from ' + MENU + '.');
+        note('Skip it and connect later from ' + menu() + '.');
     },
     guide: function (s) {
       var w = s.wa, items = [
-        'Click <b>Connect WhatsApp</b> on the right. A ' + esc(w.browser) + ' window opens with a QR code.',
+        'Click <b>Connect WhatsApp</b> on the right. A' + mac(' ' + esc(w.browser), ' WhatsApp') + ' window opens with a QR code.',
         'On your phone, open WhatsApp and go to <b>Settings</b>, then <b>Linked devices</b>, then <b>Link a device</b>.',
         'Point your phone at the QR code. This page says <b>Connected</b> when it worked.',
-        'Leave that browser window open (minimised is fine). Click <b>Next</b>.'
+        mac('Leave that browser window open (minimised is fine). Click <b>Next</b>.', 'You can close that window; I keep WhatsApp running. Click <b>Next</b>.')
       ];
       return track(items, w.connected ? 3 : w.connecting ? 1 : 0);
     },
@@ -660,8 +673,8 @@ var VIEWS = {
       if (w.noBrowser) {
         status = '<p class="fine">' + esc(w.missing) + '</p>' + btn('Get Google Chrome', 'getChrome', '', 'soft');
       } else if (w.launchFailed) {
-        status = '<p class="fine">Couldn’t open ' + esc(w.browser) + ' for WhatsApp (port ' + w.port +
-          ' is busy). Quit ' + esc(w.browser) + ' completely, then try again.</p>' + btn('Try again', 'connectWhatsApp', '', 'soft');
+        status = '<p class="fine">' + mac('Couldn’t open ' + esc(w.browser) + ' for WhatsApp (port ' + w.port +
+          ' is busy). Quit ' + esc(w.browser) + ' completely, then try again.', 'Couldn’t open WhatsApp: ' + esc(w.error) + '.') + '</p>' + btn('Try again', 'connectWhatsApp', '', 'soft');
       } else if (w.connected) {
         status = '<p class="ok-line">' + CHECK + 'Connected</p>';
       } else if (w.connecting) {
@@ -685,7 +698,7 @@ var VIEWS = {
       return '<h1 class="display" data-in>Connect your Google account</h1>' +
         '<p class="lead" data-in><b>Optional.</b> For calendar reminders, adding action items to Google Tasks, and reading or drafting Gmail when you ask me to.</p>' +
         guideFor('google') + NAV +
-        note('Nothing is sent or added without your OK. Skip it and connect later from ' + MENU + '.');
+        note('Nothing is sent or added without your OK. Skip it and connect later from ' + menu() + '.');
     },
     guide: function (s) {
       var g = s.google, items = [
@@ -718,9 +731,9 @@ var VIEWS = {
     layout: 'split',
     copy: function () {
       return '<h1 class="display" data-in>Choose the AI I use</h1>' +
-        '<p class="lead" data-in><b>Required.</b> I don’t have an AI of my own. I ask a coding agent on your Mac, such as Claude Code, to write my notes, summaries and replies.</p>' +
+        '<p class="lead" data-in><b>Required.</b> I don’t have an AI of my own. I ask a coding agent on your ' + mac('Mac', 'PC') + ', such as Claude Code, to write my notes, summaries and replies.</p>' +
         guideFor('agent') + NAV +
-        note('Open Terminal by pressing <kbd>⌘</kbd> <kbd>Space</kbd>, typing Terminal and pressing <kbd>Return</kbd>. This step raises the seventh column.');
+        note(mac('Open Terminal by pressing <kbd>⌘</kbd> <kbd>Space</kbd>, typing Terminal and pressing <kbd>Return</kbd>.', WIN_TERMINAL) + ' This step raises the seventh column.');
     },
     guide: function (s) {
       var working = s.agents.some(function (a) { return a.tone === 'green'; });
@@ -728,7 +741,7 @@ var VIEWS = {
       var items = [
         'Wait a few seconds while I test each one with a real request.',
         working ? 'Pick one that says <b>working</b>. I’ve already picked the first that does.'
-                : 'None works yet. Under one, click <b>Copy</b>, paste the command into Terminal and press <kbd>Return</kbd>. Finish any sign-in it asks for.',
+                : 'None works yet. Under one, click <b>Copy</b>, paste the command into ' + mac('Terminal', 'PowerShell') + ' and press <kbd>' + mac('Return', 'Enter') + '</kbd>. Finish any sign-in it asks for.',
         working ? 'Click <b>Next</b>.' : 'Come back and click <b>Test again</b>.'
       ];
       return track(items, s.testing ? 0 : chosenOk ? 2 : 1);
@@ -745,7 +758,7 @@ var VIEWS = {
       return '<div class="agents" data-in role="radiogroup" aria-label="Coding agent">' + list + '</div>' +
         '<div class="testline" data-in><p class="fine">' + (s.testing
           ? 'Testing each one. This takes a few seconds…'
-          : 'Fixed something in Terminal? Test again.') + '</p>' +
+          : 'Fixed something in ' + mac('Terminal', 'PowerShell') + '? Test again.') + '</p>' +
         btn('Test again', 'retestAgents', s.testing ? 'disabled' : '', 'soft sm') + '</div>';
     },
     nav: function (s) {
@@ -759,7 +772,7 @@ var VIEWS = {
     copy: function (s) {
       var tips = [['Click me', 'Chat with me: ask about your mail, notes or day.'],
                   ['Double-click me', 'Start or stop recording a meeting.'],
-                  ['The menu bar icon', 'Every setting, and this setup again.']];
+                  [mac('The menu bar icon', 'The tray icon'), 'Every setting, and this setup again.']];
       return '<h1 class="display xl" data-in>You’re all set' + (s.name ? ', ' + esc(s.name) : '') + '.</h1>' +
         '<p class="lead" data-in>The temple is finished, and I’m on your desktop. Three ways to use me:</p>' +
         '<div class="tips" data-in>' + tips.map(function (t) {
@@ -774,7 +787,7 @@ var VIEWS = {
       if (!s.google.connected) left.push('Google');
       if (!left.length) return '';
       var list = left.length === 1 ? left[0] : left.slice(0, -1).join(', ') + ' and ' + left[left.length - 1];
-      return '<p class="note">Still to set up: <b>' + list + '</b>. Finish any time from ' + MENU + '.</p>';
+      return '<p class="note">Still to set up: <b>' + list + '</b>. Finish any time from ' + menu() + '.</p>';
     },
     inlineLive: true,
     nav: function () { return btn('Start using Nikxel', 'finish', '', 'primary') + back('agent'); }

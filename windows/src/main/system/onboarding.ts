@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, IpcMainEvent } from "electron";
+import { BrowserWindow, clipboard, dialog, ipcMain, IpcMainEvent } from "electron";
 import { preloadPath, rendererPath, resourcePath, readText } from "../core/paths";
 import { Settings, Sprites, CODING_AGENTS, AGENT_INFO, CodingAgent } from "../core/settings";
 import { bus } from "../core/bus";
@@ -9,50 +9,31 @@ import type { MOMGenerator, AgentHealth } from "../recording/momGenerator";
 import { Transcriber, ffmpegPath, hasModel, modelPath, downloadModel, installWhisper } from "../recording/transcriber";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import { GoogleAuth } from "../google/googleAuth";
+import { spriteRows } from "./spriteFrames";
 import { SpriteSheetImporter } from "./spriteSheetImporter";
 
-/// First-run (and reopenable-anytime, via the tray) setup wizard: pick an
-/// avatar, check the transcription tools, connect WhatsApp, and choose which
-/// coding agent Nikxel should shell out to. Port of OnboardingWindow.swift.
+/// First-run (and reopenable-anytime, via the tray) setup wizard: say hello,
+/// tour what Nikxel does, pick an avatar, check the transcription tools,
+/// connect WhatsApp and Google, and choose which coding agent Nikxel should
+/// shell out to. Port of OnboardingWindow.swift. The page is the Mac's own
+/// (src/OnboardingPage.swift, pulled in by scripts/copy-static.js); its
+/// Mac-only wording switches on `platform: "win"` in the state.
 ///
 /// The state lives here in the main process and the page is only a view of
 /// it: closing the window throws the page away, but "Setup Wizard…" reopens
 /// on the same step with everything as it was, like the Mac's window that
 /// was hidden rather than released.
 
-type Step = "welcome" | "avatar" | "deps" | "whatsapp" | "google" | "agent";
-const STEPS: Step[] = ["welcome", "avatar", "deps", "whatsapp", "google", "agent"];
-type Tone = "secondary" | "red" | "orange" | "green";
+type Step = "welcome" | "tour" | "avatar" | "deps" | "whatsapp" | "google" | "agent" | "ready";
+const STEPS: Step[] = ["welcome", "tour", "avatar", "deps", "whatsapp", "google", "agent", "ready"];
+type Tone = "muted" | "red" | "orange" | "green";
 
-/// What the page renders. Mirrored by the interface in renderer/onboarding.ts.
-export interface OnboardingView {
-  step: Step;
-  name: string;
-  sprites: { cols: number; rows: number; frameSize: number };
-  avatar: { frames: string[]; usingCustom: boolean; sheetError: string | null; promptCopied: boolean; importing: boolean };
-  deps: {
-    whisperFound: boolean; ffmpegFound: boolean; depsChecked: boolean;
-    usingWhisperCpp: boolean; modelInstalled: boolean; modelName: string; modelSize: string;
-    modelDownloading: boolean; modelProgress: number; modelError: string | null;
-    installing: boolean; installMessage: string; installProgress: number | null; installError: string | null;
-    language: string; languageOptions: { title: string; code: string }[];
-  };
-  whatsapp: { connecting: boolean; connected: boolean; launchFailed: string | null };
-  google: { connected: boolean; oneClick: boolean };
-  agents: { id: CodingAgent; name: string; status: string; tone: Tone; hint: string | null; copied: boolean; enabled: boolean; chosen: boolean }[];
-  agentsTesting: boolean;
+/// What the page posts (webkit.messageHandlers.nx in OnboardingPage.swift).
+export interface OnboardingAction {
+  type: "go" | "copyPrompt" | "chooseSheet" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
+    | "connectWhatsApp" | "getChrome" | "connectGoogle" | "pickAgent" | "copyAgent" | "retestAgents" | "finish";
+  step?: string; name?: string; code?: string; index?: number;
 }
-
-export type OnboardingAction =
-  | { type: "ready" }
-  | { type: "go"; step: Step }
-  | { type: "welcomeNext"; name: string }
-  | { type: "copyPrompt" } | { type: "chooseSheet" } | { type: "resetSheet" }
-  | { type: "installDeps" } | { type: "recheckDeps" } | { type: "downloadModel" } | { type: "pickLanguage"; code: string }
-  | { type: "waConnect" }
-  | { type: "googleConnect" }
-  | { type: "pickAgent"; agent: CodingAgent } | { type: "copyInstall"; agent: CodingAgent } | { type: "recheckAgents" }
-  | { type: "finish" };
 
 /// "en" handles all three cases and is what almost everyone should use.
 /// Measured on the small model: English stays clean, Hindi comes back as
@@ -61,9 +42,9 @@ export type OnboardingAction =
 /// Picking "hi" makes pure English come out as Devanagari gibberish, and
 /// auto-detect reads Indian-accented English as Hindi.
 const LANGUAGE_OPTIONS = [
-  { title: "English — handles Hindi and Hinglish too (recommended)", code: "en" },
-  { title: "Hindi — only for heavy Hindi; breaks pure English", code: "hi" },
-  { title: "Auto-detect — not recommended, misreads Indian English as Hindi", code: "auto" },
+  { title: "English", note: "Also Hindi & Hinglish", code: "en" },
+  { title: "Hindi", note: "Breaks pure English", code: "hi" },
+  { title: "Auto-detect", note: "Misreads Indian English", code: "auto" },
 ];
 
 const MODEL_DOWNLOAD_SIZE = "466 MB";
@@ -88,11 +69,11 @@ function registerIpc(): void {
 
 export class OnboardingWindowController {
   private win: BrowserWindow | null = null;
+  private pageLoaded = false;
   private step: Step = "welcome";
   private renderQueued = false;
 
   // Avatar step
-  private previewFrames: string[] = [];
   private usingCustomSheet = Sprites.hasCustom();
   private sheetError: string | null = null;
   private promptCopied = false;
@@ -142,14 +123,12 @@ export class OnboardingWindowController {
   constructor(private readonly momGenerator: MOMGenerator) {
     current = this;
     registerIpc();
-    this.previewFrames = OnboardingWindowController.idleFrames();
   }
 
   show(): void {
     current = this;
     this.refreshDeps();
     this.refreshAvailableAgents();
-    if (this.step === "avatar") this.startPreview();
     if (!this.win || this.win.isDestroyed()) this.createWindow();
     const w = this.win!;
     if (w.isMinimized()) w.restore();
@@ -160,14 +139,14 @@ export class OnboardingWindowController {
 
   private createWindow(): void {
     const w = new BrowserWindow({
-      width: 500,
-      height: 640,
-      useContentSize: true,
-      resizable: false,
-      maximizable: false,
-      fullscreenable: false,
+      width: 1160,
+      height: 860,
+      minWidth: 980,
+      minHeight: 780,
       title: "Set up Nikxel",
       autoHideMenuBar: true,
+      // The page's paper, so nothing flashes white before it paints.
+      backgroundColor: "#f6f4ee",
       show: false,
       webPreferences: {
         preload: preloadPath("onboarding"),
@@ -177,9 +156,19 @@ export class OnboardingWindowController {
       },
     });
     w.setMenuBarVisibility(false);
+    w.once("ready-to-show", () => w.show());
+    // Each (re)load plays the splash again; the step and everything set so
+    // far live here, so the page comes back where the user left it.
+    w.webContents.on("did-finish-load", () => {
+      this.pageLoaded = true;
+      void w.webContents.executeJavaScript(`nx.frames(${JSON.stringify(spriteRows())})`).catch(() => {});
+      this.render();
+    });
+    // Links in the page never navigate it away.
+    w.webContents.on("will-navigate", e => e.preventDefault());
     w.loadFile(rendererPath("onboarding")).catch(e => diag("onboarding", `load failed: ${e}`));
     w.on("closed", () => {
-      if (this.win === w) this.win = null;
+      if (this.win === w) { this.win = null; this.pageLoaded = false; }
       // Nobody is watching for the QR scan any more; reopening offers
       // Connect again rather than a spinner with nothing behind it.
       if (this.waConnecting) { this.waConnecting = false; this.stopPolling(); }
@@ -193,7 +182,6 @@ export class OnboardingWindowController {
     if (this.step === "whatsapp") this.stopPolling();
     if (next === "agent") this.refreshAvailableAgents();
     this.step = next;
-    if (next === "avatar") this.startPreview();
     this.render();
   }
 
@@ -205,52 +193,51 @@ export class OnboardingWindowController {
     setTimeout(() => {
       this.renderQueued = false;
       const w = this.win;
-      if (!w || w.isDestroyed()) return;
-      w.webContents.send("onboarding:state", this.view());
+      if (!w || w.isDestroyed() || !this.pageLoaded) return;
+      void w.webContents.executeJavaScript(`nx.state(${JSON.stringify(this.view())})`).catch(() => {});
     }, 40);
   }
 
-  private view(): OnboardingView {
-    const testing = this.agentHealth.size < CODING_AGENTS.length;
+  /// Everything the page draws, in the shape OnboardingWindowController.state()
+  /// gives the Mac page.
+  private view(): Record<string, unknown> {
     let googleConnected = false, oneClick = true;
     try { googleConnected = GoogleAuth.shared.isAuthorized; oneClick = GoogleAuth.shared.isOneClick; } catch { /* not ready */ }
+    const { cols, rows, frameSize: f } = Sprites;
     return {
+      platform: "win",
       step: this.step,
       name: Settings.hasUserName ? Settings.userName : (accountName() ?? ""),
-      sprites: { cols: Sprites.cols, rows: Sprites.rows, frameSize: Sprites.frameSize },
       avatar: {
-        frames: this.previewFrames,
-        usingCustom: this.usingCustomSheet,
-        sheetError: this.sheetError,
-        promptCopied: this.promptCopied,
-        importing: this.importing,
+        custom: this.usingCustomSheet, error: this.sheetError ?? "", copied: this.promptCopied, importing: this.importing,
+        spec: `PNG, ${cols} columns × ${rows} rows of ${f}px frames (${cols * f}×${rows * f}). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.`,
       },
       deps: {
-        whisperFound: this.whisperFound, ffmpegFound: this.ffmpegFound, depsChecked: this.depsChecked,
-        usingWhisperCpp: this.usingWhisperCpp, modelInstalled: this.modelInstalled,
+        checked: this.depsChecked, whisper: this.whisperFound, ffmpeg: this.ffmpegFound, brew: false,
+        cpp: this.usingWhisperCpp, model: this.modelInstalled, downloading: this.modelDownloading,
+        progress: this.modelProgress, modelError: this.modelError ?? "",
         modelName: safeModelName(), modelSize: MODEL_DOWNLOAD_SIZE,
-        modelDownloading: this.modelDownloading, modelProgress: this.modelProgress, modelError: this.modelError,
         installing: this.installing, installMessage: this.installMessage, installProgress: this.installProgress,
-        installError: this.installError,
-        language: Settings.transcriptionLanguage, languageOptions: LANGUAGE_OPTIONS,
+        installError: this.installError ?? "",
+        ready: this.whisperFound && this.ffmpegFound && (!this.usingWhisperCpp || this.modelInstalled),
+        language: Settings.transcriptionLanguage, languages: LANGUAGE_OPTIONS,
       },
-      whatsapp: { connecting: this.waConnecting, connected: this.waConnected, launchFailed: this.waLaunchFailed },
-      google: { connected: googleConnected, oneClick },
+      // WhatsApp runs in Nikxel's own window: no browser to find or port to free.
+      wa: {
+        browser: "WhatsApp", noBrowser: false, launchFailed: this.waLaunchFailed !== null, error: this.waLaunchFailed ?? "",
+        connected: this.waConnected, connecting: this.waConnecting, missing: "", port: 0,
+      },
+      google: { connected: googleConnected, oneClick, waiting: this.googlePoll !== null },
       agents: CODING_AGENTS.map(agent => {
         const health = this.agentHealth.get(agent);
         const d = OnboardingWindowController.describe(health, agent);
         return {
-          id: agent,
-          name: AGENT_INFO[agent].displayName,
-          status: d.text,
-          tone: d.tone,
-          hint: d.hint,
-          copied: this.agentCopied === agent,
+          name: AGENT_INFO[agent].displayName, text: d.text, tone: d.tone, hint: d.hint ?? "",
           enabled: health !== undefined && !(health.working === false && health.notInstalled),
-          chosen: agent === this.chosenAgent,
+          chosen: agent === this.chosenAgent, copied: this.agentCopied === agent,
         };
       }),
-      agentsTesting: testing,
+      testing: this.agentHealth.size < CODING_AGENTS.length,
     };
   }
 
@@ -258,11 +245,11 @@ export class OnboardingWindowController {
   /// Login is fixed by running the agent itself, so that's the command shown.
   static describe(health: AgentHealth | undefined, agent: CodingAgent): { text: string; tone: Tone; hint: string | null } {
     const install = AGENT_INFO[agent].installCommand;
-    if (health === undefined) return { text: "Testing…", tone: "secondary", hint: null };
+    if (health === undefined) return { text: "Testing…", tone: "muted", hint: null };
     if (health.working) {
-      return { text: "✓ Installed, logged in and working" + (health.detail ? ` (${health.detail})` : ""), tone: "green", hint: null };
+      return { text: "Installed, logged in and working" + (health.detail ? ` (${health.detail})` : ""), tone: "green", hint: null };
     }
-    if (health.notInstalled) return { text: "Not installed", tone: "secondary", hint: install };
+    if (health.notInstalled) return { text: "Not installed", tone: "muted", hint: install };
     const why = health.reason;
     const lower = why.toLowerCase();
     if (AUTH_HINTS.some(h => lower.includes(h))) return { text: "Installed, but not logged in", tone: "orange", hint: agent };
@@ -276,30 +263,33 @@ export class OnboardingWindowController {
 
   handle(e: IpcMainEvent, a: OnboardingAction): void {
     if (!this.win || e.sender !== this.win.webContents) return;
+    const agent = CODING_AGENTS[a.index ?? -1];
     switch (a.type) {
-      case "ready": this.render(); break;
-      case "go": if (STEPS.includes(a.step)) this.go(a.step); break;
-      case "welcomeNext": {
+      case "go": {
+        const next = a.step as Step;
+        if (!STEPS.includes(next)) return;
         const typed = String(a.name ?? "").trim();
-        if (typed) Settings.userName = typed;
-        this.go("avatar");
+        if (this.step === "welcome" && typed) Settings.userName = typed;
+        if (this.step === "agent" && next === "ready") Settings.connectedAgent = this.chosenAgent;
+        this.go(next);
         break;
       }
       case "copyPrompt": this.copyPrompt(); break;
       case "chooseSheet": void this.chooseSheet(); break;
       case "resetSheet": this.resetSheet(); break;
       case "installDeps": void this.installDeps(); break;
-      case "recheckDeps": this.refreshDeps(); break;
+      case "recheckDeps": void this.refreshDeps(); break;
       case "downloadModel": void this.downloadModel(); break;
-      case "pickLanguage":
-        if (LANGUAGE_OPTIONS.some(o => o.code === a.code)) { Settings.transcriptionLanguage = a.code; this.render(); }
+      case "language":
+        if (LANGUAGE_OPTIONS.some(o => o.code === a.code)) { Settings.transcriptionLanguage = String(a.code); this.render(); }
         break;
-      case "waConnect": void this.startWhatsAppConnect(); break;
-      case "googleConnect": this.connectGoogle(); break;
-      case "pickAgent": if (CODING_AGENTS.includes(a.agent)) { this.chosenAgent = a.agent; this.render(); } break;
-      case "copyInstall": this.copyInstallCommand(a.agent); break;
-      case "recheckAgents": this.refreshAvailableAgents(); break;
+      case "connectWhatsApp": void this.startWhatsAppConnect(); break;
+      case "connectGoogle": this.connectGoogle(); break;
+      case "pickAgent": if (agent) { this.chosenAgent = agent; this.render(); } break;
+      case "copyAgent": if (agent) this.copyInstallCommand(agent); break;
+      case "retestAgents": this.refreshAvailableAgents(); break;
       case "finish": this.finishSetup(); break;
+      // "getChrome": the Mac's WhatsApp needs Chrome; Windows' runs in Nikxel.
     }
   }
 
@@ -323,6 +313,7 @@ export class OnboardingWindowController {
         if (this.step === "google") this.render();
       }
     }, 1500);
+    this.render();
   }
 
   private copyInstallCommand(agent: CodingAgent): void {
@@ -348,7 +339,8 @@ export class OnboardingWindowController {
       await downloadModel((_msg, frac) => {
         // Only the bar moves; render() coalesces the bursts.
         if (typeof frac === "number" && Number.isFinite(frac)) this.modelProgress = Math.max(0, Math.min(1, frac));
-        this.render();
+        // Nudge the page's bar rather than resending the whole state.
+        if (this.pageLoaded) void this.win?.webContents.executeJavaScript(`nx.progress(${this.modelProgress})`).catch(() => {});
       });
     } catch (e) {
       this.modelError = `Download failed: ${e instanceof Error ? e.message : e}`;
@@ -416,7 +408,7 @@ export class OnboardingWindowController {
     if (failure === null) {
       this.usingCustomSheet = true;
       bus.emit("spritesChanged");
-      this.startPreview();
+      this.pushFrames();
     }
     this.render();
   }
@@ -426,7 +418,7 @@ export class OnboardingWindowController {
     this.sheetError = null;
     this.usingCustomSheet = Sprites.hasCustom();
     bus.emit("spritesChanged");
-    this.startPreview();
+    this.pushFrames();
     this.render();
   }
 
@@ -550,39 +542,13 @@ export class OnboardingWindowController {
     this.waPollTimer = null;
   }
 
-  // MARK: - Avatar preview
+  // MARK: - Avatar frames
 
-  /// Row 0 (idle) of the active sheet, which the page animates. A single
-  /// static frame would hide a wrong row layout, which is the most likely way
-  /// a user's sheet is broken -- the animation shows it immediately.
-  private startPreview(): void {
-    this.previewFrames = OnboardingWindowController.idleFrames();
-  }
-
-  /// Row 0 of the active sheet -- the idle animation -- as data URLs. The
-  /// avatar actually drawn on screen comes from this sheet; nikxel_avatar.png
-  /// is only the no-sprite-sheet fallback, so showing that here would greet
-  /// the user with a different character than the app runs.
-  private static idleFrames(): string[] {
-    const f = Sprites.frameSize;
-    const frames: string[] = [];
-    try {
-      const sheet = nativeImage.createFromPath(Sprites.activePath());
-      if (!sheet.isEmpty()) {
-        const size = sheet.getSize();
-        for (let col = 0; col < Sprites.cols; col++) {
-          if ((col + 1) * f > size.width || f > size.height) break;
-          frames.push(sheet.crop({ x: col * f, y: 0, width: f, height: f }).toDataURL());
-        }
-      }
-      if (frames.length === 0) {
-        const fallback = nativeImage.createFromPath(resourcePath("nikxel_avatar.png"));
-        if (!fallback.isEmpty()) frames.push(fallback.toDataURL());
-      }
-    } catch (e) {
-      diag("onboarding", `preview frames failed: ${e}`);
-    }
-    return frames;
+  /// Every row of the active sheet: the page plays the row that fits each
+  /// step, and the avatar step previews idle, where a wrong row layout (the
+  /// likeliest way a user's sheet is broken) shows at once.
+  private pushFrames(): void {
+    if (this.pageLoaded) void this.win?.webContents.executeJavaScript(`nx.frames(${JSON.stringify(spriteRows())})`).catch(() => {});
   }
 }
 

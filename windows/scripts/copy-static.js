@@ -32,3 +32,13 @@ const dashboard = swiftRaw("DashboardPage.swift", "static let html").split("\\#(
 if (dashboard.includes("\\#(")) throw new Error("copy-static: DashboardPage.swift has an interpolation this script doesn't fill");
 fs.writeFileSync(path.join(out, "dashboard.html"), dashboard);
 fs.copyFileSync(path.join(repo, "vendor", "clouds.png"), path.join(out, "clouds.png"));
+
+// The setup wizard's page, the same way (src/OnboardingPage.swift). It reads
+// window.Motion and --clouds before its own scripts run, which the Mac
+// injects (PageAssets); here they go at the top of its head.
+const onboarding = swiftRaw("OnboardingPage.swift", "static let html");
+if (onboarding.includes("\\#(")) throw new Error("copy-static: OnboardingPage.swift has an interpolation this script doesn't fill");
+fs.copyFileSync(path.join(repo, "vendor", "framer-motion-dom.js"), path.join(out, "framer-motion-dom.js"));
+const preamble = '<script src="framer-motion-dom.js"></script>' +
+  "<script>document.documentElement.style.setProperty('--clouds', 'url(clouds.png)')</script>";
+fs.writeFileSync(path.join(out, "onboarding.html"), onboarding.replace(/<head>/i, "<head>" + preamble));

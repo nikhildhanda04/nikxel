@@ -52,10 +52,12 @@ app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  Health.start();
+  // Logging must never be what stops Nikxel starting.
+  try { Health.start(); } catch (e) { console.error(e); }
   app.on("second-instance", () => nikxel?.showAvatar());
   app.setAppUserModelId("com.nikxel.Nikxel");
-  app.whenReady().then(() => { nikxel = new NikxelApp(); nikxel.launch(); });
+  app.whenReady().then(() => { nikxel = new NikxelApp(); nikxel.launch(); Health.didLaunch(); })
+    .catch(e => Health.failedToStart(String(e?.stack ?? e)));
   // The avatar window is the app; closing every other window must not quit.
   app.on("window-all-closed", () => { /* stay in the tray */ });
   app.on("before-quit", () => nikxel?.terminate());

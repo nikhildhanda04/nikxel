@@ -1,4 +1,4 @@
-import { app, powerMonitor, screen, WebContents, webContents } from "electron";
+import { app, dialog, powerMonitor, screen, WebContents, webContents } from "electron";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -48,12 +48,34 @@ export function label(wc: WebContents): string {
 
 function log(msg: string): void { diag("health", msg); }
 
+/// Until main.ts says launch finished, an uncaught error means Nikxel never
+/// came up: say so and quit, rather than run on with no avatar and no tray
+/// while holding the single-instance lock, which makes every later start
+/// quit at once (after an update that looked like "it closed for good").
+let launched = false;
+export function didLaunch(): void { launched = true; log("launched"); }
+
+export function failedToStart(what: string): void {
+  if (launched) return;
+  launched = true;   // once
+  log(`failed to start: ${what}`);
+  try {
+    dialog.showErrorBox("Nikxel couldn't start",
+      `${what.split("\n")[0]}\n\nThe details are in %USERPROFILE%\\.nikxel\\debug.log. Open Nikxel again from the Start menu; if this keeps happening, send that file.`);
+  } catch { /* before ready: no dialog, the log has it */ }
+  app.exit(1);
+}
+
 export function start(): void {
   banner();
 
   // Main process: an uncaught error used to end in Electron's dialog or a
   // silent stop. Logged with its stack, and Nikxel carries on.
-  process.on("uncaughtException", e => log(`main uncaught: ${e?.stack ?? e}`));
+  process.on("uncaughtException", e => {
+    const s = String(e?.stack ?? e);
+    log(`main uncaught: ${s}`);
+    failedToStart(s);
+  });
   process.on("unhandledRejection", r => {
     const s = r instanceof Error ? r.stack ?? r.message : String(r);
     if (once(`rej:${s.slice(0, 200)}`)) log(`main unhandled rejection: ${s}`);

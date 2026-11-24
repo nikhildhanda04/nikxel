@@ -4,7 +4,7 @@
 //   swiftc -parse-as-library -o /tmp/cdd check_day_digest.swift src/DayLogger.swift \
 //     src/MOMGenerator.swift src/UsageLog.swift src/NikxelSettings.swift src/NoteExporter.swift \
 //     src/CaptureMode.swift src/Diag.swift src/SummaryTemplates.swift \
-//     src/WhatsAppActivityLogger.swift
+//     src/WhatsAppActivityLogger.swift src/NoteName.swift
 import Foundation
 
 @main

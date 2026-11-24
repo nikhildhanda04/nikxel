@@ -7,8 +7,6 @@ import AVFoundation
 /// windows/src/renderer/avatarChat.html; the mic records natively, as in EditChat.
 final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     private static var current: AvatarChat?
-    // Held here: transcribe() bails out quietly if its Transcriber is gone.
-    private static let transcriber = Transcriber()
 
     static func toggle(near avatar: NSRect, pinnedTo parent: NSWindow, agent: MOMGenerator, recording: @escaping () -> Bool) {
         if let c = current { c.window.close(); return }
@@ -29,25 +27,15 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
 
     private let window: NSPanel
     private let web: WKWebView
-    private let agent: MOMGenerator
+    private let session: ChatSession
     private let recording: () -> Bool
-    private var history: [(q: String, a: String)] = []
-    private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private var hitTimer: Timer?
     private var moved: NSObjectProtocol?
     private var hits: [NSRect] = []  // page coordinates, top-left origin
-    // Fetched once as the box opens, while the user types; every question reuses it.
-    private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
-    private var waSnapshot = ""   // a read of WhatsApp at open time (unread, recent chats, open thread)
-    private var mailSnapshot = "" // the inbox at open time, when Gmail is connected
-    private var knownMailIds: Set<String> = []  // ids the chat has shown the model; labels only touch these
-    private var lastDraftId: String?            // what "send it" sends
-    private let feedReady = DispatchGroup()
-    private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
 
     private init(agent: MOMGenerator, recording: @escaping () -> Bool, near avatar: NSRect) {
-        self.agent = agent
+        self.session = ChatSession(agent: agent)
         self.recording = recording
         let (frame, flip) = AvatarChat.frame(near: avatar, size: NSSize(width: 340, height: 460))
         window = KeyPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -71,18 +59,6 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         window.contentView = web
         window.ignoresMouseEvents = true  // until the page says where its bubbles are
         web.loadHTMLString(AvatarChat.page, baseURL: nil)
-
-        feedReady.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            self.feed = CloudSync.projectFeed(get: CloudSync.getter(timeout: 3))
-            self.waSnapshot = AvatarChat.waContextBlock() ?? ""   // read WhatsApp once; every question reuses it
-            if Gmail.isReady {
-                let (unread, recent) = Gmail.inbox()
-                self.mailSnapshot = MailIntent.contextBlock(unread: unread, recent: recent)
-                self.knownMailIds = Set((unread + recent).map(\.id))
-            }
-            self.feedReady.leave()
-        }
 
         // A recording can start or stop while the box is open; the mic follows it.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -120,7 +96,7 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         timer?.invalidate(); timer = nil
         hitTimer?.invalidate(); hitTimer = nil
         if let m = moved { NotificationCenter.default.removeObserver(m); moved = nil }
-        recorder?.stop(); recorder = nil
+        session.stopMic()
         web.configuration.userContentController.removeScriptMessageHandler(forName: "nx")
         if AvatarChat.current === self { AvatarChat.current = nil }
     }
@@ -136,79 +112,9 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         case "hit":
             hits = (body["rects"] as? [[Double]] ?? []).filter { $0.count == 4 }.map { NSRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
         case "send":
-            let history = self.history, agent = self.agent, today = Date()
-            DispatchQueue.global(qos: .userInitiated).async {
-                let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/nikxel")
-                self.feedReady.wait()
-                let (feed, offline) = self.feed
-                // What Nikxel has learned about the user (names, projects, people) goes first.
-                // What Nikxel is doing right now and has done today (apps, code, agent asks),
-                // then the WhatsApp read, then the written summaries/notes/projects.
-                let live = (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting)).map { "### right now\n\($0)" } ?? ""
-                var context = [NikxelSettings.userContextBlock, live, self.waSnapshot, self.mailSnapshot,
-                               ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
-                                                 cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
-                // Mail: "send it", drafts and labels answer here; a search adds to the context.
-                switch self.handleMail(text: text, context: context, history: history, today: today) {
-                case .reply(let reply):
-                    DispatchQueue.main.async {
-                        self.history.append((q: text, a: reply))
-                        self.resolve(id, ["text": reply, "offline": offline, "error": false])
-                    }
-                    return
-                case .context(let more):
-                    context += "\n\n" + more
-                case .none:
-                    break
-                }
-                // "make a task to …" creates one in ERP, drafted from the same
-                // meeting/WhatsApp/project context, then opens it to review.
-                if ERP.looksLikeTaskRequest(text) {
-                    let reply = AvatarChat.makeERPTask(request: text, context: context, today: today, agent: agent)
-                    DispatchQueue.main.async {
-                        self.history.append((q: text, a: reply))
-                        self.resolve(id, ["text": reply, "offline": offline, "error": false])
-                    }
-                    return
-                }
-                var answer: String?
-                let reply: String
-                do {
-                    let a = try agent.runPrompt(ChatContext.prompt(context: context, history: history, question: text, today: today),
-                                                kind: "chat", claudeModel: "haiku", timeout: 30)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    answer = a; reply = a
-                } catch MOMGenerator.MOMError.agentNotFound {
-                    reply = "Connect Claude in Settings to use chat."
-                } catch {
-                    reply = "⚠︎ \(error)"
-                }
-                cblog("AvatarChat: \(context.count) chars of context, \(answer == nil ? "failed" : "answered")")
-                DispatchQueue.main.async {
-                    if let a = answer { self.history.append((q: text, a: a)) }
-                    self.resolve(id, ["text": reply, "offline": offline, "error": answer == nil])
-                }
-            }
+            session.send(text) { [weak self] in self?.resolve(id, $0) }
         case "mic":
-            if let r = recorder {
-                r.stop(); recorder = nil
-                AvatarChat.transcriber.transcribe(audioURL: voiceURL, outputFormat: .txt) { result in
-                    let heard = (try? result.get()).flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    DispatchQueue.main.async { self.resolve(id, heard) }
-                }
-                return
-            }
-            // The meeting recorder has the mic; typing still works.
-            if recording() { resolve(id, "busy"); return }
-            try? FileManager.default.createDirectory(at: voiceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000,
-                                           AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16]
-            if let r = try? AVAudioRecorder(url: voiceURL, settings: settings), r.record() {
-                recorder = r; resolve(id, "recording")
-            } else {
-                resolve(id, "")
-            }
+            session.mic(meeting: recording()) { [weak self] in self?.resolve(id, $0) }
         default:
             break
         }
@@ -219,111 +125,31 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         web.evaluateJavaScript("nx.resolve(\(id), \(json)[0])")
     }
 
-    /// Draft an ERP task from the chat request plus context, create it, and open
-    /// the record to review — the chat-side twin of the summary's Assign button.
-    /// Runs on the send background queue, so the network calls are off main.
-    private static func makeERPTask(request: String, context: String, today: Date, agent: MOMGenerator) -> String {
-        guard ERP.isConnected else { return "Connect Forklyft ERP in Nikxel first, then ask again." }
-        guard ERP.hasLiveSession() else {
-            return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again."
-        }
-        let draftReply: String   // context already carries the live activity + WhatsApp read
-        do {
-            draftReply = try agent.runPrompt(ERP.taskDraftPrompt(request: request, context: context, today: today),
-                                             kind: "erp-task", claudeModel: "haiku", timeout: 30)
-        } catch MOMGenerator.MOMError.agentNotFound {
-            return "Connect Claude in Settings to use chat."
-        } catch {
-            return "⚠︎ \(error)"
-        }
-        guard let draft = ERP.parseTaskDraft(draftReply) else {
-            return "I couldn't turn that into a task. Try naming what to do, e.g. “make a task to send Piyush the invoice by Friday”."
-        }
-        let r = ERP.createTask(draft: draft)
-        guard let url = r.url else { return r.error ?? "ERP didn't create the task." }
-        if let u = URL(string: url) { DispatchQueue.main.async { NSWorkspace.shared.open(u) } }
-        var line = "Created “\(draft.title)” in ERP"
-        if let a = draft.assignee { line += " · for \(a)" }
-        if let p = draft.project { line += " · \(p)" }
-        if let d = draft.due { line += " · due \(d)" }
-        return line + ". Opening it so you can review and edit."
-    }
-
-    private enum MailOutcome { case none, reply(String), context(String) }
-
-    /// Off the main thread. Sending is decided here, never by the model: only "send it"
-    /// for the draft this chat made. Everything else mail-like goes through the router.
-    private func handleMail(text: String, context: String, history: [(q: String, a: String)], today: Date) -> MailOutcome {
-        if MailIntent.isSendCommand(text) {
-            guard let d = lastDraftId else { return .reply("There's no draft from this chat to send.") }
-            guard Gmail.sendDraft(d) else { return .reply("Gmail didn't send it. The draft is still in your Drafts.") }
-            lastDraftId = nil
-            return .reply("Sent.")
-        }
-        guard MailIntent.looksLikeMail(text), GoogleAuth.shared.isAuthorized else { return .none }
-        guard Gmail.isReady else { return .reply("Reconnect Google from the Nikxel menu to give me your mail.") }
-        let routed: String
-        do {
-            routed = try agent.runPrompt(MailIntent.routerPrompt(request: text, context: context, history: history, today: today),
-                                         kind: "mail", claudeModel: "haiku", timeout: 30)
-        } catch { return .none }
-        switch MailIntent.parseAction(routed) {
-        case .answer:
-            return .none
-        case .search(let q):
-            let found = Gmail.search(q)
-            knownMailIds.formUnion(found.map(\.id))
-            return .context(MailIntent.searchBlock(query: q, found))
-        case .draft(let d):
-            let original = d.replyTo.flatMap { knownMailIds.contains($0) ? Gmail.message($0) : nil }
-            var draft = d
-            if let o = original {
-                if draft.to.isEmpty { draft.to = o.from }
-                if draft.subject.isEmpty { draft.subject = o.subject.lowercased().hasPrefix("re:") ? o.subject : "Re: \(o.subject)" }
-            }
-            guard !draft.to.isEmpty else { return .reply("Who should it go to? Give me a name from your mail or an address.") }
-            guard let made = Gmail.createDraft(draft, replyTo: original) else { return .reply("Gmail didn't save the draft.") }
-            lastDraftId = made.draftId
-            if let u = URL(string: "https://mail.google.com/mail/u/0/#drafts?compose=\(made.messageId)") {
-                DispatchQueue.main.async { NSWorkspace.shared.open(u) }
-            }
-            return .reply("Draft to \(draft.to) — “\(draft.subject)”. Opened in Gmail; say “send it” to send.")
-        case .label(let ids, let op):
-            let known = ids.filter(knownMailIds.contains)
-            guard !known.isEmpty else { return .reply("I couldn't tell which emails you meant.") }
-            guard Gmail.modify(known, op) else { return .reply("Gmail didn't make that change.") }
-            let verb = switch op { case .archive: "Archived"; case .read: "Marked read:"; case .unread: "Marked unread:"; case .star: "Starred" }
-            return .reply("\(verb) \(known.count) email\(known.count == 1 ? "" : "s").")
-        }
-    }
-
-    /// A read of WhatsApp for the chat: who's waiting (unread), the recent chats,
-    /// and the thread on screen in full — best-effort, no chat switching, only
-    /// when the WA browser is up and logged in. nil when there's nothing.
-    private static func waContextBlock() -> String? {
-        guard ChromeBot.isPortOpen(), ChromeWhatsApp.isLoggedIn() else { return nil }
-        var parts: [String] = []
-        let unread = ChromeWhatsApp.unreadChats()
-        if !unread.isEmpty {
-            parts.append("Unread (who's waiting on you):\n" + unread.prefix(15).map {
-                "- \($0.name) (\($0.unread)): \($0.preview.prefix(140))" }.joined(separator: "\n"))
-        }
-        let recent = ChromeWhatsApp.allChatsPreview(limit: 25)
-        if !recent.isEmpty {
-            parts.append("Recent chats (newest first):\n" + recent.map {
-                "- \($0.name): \($0.preview.prefix(140))" }.joined(separator: "\n"))
-        }
-        // readThread (not readMessages) keeps direction, so each line is labelled
-        // by who sent it — otherwise the chat can't tell your words from theirs.
-        let thread = ChromeWhatsApp.readThread()
-        if !thread.isEmpty {
-            let who = ChromeWhatsApp.conversationHeader() ?? "them"
-            let lines = thread.suffix(14).map { "\($0.outgoing ? "You" : who): \($0.text)" }
-            parts.append("Open thread with \(who) (each line is labelled with who sent it):\n" + lines.joined(separator: "\n"))
-        }
-        guard !parts.isEmpty else { return nil }
-        return "### whatsapp\n" + parts.joined(separator: "\n\n")
-    }
+    /// esc(), md(): replies in a small, safe markdown subset. Also used by the
+    /// Nikxel window's Chat section (DashboardPage).
+    static let markdownJS = #"""
+// A small, safe markdown subset so replies (bold, bullets, headings, code) read
+// cleanly instead of showing raw ** and - . Everything is escaped first.
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
+function mdInline(s){return esc(s)
+  .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
+  .replace(/`([^`]+)`/g,"<code>$1</code>")
+  .replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>");}
+function md(text){
+  var lines=String(text).split(/\r?\n/),out=[],list=null,para=[];
+  function fp(){ if(para.length){ out.push("<p>"+para.join("<br>")+"</p>"); para=[]; } }
+  function fl(){ if(list){ out.push("<"+list.t+">"+list.i.join("")+"</"+list.t+">"); list=null; } }
+  for(var k=0;k<lines.length;k++){
+    var t=lines[k].trim(), b=t.match(/^[-*]\s+(.*)/), o=t.match(/^\d+[.)]\s+(.*)/), h=t.match(/^#{1,6}\s+(.*)/);
+    if(b){ fp(); if(!list||list.t!=="ul"){fl();list={t:"ul",i:[]};} list.i.push("<li>"+mdInline(b[1])+"</li>"); }
+    else if(o){ fp(); if(!list||list.t!=="ol"){fl();list={t:"ol",i:[]};} list.i.push("<li>"+mdInline(o[1])+"</li>"); }
+    else if(h){ fp(); fl(); out.push('<span class="h">'+mdInline(h[1])+"</span>"); }
+    else if(t===""){ fp(); fl(); }
+    else { fl(); para.push(mdInline(t)); }
+  }
+  fp(); fl(); return out.join("");
+}
+"""#
 
     /// Same markup and CSS as windows/src/renderer/avatarChat.html.
     private static let page = #"""
@@ -410,27 +236,7 @@ function typing(label) {
   var s = document.createElement("span"); s.className = "hint"; s.textContent = label; d.appendChild(s);
   return d;
 }
-// A small, safe markdown subset so replies (bold, bullets, headings, code) read
-// cleanly instead of showing raw ** and - . Everything is escaped first.
-function esc(s){return String(s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
-function mdInline(s){return esc(s)
-  .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
-  .replace(/`([^`]+)`/g,"<code>$1</code>")
-  .replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>");}
-function md(text){
-  var lines=String(text).split(/\r?\n/),out=[],list=null,para=[];
-  function fp(){ if(para.length){ out.push("<p>"+para.join("<br>")+"</p>"); para=[]; } }
-  function fl(){ if(list){ out.push("<"+list.t+">"+list.i.join("")+"</"+list.t+">"); list=null; } }
-  for(var k=0;k<lines.length;k++){
-    var t=lines[k].trim(), b=t.match(/^[-*]\s+(.*)/), o=t.match(/^\d+[.)]\s+(.*)/), h=t.match(/^#{1,6}\s+(.*)/);
-    if(b){ fp(); if(!list||list.t!=="ul"){fl();list={t:"ul",i:[]};} list.i.push("<li>"+mdInline(b[1])+"</li>"); }
-    else if(o){ fp(); if(!list||list.t!=="ol"){fl();list={t:"ol",i:[]};} list.i.push("<li>"+mdInline(o[1])+"</li>"); }
-    else if(h){ fp(); fl(); out.push('<span class="h">'+mdInline(h[1])+"</span>"); }
-    else if(t===""){ fp(); fl(); }
-    else { fl(); para.push(mdInline(t)); }
-  }
-  fp(); fl(); return out.join("");
-}
+\#(AvatarChat.markdownJS)
 function settle(d, text) { d.className = "msg bot md"; d.innerHTML = md(text); log.scrollTop = log.scrollHeight; }
 function run(text) {
   bubble("me", text);

@@ -6,13 +6,13 @@ import { cblog } from "./core/diag";
 import { openFile, openFolder, openUrl } from "./core/open";
 import { documentsDir, nikxelPath, resourcePath } from "./core/paths";
 import { promptText } from "./core/prompt";
-import {
-  CAPTURE_MODE_NAMES, NOTE_FORMATS, NOTE_FORMAT_INFO, Settings, Sprites, WA_BOT_MODES, WA_BOT_MODE_NAMES,
-} from "./core/settings";
+import { CAPTURE_MODE_NAMES, Settings } from "./core/settings";
 import { StateMachine } from "./core/stateMachine";
 import { CardKind, ui } from "./core/ui";
 import { createAvatarWindow } from "./avatar/avatarWindow";
 import * as AvatarChat from "./system/avatarChat";
+import { Automations } from "./system/automations";
+import * as Dashboard from "./system/dashboardWindow";
 import * as Learning from "./system/learning";
 import { InputHandler } from "./avatar/inputHandler";
 import { GoogleCalendarWatcher } from "./google/googleCalendarWatcher";
@@ -21,7 +21,7 @@ import { ReminderWatcher } from "./google/reminderWatcher";
 import { MeetingCoordinator } from "./recording/meetingCoordinator";
 import { PendingJob } from "./recording/momGenerator";
 import { SummaryTemplates } from "./recording/summaryTemplates";
-import { UsageLog, UsageTotals } from "./recording/usageLog";
+import { UsageLog } from "./recording/usageLog";
 import { AgentMonitor } from "./system/agentMonitor";
 import { DayLogger } from "./system/dayLogger";
 import * as Slack from "./system/slack";
@@ -37,7 +37,6 @@ import { UpdateError, UpdateStatus, Updater } from "./system/updater";
 import { ChatbotEngine, Delivered } from "./whatsapp/chatbotEngine";
 import { ChromeWhatsApp } from "./whatsapp/chromeWhatsApp";
 import { MeetingDetector } from "./whatsapp/meetingDetector";
-import { WAContactLists } from "./whatsapp/waContactLists";
 import { WhatsAppActivityLogger } from "./whatsapp/whatsAppActivityLogger";
 
 /// Port of NikxelApp.swift: starts every watcher, owns the tray menu (the Mac
@@ -79,26 +78,58 @@ class NikxelApp {
   private reminderDismissTimer?: NodeJS.Timeout;
   private checkingForUpdates = false;
   private terminated = false;
-  private callPromptAt = 0;
 
   /// A call or Meet just started and nothing is recording: ask once. At most every 30 min, since a
   /// Meet tab moved to the background drops out of detection and comes back as a "new" call.
   /// Port of NikxelApp.offerToRecord.
   private offerToRecord(inMeeting: boolean): void {
-    const source = this.meetingDetector.source;
-    if (!inMeeting || !source || this.meetingCoordinator.isRecording || Date.now() - this.callPromptAt < 30 * 60_000) return;
-    this.callPromptAt = Date.now();
-    // The user agreed to this once (learning.ts offerAutoRecordCalls): record without asking.
-    if (Settings.autoRecordCalls) {
-      this.meetingCoordinator.toggleRecording(false);
-      ui.tell({ icon: "🎙️", title: "Recording " + source, lines: ["Double-click me to stop."] });
+    if (!inMeeting) {
+      // The call ended with the question still up: it's moot now.
+      if (!this.meetingDetector.micApp) this.dismissRecordPrompt();
       return;
     }
-    ui.ask({ icon: "🎙️", title: "You're in " + source, lines: ["Want me to record it and write the notes?"], buttons: [
-      { title: "Record", action: () => { Learning.count("call.record"); if (!this.meetingCoordinator.isRecording) this.meetingCoordinator.toggleRecording(false); } },
-      { title: "Not now", action: () => Learning.count("call.skip") },
+    const source = this.meetingDetector.source;
+    if (source) this.askToRecord("You're in " + source, Settings.autoRecordCalls, "Recording " + source);
+  }
+
+  /// Any other app took the microphone: offer to record that too, unless a
+  /// call prompt already covers it. Port of NikxelApp.offerToRecord(micApp:).
+  private offerToRecordMic(app: string | null): void {
+    if (!app) { if (!this.meetingDetector.isInMeeting) this.dismissRecordPrompt(); return; }
+    if (!this.meetingDetector.isInMeeting) this.askToRecord(`${app} is using your mic`, false);
+  }
+
+  /// When each prompt was last shown, by title, and whether one is on screen.
+  private promptedAt = new Map<string, number>();
+  private recordPromptUp = false;
+
+  private dismissRecordPrompt(): void {
+    if (this.recordPromptUp) this.avatar.dismissCard();
+    this.recordPromptUp = false;
+  }
+
+  /// "Want me to record it?", once per call or app every 30 minutes, and never
+  /// while already recording. `autoRecord`: the user agreed to this once
+  /// (learning.ts offerAutoRecordCalls), so record without asking.
+  private askToRecord(title: string, autoRecord: boolean, recording = "Recording"): void {
+    if (this.meetingCoordinator.isRecording || Date.now() - (this.promptedAt.get(title) ?? 0) < 30 * 60_000) return;
+    this.promptedAt.set(title, Date.now());
+    if (autoRecord) {
+      this.meetingCoordinator.toggleRecording(false);
+      ui.tell({ icon: "🎙️", title: recording, lines: ["Double-click me to stop."] });
+      return;
+    }
+    this.recordPromptUp = true;
+    ui.ask({ icon: "🎙️", title, lines: ["Want me to record it and write the notes?"], buttons: [
+      { title: "Record", action: () => {
+        this.recordPromptUp = false;
+        Learning.count("call.record");
+        if (!this.meetingCoordinator.isRecording) this.meetingCoordinator.toggleRecording(false);
+      } },
+      { title: "Not now", action: () => { this.recordPromptUp = false; Learning.count("call.skip"); } },
     ] });
   }
+
 
   launch(): void {
     const sm = this.stateMachine;
@@ -109,7 +140,8 @@ class NikxelApp {
       onDoubleClick: () => this.meetingCoordinator.toggleRecording(false),
       onClick: avatar => AvatarChat.toggle(avatar, this.avatar.window, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
     });
-    this.inputHandler = new InputHandler(sm, () => this.avatar.recordKeystroke());
+    this.inputHandler = new InputHandler(sm, () => this.avatar.recordKeystroke(),
+      { down: () => this.avatar.globalMouseDown(), up: () => this.avatar.globalMouseUp() });
     // Puff BEFORE the window shows, so the first frame already has the avatar
     // hidden and dust forming rather than a flash of Nikxel.
     this.avatar.triggerPuff();
@@ -130,6 +162,7 @@ class NikxelApp {
         icon: "🌙", title: "Today, in short", lines: [line],
         kind: "info", lifetime: 600, action: () => openFile(filePath),
       });
+      Automations.fire("day", filePath.replace(/\.[^.\\/]+$/, ".md"));
     };
 
     // Both land around 9am on a Sunday. Each waits for an answer, and the
@@ -137,6 +170,7 @@ class NikxelApp {
     // card brings the tasks back.
     this.dayLogger.onMorningTasks = (tasks, page) => this.showOpenTasks(tasks, page);
     this.dayLogger.onWeekReady = (line, filePath) => {
+      Automations.fire("week", filePath.replace(/\.[^.\\/]+$/, ".md"));
       const back = () => this.pendingTasksCard?.();
       ui.ask({ icon: "☀️", title: "Your week, in short", lines: [line], buttons: [
         { title: "Open", action: () => { openFile(filePath); back(); } },
@@ -145,6 +179,7 @@ class NikxelApp {
     };
 
     this.meetingDetector = MeetingDetector.shared;
+    this.meetingDetector.onMicAppChanged = app => this.offerToRecordMic(app);
     this.chatbotEngine = ChatbotEngine.shared;
     this.chatbotEngine.onRepliesSent = (batch, drafted) => this.showReplyCard(batch, drafted);
     GoogleSync.onChatTaskBlocked = block => this.showChatTaskBlocked(block);
@@ -153,11 +188,12 @@ class NikxelApp {
     bus.on("activeTexterChanged", name => ui.setActiveTexter(name));
     bus.on("meetingStateChanged", inMeeting => {
       cblog(`NikxelApp: handleMeetingStateChanged → isInMeeting=${inMeeting}`);
-      ui.setInMeeting(inMeeting);
       this.offerToRecord(inMeeting);
     });
 
     SummaryTemplates.seedIfMissing();
+    this.setupDashboard();
+    Automations.start(this.meetingCoordinator.momGen);
     this.setupTray();
     this.agentMonitor.startMonitoring();
     this.inputHandler.startMonitoring();
@@ -272,149 +308,78 @@ class NikxelApp {
     this.tray.on("right-click", pop);
   }
 
+  /// Only what's needed in a hurry; every setting lives in the Nikxel window.
   private buildMenu(): Menu {
-    const mode = Settings.captureMode;
     const recorder = this.meetingCoordinator.recorder;
     const forced = this.meetingDetector.manualOverride;
-    const item = (label: string, click: () => void, extra: Partial<MenuItemConstructorOptions> = {}): MenuItemConstructorOptions =>
-      ({ label, click, ...extra });
-    const check = (label: string, checked: boolean, click: () => void): MenuItemConstructorOptions =>
-      ({ label, type: "checkbox", checked, click });
-    const radio = (label: string, checked: boolean, click: () => void): MenuItemConstructorOptions =>
-      ({ label, type: "radio", checked, click });
-    const header = (label: string): MenuItemConstructorOptions => ({ label, enabled: false });
-    const sep: MenuItemConstructorOptions = { type: "separator" };
-
-    const quiet = Settings.waQuietHours;
-    const whatsapp: MenuItemConstructorOptions[] = [
-      check(this.chatbotEngine.isEnabled ? "Auto-Replies: On" : "Auto-Replies: Off", this.chatbotEngine.isEnabled,
-        () => { this.chatbotEngine.isEnabled = !this.chatbotEngine.isEnabled; }),
-      sep,
-      header("Reply…"),
-      ...WA_BOT_MODES.map(m => radio(
-        // Only the unattended mode has a delay to name, and it's edited in
-        // settings.json rather than here.
-        m === "unattended" ? `Any time, if unanswered for ${Settings.waUnattendedMinutes} min` : WA_BOT_MODE_NAMES[m],
-        Settings.waBotMode === m,
-        () => { Settings.waBotMode = m; this.chatbotEngine.applyModeChange(); })),
-      sep,
-      check(Settings.waGroupReplies ? "Group Chats: Only When Tagged" : "Group Chats: Off", Settings.waGroupReplies,
-        () => { Settings.waGroupReplies = !Settings.waGroupReplies; }),
-      check(`Draft Only (don't send): ${Settings.waDraftOnly ? "On" : "Off"}`, Settings.waDraftOnly,
-        () => { Settings.waDraftOnly = !Settings.waDraftOnly; }),
-      check(quiet ? `Quiet Hours: ${hourLabel(Settings.waQuietFrom)}–${hourLabel(Settings.waQuietTo)}` : "Quiet Hours: Off", quiet,
-        () => { Settings.waQuietHours = !Settings.waQuietHours; }),
-      check(`Knows What You're Working On: ${Settings.waWorkContext ? "On" : "Off"}`, Settings.waWorkContext,
-        () => { Settings.waWorkContext = !Settings.waWorkContext; }),
-      check(`Tasks from Chats: ${Settings.waChatTasks ? "On" : "Off"}`, Settings.waChatTasks,
-        () => { Settings.waChatTasks = !Settings.waChatTasks; }),
-      sep,
-      item("Open WhatsApp Window", () => ChromeWhatsApp.activate()),
-      item("Edit Bot Personality…", () => this.editBotPersonality()),
-      item("Edit Trusted Contacts…", () => openFile(WAContactLists.seedIfMissing("trusted"))),
-      item("Edit Never-Reply List…", () => openFile(WAContactLists.seedIfMissing("neverReply"))),
-      sep,
-      Settings.whatsappConnected
-        ? item("Disconnect WhatsApp…", () => this.disconnectWhatsApp())
-        : item("Connect WhatsApp…", () => this.showOnboarding()),
-    ];
-
-    const sizes: [string, number][] = [["Small", 0.6], ["Medium", 0.8], ["Large", 1.0], ["Extra Large", 1.25]];
-
+    const bot = this.chatbotEngine.isEnabled;
     const template: MenuItemConstructorOptions[] = [
-      item(this.avatar.isVisible() ? "Hide Nikxel" : "Show Nikxel", () => this.toggleVisibility()),
+      { label: "Open Nikxel…", click: () => Dashboard.show() },
+      { type: "separator" },
       // The tray is the deliberate path, so it isn't blocked while a summary
       // is still being written.
-      item(`Start/Stop Recording (${CAPTURE_MODE_NAMES[mode]})`, () => this.meetingCoordinator.toggleRecording(true)),
-      check(forced ? "Stop Forcing Meeting Mode" : "Force Meeting Mode (offline)", forced, () => {
+      { label: `Start/Stop Recording (${CAPTURE_MODE_NAMES[Settings.captureMode]})`, click: () => this.meetingCoordinator.toggleRecording(true) },
+      { label: recorder.isMicMuted ? "Unmute Mic" : "Mute Mic", type: "checkbox", checked: recorder.isMicMuted,
+        click: () => { recorder.isMicMuted = !recorder.isMicMuted; } },
+      { label: forced ? "Stop Forcing Meeting Mode" : "Force Meeting Mode (offline)", type: "checkbox", checked: forced, click: () => {
         this.meetingDetector.manualOverride = !this.meetingDetector.manualOverride;
         cblog(`NikxelApp: toggleForceMeeting → manualOverride=${this.meetingDetector.manualOverride}, isInMeeting=${this.meetingDetector.isInMeeting}`);
-      }),
-      check(recorder.isMicMuted ? "Unmute Mic" : "Mute Mic", recorder.isMicMuted,
-        () => { recorder.isMicMuted = !recorder.isMicMuted; }),
-      { label: "WhatsApp Bot", submenu: whatsapp },
-      { label: "Capture Mode", submenu: [
-        radio("Notes (videos, lectures, podcasts)", mode === "notes", () => { Settings.captureMode = "notes"; }),
-        radio("Meeting (per-speaker)", mode === "meeting", () => { Settings.captureMode = "meeting"; }),
-      ] },
-      { label: "Note Format", submenu: NOTE_FORMATS.map(f =>
-        radio(NOTE_FORMAT_INFO[f].displayName, Settings.noteFormat === f, () => { Settings.noteFormat = f; })) },
-      { label: "Avatar Size", submenu: sizes.map(([label, size]) =>
-        radio(label, Math.abs(Settings.avatarSize - size) < 0.01, () => {
-          Settings.avatarSize = size;
-          this.avatar.applyAvatarSize();
-        })) },
-      item("Open Notes Folder", () => openFolder(documentsDir("notes"))),
-      item("Open Meetings Folder", () => openFolder(documentsDir("meetings"))),
-      item("Open Daily Summaries Folder", () => openFolder(documentsDir("daily"))),
-      item("Summarize Today Now", () => this.dayLogger.generateSummaryNow()),
-      item("Summarize This Week Now", () => this.dayLogger.generateWeekNow()),
-      { label: "AI Usage", submenu: this.usageMenu() },
-      item("Connect Google Account…", () => this.calendarWatcher.reauthenticate()),
-      ERP.isConnected()
-        ? item("Forklyft ERP connected ✓", () => void this.connectERP())
-        : item("Connect Forklyft ERP…", () => void this.connectERP()),
-      item("Connect to Dashboard…", () => void this.connectDashboard()),
-      item("Tell Nikxel About You…", () => showAboutMe()),
-      check(`Send Meeting Tasks to Google: ${Settings.googleSyncEnabled ? "On" : "Off"}`, Settings.googleSyncEnabled,
-        () => { Settings.googleSyncEnabled = !Settings.googleSyncEnabled; }),
-      // Apple Reminders on the Mac. Windows has none, so new Google Tasks
-      // (added from a phone, Gmail, Calendar) bubble up instead.
-      item("Connect Google Tasks Reminders…", () => this.reminderWatcher.reauthenticate()),
-      item("Connect Slack…", () => this.connectSlack()),
-      { label: "Summary Template", submenu: this.templateMenu() },
-      item("Edit Nikxel Settings (name, language)…", () => this.editSettings()),
-      item("Regenerate Unfinished Summary…", () => this.regenerateUnfinished()),
-      item("Setup Wizard…", () => this.showOnboarding()),
-      item("Copy Logs (to share when something breaks)", () => this.copyLogs()),
-      item(this.checkingForUpdates ? "Checking for Updates…" : "Check for Updates…", () => this.checkForUpdates(),
-        { enabled: !this.checkingForUpdates }),
-      sep,
-      item("Quit Nikxel", () => app.quit()),
+      } },
+      { type: "separator" },
+      { label: bot ? "WhatsApp Auto-Replies: On" : "WhatsApp Auto-Replies: Off", type: "checkbox", checked: bot,
+        click: () => { this.chatbotEngine.isEnabled = !this.chatbotEngine.isEnabled; } },
+      { label: this.avatar.isVisible() ? "Hide Nikxel" : "Show Nikxel", click: () => this.toggleVisibility() },
+      { type: "separator" },
+      { label: "Quit Nikxel", click: () => app.quit() },
     ];
     return Menu.buildFromTemplate(template);
+  }
+
+  /// The Nikxel window (dashboardWindow.ts) reaches the tray's old handlers through this.
+  private setupDashboard(): void {
+    const actions: Record<string, () => unknown> = {
+      summarizeNow: () => this.dayLogger.generateSummaryNow(),
+      summarizeWeek: () => this.dayLogger.generateWeekNow(),
+      openNotes: () => openFolder(documentsDir("notes")),
+      openMeetings: () => openFolder(documentsDir("meetings")),
+      openDaily: () => openFolder(documentsDir("daily")),
+      openUsage: () => openFolder(UsageLog.directory),
+      regenerate: () => this.regenerateUnfinished(),
+      aboutMeVoice: () => showAboutMe(),
+      openWhatsApp: () => ChromeWhatsApp.activate(),
+      whatsappConnection: () => (Settings.whatsappConnected ? this.disconnectWhatsApp() : this.showOnboarding()),
+      connectGoogle: () => this.calendarWatcher.reauthenticate(),
+      connectSlack: () => this.connectSlack(),
+      connectReminders: () => this.reminderWatcher.reauthenticate(),
+      connectDashboard: () => this.connectDashboard(),
+      connectERP: () => this.connectERP(),
+      editSettings: () => this.editSettings(),
+      copyLogs: () => this.copyLogs(),
+      checkUpdates: () => this.checkForUpdates(),
+      setupWizard: () => this.showOnboarding(),
+      toggleRecording: () => this.meetingCoordinator.toggleRecording(true),
+      toggleMicMute: () => { this.meetingCoordinator.recorder.isMicMuted = !this.meetingCoordinator.recorder.isMicMuted; },
+      toggleVisibility: () => this.toggleVisibility(),
+      quit: () => app.quit(),
+      newTemplate: () => this.newTemplate(),
+      resetTemplate: () => this.resetActiveTemplate(),
+      deleteTemplate: () => this.deleteActiveTemplate(),
+      openTemplates: () => openFolder(SummaryTemplates.templatesDir),
+    };
+    Dashboard.init({
+      agent: this.meetingCoordinator.momGen,
+      isRecording: () => this.meetingCoordinator.isRecording,
+      recordingSince: () => (this.meetingCoordinator.recorder.startedAt?.getTime() ?? 0) / 1000,
+      isMicMuted: () => this.meetingCoordinator.recorder.isMicMuted,
+      isAvatarVisible: () => this.avatar.isVisible(),
+      applyAvatarSize: () => this.avatar.applyAvatarSize(),
+      action: name => { void actions[name]?.(); },
+    });
   }
 
   private toggleVisibility(): void {
     if (this.avatar.isVisible()) this.avatar.hide();
     else this.showAvatar();
-  }
-
-  private usageMenu(): MenuItemConstructorOptions[] {
-    const info = (label: string): MenuItemConstructorOptions => ({ label, enabled: false });
-    const today = UsageLog.totals(new Date());
-    const all: UsageTotals = { calls: 0, tokens: 0, cost: 0 };
-    for (const t of Object.values(today)) { all.calls += t.calls; all.tokens += t.tokens; all.cost += t.cost; }
-    const items = [info("Today: " + UsageLog.line(all))];
-    for (const [kind, t] of Object.entries(today).sort((a, b) => b[1].cost - a[1].cost)) {
-      items.push(info(`    ${kind}: ` + UsageLog.line(t)));
-    }
-    const { avg, days } = UsageLog.dailyAverage();
-    items.push(info(days === 0 ? "Daily average: no history yet"
-      : `Daily average (last ${days} day${days === 1 ? "" : "s"}): ` + UsageLog.line(avg)));
-    items.push({ type: "separator" }, { label: "Open Usage Log Folder", click: () => openFolder(UsageLog.directory) });
-    return items;
-  }
-
-  // MARK: - Summary templates
-
-  private templateMenu(): MenuItemConstructorOptions[] {
-    const active = Settings.summaryTemplate;
-    const activeName = SummaryTemplates.displayName(active);
-    const items: MenuItemConstructorOptions[] = SummaryTemplates.available().map(t => ({
-      label: t.name, type: "radio", checked: t.slug === active,
-      click: () => { Settings.summaryTemplate = t.slug; },
-    }));
-    items.push(
-      { type: "separator" },
-      { label: `Edit “${activeName}”…`, click: () => this.editActiveTemplate() },
-      { label: "New Template…", click: () => this.newTemplate() },
-      SummaryTemplates.isShipped(active)
-        ? { label: `Reset “${activeName}” to Default…`, click: () => this.resetActiveTemplate() }
-        : { label: `Delete “${activeName}”…`, click: () => this.deleteActiveTemplate() },
-      { label: "Open Templates Folder", click: () => openFolder(SummaryTemplates.templatesDir) },
-    );
-    return items;
   }
 
   private async connectERP(): Promise<void> {
@@ -437,21 +402,6 @@ class NikxelApp {
       buttons: ["OK"],
     });
     if (ok) void ErpCrawl.ingest((p, k) => this.meetingCoordinator.momGen.runPrompt(p, k));
-  }
-
-  private async editActiveTemplate(): Promise<void> {
-    const slug = Settings.summaryTemplate;
-    const r = await dialog.showMessageBox({
-      type: "info",
-      title: "Nikxel",
-      message: `Editing “${SummaryTemplates.displayName(slug)}”`,
-      detail: "Write plain instructions, one per line — the same way you'd tell a person. They're added to the prompt your coding agent runs and override the built-in structure: drop a section you don't use, add one you do, change the order, set the length or the tone.\n\n" +
-        "Lines starting with # are ignored, so the notes already in the file are safe to leave there.\n\n" +
-        "Takes effect on your next recording. Nikxel still won't invent content to satisfy an instruction — attendees, decisions, owners, numbers and dates come only from the transcript.",
-      buttons: [`Open ${slug}.txt`, "Cancel"],
-      defaultId: 0, cancelId: 1, noLink: true,
-    });
-    if (r.response === 0) openFile(SummaryTemplates.activeURL);
   }
 
   /// Disconnecting is for people who don't want WhatsApp in Nikxel at all:
@@ -575,16 +525,6 @@ class NikxelApp {
   }
 
   // MARK: - Settings files
-
-  private editBotPersonality(): void {
-    const file = nikxelPath("bot_personality.txt");
-    // Seed a default so the editor opens with something useful.
-    if (!fs.existsSync(file)) {
-      const name = Settings.userName;
-      fs.writeFileSync(file, `You are ${name}'s friendly AI assistant. You're responding to WhatsApp messages while ${name} is in a meeting. Be casual, warm, and helpful. Keep responses concise (1-3 sentences). Be honest -- say you're ${name}'s assistant, don't pretend to be them.\n`);
-    }
-    openFile(file);
-  }
 
   private async editSettings(): Promise<void> {
     const file = nikxelPath("settings.json");
@@ -808,9 +748,3 @@ function ensureStartMenuShortcut(): void {
   if (!ok) cblog("NikxelApp: couldn't write the Start menu shortcut");
 }
 
-/// 22 -> "10pm". Menu titles read better than 24h clock time here.
-function hourLabel(h: number): string {
-  const suffix = h < 12 ? "am" : "pm";
-  const twelve = h % 12 === 0 ? 12 : h % 12;
-  return `${twelve}${suffix}`;
-}

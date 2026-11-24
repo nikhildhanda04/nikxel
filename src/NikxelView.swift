@@ -78,11 +78,6 @@ class NikxelView: NSView, StateMachineDelegate {
     private var reminderTargetOpacity: CGFloat = 0
     var onReminderDismissed: (() -> Void)?
 
-    // Meeting indicator (yellow dot)
-    var isInMeeting = false
-    private var meetingDotOpacity: CGFloat = 0
-    private var meetingDotTargetOpacity: CGFloat = 0
-
     // Active texter bubble (chatbot)
     var activeTexterName: String? = nil
     private var texterOpacity: CGFloat = 0
@@ -570,15 +565,6 @@ class NikxelView: NSView, StateMachineDelegate {
             texterOpacity = max(0, texterOpacity - CGFloat(dt) * texterFadeSpeed)
         }
 
-        // Meeting yellow dot fade
-        meetingDotTargetOpacity = isInMeeting ? 1 : 0
-        let meetingDotFadeSpeed: CGFloat = 4.0
-        if meetingDotTargetOpacity > meetingDotOpacity {
-            meetingDotOpacity = min(1, meetingDotOpacity + CGFloat(dt) * meetingDotFadeSpeed)
-        } else if meetingDotTargetOpacity < meetingDotOpacity {
-            meetingDotOpacity = max(0, meetingDotOpacity - CGFloat(dt) * meetingDotFadeSpeed)
-        }
-
         // Reminders bubbles fade + GC
         if !reminderBubbles.isEmpty {
             var changed = false
@@ -656,7 +642,7 @@ class NikxelView: NSView, StateMachineDelegate {
             || currentState == .recording || currentState == .momReady
             || bubbleOpacity > 0 || isOverheated()
         let key: [CGFloat] = [CGFloat(frameIndex), (bounce * 2).rounded(), (wiggle * 2).rounded(), scale,
-                              reminderOpacity, texterOpacity, meetingDotOpacity]
+                              reminderOpacity, texterOpacity]
         if animating || key != drawnKey { drawnKey = key; needsDisplay = true }
         runTimer(hz: puffActive || springActive || currentState == .dragging ? 60 : 30)
     }
@@ -764,21 +750,6 @@ class NikxelView: NSView, StateMachineDelegate {
             let str = NSAttributedString(string: timer, attributes: attrs)
             let textSize = str.size()
             str.draw(at: NSPoint(x: dotX + 10, y: dotY - textSize.height/2))
-        }
-
-        // Meeting indicator (yellow dot above avatar)
-        if meetingDotOpacity > 0.01 {
-            let dotRadius: CGFloat = 6
-            let dotX = cx
-            let dotY = headY(14)
-            ctx.saveGState()
-            // Outer glow
-            ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(meetingDotOpacity * 0.3).cgColor)
-            ctx.fillEllipse(in: NSRect(x: dotX - dotRadius - 3, y: dotY - dotRadius - 3, width: (dotRadius+3)*2, height: (dotRadius+3)*2))
-            // Inner dot
-            ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(meetingDotOpacity).cgColor)
-            ctx.fillEllipse(in: NSRect(x: dotX - dotRadius, y: dotY - dotRadius, width: dotRadius*2, height: dotRadius*2))
-            ctx.restoreGState()
         }
 
         // (Calendar bubble + Apple Reminders bubbles are now real NSGlassEffectView

@@ -3,6 +3,7 @@ import { escapeHtml as esc, favicon, fmt, inline as inl, isNone, parseLocalDate 
 import { anchor, count, generic, isEmpty, lead, parse, Section } from "../recording/notePage";
 import type { DayStats } from "./dayLogger";
 import { CloudSync } from "./cloudSync";
+import { readText, writeAtomic } from "../core/paths";
 
 /// Port of DayPage.swift.
 ///
@@ -277,6 +278,32 @@ function markTask(markdown: string, index: number, done: boolean): string | null
   return null;
 }
 
+/// Ticks open task `index` on a day page: "— done" in the .md (what
+/// tomorrow's summary and the morning card read) and the box in the .html.
+export function tick(page: string, i: number, done: boolean): boolean {
+  const md = page.replace(/\.[^.\\/]*$/, "") + ".md";
+  const text = readText(md), updated = text != null ? markTask(text, i, done) : null, html = readText(page);
+  if (updated == null || html == null) return false;
+  try { writeAtomic(md, updated); } catch { return false; }
+  try { writeAtomic(page, html.replace(new RegExp(`data-i="${i}"( checked)?`, "g"), `data-i="${i}"` + (done ? " checked" : ""))); } catch { /* the .md has it */ }
+  return true;
+}
+
+/// The day's open tasks with the index `tick` and the page use: [(i, text)].
+export function openTasksIndexed(markdown: string): { i: number; text: string }[] {
+  const out: { i: number; text: string }[] = [];
+  let inside = false, n = 0;
+  for (const raw of markdown.split("\n")) {
+    if (raw.startsWith("## ")) { inside = raw.slice(3).trim().toLowerCase() === "open tasks"; continue; }
+    if (!inside || !(raw.startsWith("- ") || raw.startsWith("* "))) continue;
+    const m = STATUS.exec(raw);
+    if (!m) continue;
+    if (m[1].toLowerCase() !== "done") out.push({ i: n, text: raw.slice(2, m.index).replace(/\*\*/g, "") });
+    n++;
+  }
+  return out;
+}
+
 /// A trailing "— open" becomes a pill; everything else stays as written.
 function withStatus(t: string): string {
   const m = STATUS.exec(t);
@@ -448,4 +475,4 @@ footer { margin-top: 28px; color: var(--faint); font-size: 12.5px; }
 }
 `;
 
-export const DayPage = { html, markTask };
+export const DayPage = { html, markTask, tick, openTasksIndexed };

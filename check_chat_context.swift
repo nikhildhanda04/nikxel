@@ -1,5 +1,5 @@
 // Runnable check for ChatContext (local blocks, cap rule, prompt).
-//   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/ccc src/ChatContext.swift src/CloudSync.swift check_chat_context.swift && /tmp/ccc
+//   swiftc -parse-as-library -target arm64-apple-macos15.0 -o /tmp/ccc src/ChatContext.swift src/CloudSync.swift src/NoteName.swift check_chat_context.swift && /tmp/ccc
 import Foundation
 
 @main struct Check {

@@ -43,11 +43,12 @@ export interface AvatarSurface {
   setReminderText(text: string | null): void;
   /// ms timestamp (Date.now()) recording started, or null — drives the timer.
   setRecordingStartedAt(ms: number | null): void;
-  setInMeeting(on: boolean): void;
   setActiveTexter(name: string | null): void;
   applyAvatarSize(): void;
   reloadSprites(): void;
   triggerPuff(): void;
+  /// One line for Copy Logs: where the window is, the display, whether it takes clicks.
+  diagnostics(): string;
 }
 
 let avatar: AvatarSurface | null = null;
@@ -99,6 +100,5 @@ export const ui = {
   dismissReminder(id: string): void { avatar?.dismissReminder(id); },
   setReminderText(text: string | null): void { avatar?.setReminderText(text); },
   setRecordingStartedAt(ms: number | null): void { avatar?.setRecordingStartedAt(ms); },
-  setInMeeting(on: boolean): void { avatar?.setInMeeting(on); },
   setActiveTexter(name: string | null): void { avatar?.setActiveTexter(name); },
 };

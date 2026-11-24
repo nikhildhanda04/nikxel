@@ -15,7 +15,7 @@ enum ChatContext {
     }
 
     /// Daily summaries, meeting minutes and notes dated within `days` days up to today, newest first
-    /// (daily, meeting, note within a day). Files whose first 10 characters aren't a date, or that don't end .md, are skipped.
+    /// (daily, meeting, note within a day). Files not dated by NoteName.stamp, or that don't end .md, are skipped.
     static func localBlocks(root: URL, today: Date, days: Int = 14) -> [Block] {
         let end = dayString(today)
         let start = dayString(Calendar.current.date(byAdding: .day, value: -(days - 1), to: today) ?? today)
@@ -24,7 +24,7 @@ enum ChatContext {
         for kind in ["daily", "meeting", "note"] {
             let dir = root.appendingPathComponent(kind == "meeting" ? "meetings" : kind == "note" ? "notes" : "daily")
             for f in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where f.hasSuffix(".md") {
-                let date = String(f.prefix(10))
+                let date = String(NoteName.stamp(String(f.dropLast(3))).prefix(10))  // "<name> <stamp>" once named
                 guard dateRe.firstMatch(in: date, range: NSRange(date.startIndex..., in: date)) != nil,
                       date >= start, date <= end,
                       let text = try? String(contentsOf: dir.appendingPathComponent(f), encoding: .utf8) else { continue }

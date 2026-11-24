@@ -50,6 +50,27 @@ export function micCallSource(key: string): string | null {
   return null;
 }
 
+/// Holding the mic without it being a recording: Nikxel itself (its recorder
+/// and chat mic; electron.exe in a dev build), Cortana and voice typing.
+const IGNORED_MIC = /^(nikxel|electron)\.exe$|cortana|windows\.client|voiceaccess|texttospeech|speechruntime/i;
+
+/// Any other app holding the mic, by a readable name ("SoundRecorder",
+/// "obs64"), or null: one that isn't a call app and isn't Nikxel or Windows
+/// speech. Not a meeting -- it doesn't change isInMeeting, so dictation
+/// doesn't put the WhatsApp bot in meeting mode -- but Nikxel offers to
+/// record it all the same. Mirrors MeetingDetector.micUsers on the Mac.
+export function micOtherApp(keys: string[]): string | null {
+  for (const key of keys) {
+    if (micCallSource(key) !== null) continue;
+    const exe = key.includes("#") ? key.split("#").pop() ?? "" : key;
+    if (IGNORED_MIC.test(exe)) continue;
+    // "Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe" -> "WindowsSoundRecorder"; "C:#…#obs64.exe" -> "obs64".
+    const name = key.includes("#") ? exe.replace(/\.exe$/i, "") : (exe.split("_")[0].split(".").pop() ?? exe);
+    if (name) return name;
+  }
+  return null;
+}
+
 /// Zoom titles its in-call window "Zoom Meeting" / "Zoom Webinar" — enough on
 /// its own, even when the user joined muted with the mic not yet opened.
 export function isZoomMeetingWindow(proc: string, title: string): boolean {
@@ -99,6 +120,9 @@ export class MeetingDetector {
   private autoDetected = false;
   /// What the auto-detection saw, for the "record it?" prompt. null when none.
   source: string | null = null;
+  /// Any other app holding the microphone (micOtherApp), and who to tell when it changes.
+  micApp: string | null = null;
+  onMicAppChanged: ((app: string | null) => void) | null = null;
   private _manualOverride = false;
   private _isInMeeting = false;
   private checking = false;
@@ -152,6 +176,8 @@ export class MeetingDetector {
         this.source = meetingSource(s);
         this.autoDetected = this.source !== null;
         this.recomputeState();
+        const other = micOtherApp(s.mic);
+        if (other !== this.micApp) { this.micApp = other; this.onMicAppChanged?.(other); }
       })
       .catch(() => {})
       .finally(() => { this.checking = false; });

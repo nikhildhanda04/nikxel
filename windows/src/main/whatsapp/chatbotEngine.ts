@@ -228,6 +228,7 @@ export class ChatbotEngine {
 
   private startPolling(): void {
     if (!this.isEnabled) return;
+    ChromeWhatsApp.setLive(true);
     const want = MeetingDetector.shared.isInMeeting ? this.meetingPollInterval
       : Settings.waBotMode === "always" ? this.alwaysPollInterval : this.idlePollInterval;
     if (this.timer && this.currentInterval === want) return;
@@ -239,6 +240,7 @@ export class ChatbotEngine {
   }
 
   private stopPolling(): void {
+    ChromeWhatsApp.setLive(false);
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.currentInterval = 0;

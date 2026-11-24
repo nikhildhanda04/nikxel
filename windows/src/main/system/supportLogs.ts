@@ -5,6 +5,7 @@ import { app, systemPreferences, webContents } from "electron";
 import { NIKXEL_DIR } from "../core/paths";
 import { run, which, powershell } from "../core/proc";
 import { Updater } from "./updater";
+import { ui } from "../core/ui";
 
 /// "Copy Logs" in the menu: one plain-text report for a user to paste into a
 /// chat when something breaks, instead of being walked through folders.
@@ -25,6 +26,7 @@ async function report(): Promise<string> {
   // privacy switch is the one that can be off.
   out += `Permissions: mic=${safe(() => systemPreferences.getMediaAccessStatus("microphone"))}\n`;
   out += "Memory: " + await memory() + "\n";
+  out += `Avatar: ${safe(() => ui.avatar?.diagnostics() ?? "not created")}\n`;
 
   out += section("chatbot.log", await tail(path.join(nx, "chatbot.log"), 60));
   out += section("debug.log", await tail(path.join(nx, "debug.log"), 40));

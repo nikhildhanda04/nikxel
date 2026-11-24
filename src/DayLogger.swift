@@ -194,7 +194,7 @@ class DayLogger {
         // the .md check, so a meeting is never counted twice.
         if let files = try? FileManager.default.contentsOfDirectory(atPath: meetingsDir.path) {
             let prefix = Self.dayKey(date)
-            stats.meetings = files.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".md") }.count
+            stats.meetings = files.filter { $0.hasSuffix(".md") && NoteName.stamp(String($0.dropLast(3))).hasPrefix(prefix) }.count
         }
 
         stats.messages = Self.countMessages(WhatsAppActivityLogger.readLog(file: "chats", for: date))
@@ -758,14 +758,14 @@ DAILY SUMMARIES:
     private func aggregateMeetings(for date: Date) -> String {
         guard let files = try? FileManager.default.contentsOfDirectory(at: meetingsDir, includingPropertiesForKeys: nil) else { return "" }
         let prefix = Self.dayKey(date)
-        let today = files.filter { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "md" }
-                         .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+        func stamp(_ f: URL) -> String { NoteName.stamp(f.deletingPathExtension().lastPathComponent) }
+        let today = files.filter { $0.pathExtension == "md" && stamp($0).hasPrefix(prefix) }
+                         .sorted(by: { stamp($0) < stamp($1) })
         if today.isEmpty { return "" }
         var lines: [String] = []
         for f in today {
-            let stem = f.deletingPathExtension().lastPathComponent
-            // Stem format: yyyy-MM-dd-HHmmss
-            let comps = stem.split(separator: "-")
+            // Stem format: yyyy-MM-dd-HHmmss, after "<name> " once named (NoteName)
+            let comps = stamp(f).split(separator: "-")
             let time: String
             if comps.count == 4, comps[3].count == 6 {
                 let s = comps[3]

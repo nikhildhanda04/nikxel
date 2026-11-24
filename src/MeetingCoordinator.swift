@@ -298,6 +298,7 @@ class MeetingCoordinator: AudioRecorderDelegate {
             kind: .success,
             lifetime: 25,
             action: { NSWorkspace.shared.openFile(outURL) })
+        if mode == .meeting { Automations.shared.fire("meeting", file: mdURL) }
     }
 
     private func showFailureCard(title: String, error: Error, hint: String) {

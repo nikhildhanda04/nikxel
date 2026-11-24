@@ -171,9 +171,9 @@ enum Learning {
         let long = DateFormatter(), short = DateFormatter()
         long.dateFormat = "yyyy-MM-dd-HHmmss"; short.dateFormat = "yyyy-MM-dd-HHmm"
         return names.compactMap { name in
-            guard name.hasSuffix(".md"), !name.contains(".transcript"), days.contains(String(name.prefix(10))) else { return nil }
-            let stem = String(name.dropLast(3)), url = dir.appendingPathComponent(name)
-            guard let start = long.date(from: stem) ?? short.date(from: stem),
+            let stem = String(name.dropLast(3)), stamp = NoteName.stamp(stem), url = dir.appendingPathComponent(name)
+            guard name.hasSuffix(".md"), !name.contains(".transcript"), days.contains(String(stamp.prefix(10))) else { return nil }
+            guard let start = long.date(from: stamp) ?? short.date(from: stamp),
                   let end = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
                   end.timeIntervalSince(start) <= 4 * 3600 else { return nil }  // a later edit of the summary moves the write time: not a real end
             let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""

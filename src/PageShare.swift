@@ -140,16 +140,21 @@ enum PageShare {
         case "/task":
             // A ticked box on a day page. The .md is what tomorrow's summary
             // and the morning card read, so "— done" there drops the task.
-            let md = file.deletingPathExtension().appendingPathExtension("md"), done = q("done") == "1"
-            guard let i = q("i").flatMap(Int.init), let text = try? String(contentsOf: md, encoding: .utf8),
-                  let updated = DayPage.markTask(in: text, index: i, done: done),
-                  let html = try? String(contentsOf: file, encoding: .utf8),
-                  (try? updated.write(to: md, atomically: true, encoding: .utf8)) != nil else {
+            guard let i = q("i").flatMap(Int.init), DayPage.tick(file, index: i, done: q("done") == "1") else {
                 return ["error": "Couldn't update that task."]
             }
-            let ticked = html.replacingOccurrences(of: "data-i=\"\(i)\"( checked)?", with: "data-i=\"\(i)\"" + (done ? " checked" : ""), options: .regularExpression)
-            try? ticked.write(to: file, atomically: true, encoding: .utf8)
             return ["ok": true]
+        case "/name":
+            // A summary still named by its timestamp: suggest a title, or rename to the one picked.
+            guard PageEdit.editable(file) else { return ["error": "This summary can't be renamed."] }
+            if let to = q("to") {
+                do { return ["url": try NoteName.rename(file, to: to, editsDir: PageEdit.backups).absoluteString] }
+                catch { return ["error": error.localizedDescription] }
+            }
+            DispatchQueue.global().async {
+                later(PageEdit.suggestName(for: file).map { ["name": $0] } ?? ["error": "Nikxel couldn't think of a name — type one."])
+            }
+            return nil
         case "/version":
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             return ["v": date?.timeIntervalSince1970 ?? 0]
@@ -277,7 +282,7 @@ enum PageShare {
     /// pointer to what it was about.
     private static func meetingContext(_ file: URL) -> String {
         let stem = file.deletingPathExtension().lastPathComponent        // 2026-11-12-103105
-        let date = stem.prefix(10)
+        let date = NoteName.stamp(stem).prefix(10)
         var headline = ""
         if let html = try? String(contentsOf: file, encoding: .utf8),
            let r = html.range(of: #"<h1[^>]*>[\s\S]*?</h1>"#, options: .regularExpression) {
@@ -353,6 +358,17 @@ body.nx-has-chat{padding-bottom:104px}
 #nx-share .nx-msg{margin-top:8px;font-size:12px;color:#6e6e73}
 #nx-share .nx-msg:empty{display:none}
 @media print{#nx-share{display:none}}
+#nx-name{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;padding:10px 12px;border:1px solid rgba(94,92,230,.25);border-radius:14px;background:rgba(94,92,230,.06);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+#nx-name .nxn-l{font-weight:600;color:#5e5ce6}
+#nx-name .nxn-in{flex:1;min-width:180px;padding:8px 10px;border:1px solid #d2d2d7;border-radius:9px;font:inherit;background:#fff;color:#1d1d1f}
+#nx-name button{border:0;border-radius:999px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+#nx-name .nxn-ok{background:#1d1d1f;color:#fff}
+#nx-name .nxn-no{background:transparent;color:#6e6e73}
+#nx-name button:disabled{opacity:.5;cursor:default}
+#nx-name .nxn-msg{width:100%;font-size:12px;color:#6e6e73}
+#nx-name .nxn-msg:empty{display:none}
+@media (prefers-color-scheme:dark){#nx-name .nxn-in{background:#1c1c1e;color:#f5f5f7;border-color:#3a3a3c}#nx-name .nxn-ok{background:#f5f5f7;color:#1d1d1f}#nx-name .nxn-no{color:#a0a0a8}}
+@media print{#nx-name{display:none}}
 li.task .nx-assign{margin-left:8px;vertical-align:middle;background:#1d1d1f;color:#fff;border:0;border-radius:999px;padding:3px 11px;font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;opacity:.85}
 li.task .nx-assign:hover{opacity:1}
 li.task .nx-assign:disabled{opacity:.6;cursor:default}
@@ -515,6 +531,37 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       else alert((r && r.error) || "Couldn't build the client summary.");
     });
   };
+
+  // A named summary ("<name> <stamp>.html") shows its name on the tab, not the heading's date.
+  var named = /^(.+) \d{4}-\d\d-\d\d-\d{4,6}\.html$/.exec(path.split(/[\\/]/).pop());
+  if (named) document.title = named[1];
+
+  // --- A summary still named by its timestamp: Nikxel suggests a title on
+  // the page; the user saves it as is, edits it first, or keeps the date name.
+  var NK = "nx-named:" + path, kept = false;
+  try { kept = !!localStorage.getItem(NK); } catch (e) {}
+  if (/^\d{4}-\d\d-\d\d-\d{6}\.html$/.test(path.split(/[\\/]/).pop()) && !kept) {
+    var nb = document.createElement("div"); nb.id = "nx-name";
+    nb.innerHTML = '<span class="nxn-l">Name this file</span><input class="nxn-in" placeholder="Nikxel is thinking of a name…" disabled>'
+      + '<button type="button" class="nxn-ok" disabled>Save name</button><button type="button" class="nxn-no">Keep date name</button><span class="nxn-msg"></span>';
+    var nmain = document.querySelector("main") || document.body; nmain.insertBefore(nb, nmain.firstChild);
+    var nin = nb.querySelector(".nxn-in"), nok = nb.querySelector(".nxn-ok"), nmsg = nb.querySelector(".nxn-msg");
+    call("name").then(function (r) {
+      nin.disabled = nok.disabled = false; nin.placeholder = "Type a name";
+      if (r.name) nin.value = r.name; else nmsg.textContent = r.error || "";
+    });
+    var nsave = function () {
+      var v = nin.value.trim(); if (!v) { nin.focus(); return; }
+      nok.disabled = true; nmsg.textContent = "Renaming…";
+      call("name", { to: v }).then(function (r) {
+        if (r.url) { location.replace(r.url); return; }
+        nok.disabled = false; nmsg.textContent = r.error || "Couldn't rename.";
+      });
+    };
+    nok.onclick = nsave;
+    nin.onkeydown = function (e) { if (e.key === "Enter") nsave(); };
+    nb.querySelector(".nxn-no").onclick = function () { try { localStorage.setItem(NK, "1"); } catch (e) {} nb.remove(); };
+  }
 
   // --- "Share to project": pick one of your dashboard projects, see exactly
   // what goes (the minutes minus the client summary), then Send.

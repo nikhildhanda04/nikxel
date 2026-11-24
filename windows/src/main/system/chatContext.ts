@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as NoteName from "./noteName";
 
 /// Builds the text the avatar chat answers from: the last 14 days of daily summaries, meeting minutes and notes
 /// under ~/Documents/nikxel, plus the dashboard project feed. Electron-free. Port of ChatContext.swift.
@@ -22,7 +23,7 @@ export function localBlocks(root: string, today: Date, days = 14): Block[] {
     let files: string[] = [];
     try { files = fs.readdirSync(path.join(root, sub)); } catch { continue; }
     for (const f of files) {
-      const date = f.slice(0, 10);
+      const date = NoteName.stamp(f.slice(0, -3)).slice(0, 10);  // "<name> <stamp>" once named
       if (!f.endsWith(".md") || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date < start || date > end) continue;
       try { out.push({ kind, date, name: f.slice(0, -3), text: fs.readFileSync(path.join(root, sub, f), "utf8").trim() }); } catch { /* unreadable */ }
     }

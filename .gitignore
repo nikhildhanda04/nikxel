@@ -1,6 +1,8 @@
 *.png
 !nikxel_avatar.png
 !sprites.png
+# The dashboard's dithered clouds, behind the onboarding window.
+!vendor/clouds.png
 .DS_Store
 /tmp/
 *.pyc
@@ -30,3 +32,7 @@ windows/release/
 # The owner's private features (build.sh compiles them when present). Never
 # published: anyone else's clone builds without them.
 /private/
+# Written by build.sh into the bundle on every build.
+Nikxel.app/Contents/Resources/commit
+Nikxel.app/Contents/Resources/repo_path
+Nikxel.app/Contents/Resources/framer-motion-dom.js

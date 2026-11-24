@@ -41,7 +41,6 @@ type FromMain =
   | { type: "dismissReminder"; id: string }
   | { type: "reminderText"; text: string | null }
   | { type: "recording"; startedAt: number | null }
-  | { type: "meeting"; on: boolean }
   | { type: "texter"; name: string | null };
 
 type ToMain =
@@ -55,7 +54,8 @@ type ToMain =
   | { type: "cardTap"; id: number }
   | { type: "cardButton"; id: number; index: number }
   | { type: "cardGone"; id: number }
-  | { type: "reminderTap"; id: string };
+  | { type: "reminderTap"; id: string }
+  | { type: "press" };
 
 declare global {
   interface Window {
@@ -370,10 +370,6 @@ let bubbleScale = 1;
 let reminderText: string | null = null;
 let reminderOpacity = 0;
 
-// Meeting indicator (yellow dot)
-let isInMeeting = false;
-let meetingDotOpacity = 0;
-
 // Active texter bubble (chatbot)
 let activeTexterName: string | null = null;
 let texterOpacity = 0;
@@ -654,7 +650,6 @@ function tick(): void {
 
   reminderOpacity = fade(reminderOpacity, reminderText !== null ? 1 : 0, dt * 5.0);
   texterOpacity = fade(texterOpacity, activeTexterName !== null ? 1 : 0, dt * 6.0);
-  meetingDotOpacity = fade(meetingDotOpacity, isInMeeting ? 1 : 0, dt * 4.0);
 
   // Reminder bubbles fade + GC
   for (const b of reminderBubbles) {
@@ -807,20 +802,6 @@ function draw(): void {
     ctx.strokeText(timer, dotX + 10, base);
     ctx.fillStyle = "white";
     ctx.fillText(timer, dotX + 10, base);
-    ctx.restore();
-  }
-
-  // Meeting indicator (yellow dot above avatar)
-  if (meetingDotOpacity > 0.01) {
-    const dotRadius = 6;
-    const dotY = headY(14);
-    ctx.save();
-    // Outer glow
-    ctx.fillStyle = rgba(SYSTEM_YELLOW, meetingDotOpacity * 0.3);
-    circle(ctx, cx, dotY, dotRadius + 3);
-    // Inner dot
-    ctx.fillStyle = rgba(SYSTEM_YELLOW, meetingDotOpacity);
-    circle(ctx, cx, dotY, dotRadius);
     ctx.restore();
   }
 
@@ -1249,8 +1230,15 @@ function pointFrom(e: MouseEvent): { x: number; y: number } {
   return { x: e.clientX, y: e.clientY };
 }
 
+/// When the window last saw the mouse itself. Its own coordinates are exact;
+/// main's polled ones can be off by the display scaling on some setups, so for
+/// a moment after a real move they don't overwrite it.
+let nativeMoveAt = 0;
+
 window.addEventListener("mousemove", e => {
   pointer = pointFrom(e);
+  nativeMoveAt = now();
+  updateInteractive();
   // Safety: a release we never heard about (it happened somewhere we don't
   // get events) must not leave Nikxel glued to the cursor.
   if (localDragging && (e.buttons & 1) === 0) endPress();
@@ -1258,6 +1246,7 @@ window.addEventListener("mousemove", e => {
 
 window.addEventListener("mousedown", e => {
   if (e.button !== 0) return;
+  post({ type: "press" });
   const p = pointFrom(e);
   pointer = p;
   // Reminder bubble hit-test takes priority over drag/double-click so a tap
@@ -1333,24 +1322,53 @@ let dirty = true;   // set by every message from main but the cursor
 let lastFrame = 0;
 
 function frame(): void {
-  requestAnimationFrame(frame);
   const t = now();
-  // 30 fps, except while something follows the hand.
+  // Vsync only while something follows the hand; requestAnimationFrame wakes
+  // at 60-144 Hz even on frames it skips, which kept a core busy while idle.
   const fast = localDragging || currentState === "dragging" || puffActive || springActive;
-  if (!fast && t - lastFrame < 1 / 30 - 0.002) return;
-  lastFrame = t;
-  tick();
-  const animating = fast || currentState === "recording" || currentState === "momReady"
+  const fading = [reminderOpacity, texterOpacity, card?.opacity ?? 1, ...reminderBubbles.map(b => b.opacity)]
+    .some(o => o > 0 && o < 1);
+  const animating = fast || fading || currentState === "recording" || currentState === "momReady"
     || bubbleOpacity > 0 || isOverheated(t);
-  const key = [frameIndex, Math.round(bounce * 2), Math.round(wiggle * 2), scale, facingRight,
-    reminderOpacity, texterOpacity, meetingDotOpacity, card?.opacity ?? -1,
-    reminderBubbles.map(b => b.opacity).join("|")].join();
-  if (dirty || animating || key !== drawnKey) { dirty = false; drawnKey = key; draw(); }
+  try {
+    if (!fast && t - lastFrame < 1 / 30 - 0.002) return;
+    lastFrame = t;
+    tick();
+    // The idle bob counts in whole pixels: half-pixel steps redrew the whole
+    // canvas ~8 times a second for a 2px sway.
+    const bob = currentState === "idle" ? Math.round(bounce) : Math.round(bounce * 2);
+    const key = [frameIndex, bob, Math.round(wiggle * 2), scale, facingRight,
+      reminderOpacity, texterOpacity, card?.opacity ?? -1,
+      reminderBubbles.map(b => b.opacity).join("|")].join();
+    if (dirty || animating || key !== drawnKey) { dirty = false; drawnKey = key; draw(); }
+  } finally {
+    // Hidden: once a second, so it's still running if Windows misreports
+    // visibility (it has paused this loop before, see updateInteractive).
+    if (fast) { timer = null; requestAnimationFrame(frame); }
+    else timer = setTimeout(frame, document.visibilityState === "hidden" ? 1000 : animating ? 1000 / 30 : 1000 / 10);
+  }
 }
+
+let timer: ReturnType<typeof setTimeout> | null = null;
+function startLoop(): void {
+  if (!started) return;
+  lastTick = now();
+  frame();
+}
+/// Something changed (a message from main, a press on Nikxel): draw now
+/// rather than at the next idle tick.
+function kick(): void {
+  if (!timer) return;   // on vsync already, or not started
+  clearTimeout(timer);
+  timer = null;
+  frame();
+}
+document.addEventListener("visibilitychange", () => { dirty = true; kick(); });
+window.addEventListener("pointerdown", kick, true);
 
 bridge.onMessage(raw => {
   const m = raw as FromMain;
-  if (m.type !== "cursor") dirty = true;
+  if (m.type !== "cursor") { dirty = true; queueMicrotask(kick); }
   switch (m.type) {
     case "init":
       currentState = m.state;
@@ -1358,7 +1376,7 @@ bridge.onMessage(raw => {
       bubblesBelow = m.bubblesBelow;
       geom = m.geom;
       Promise.all([loadFonts(m.fontBold, m.fontMedium), loadSprites(m.sprite, m.fallback)]).finally(() => {
-        if (!started) { started = true; lastTick = now(); requestAnimationFrame(frame); }
+        if (!started) { started = true; startLoop(); }
         post({ type: "loaded" });
       });
       break;
@@ -1375,7 +1393,8 @@ bridge.onMessage(raw => {
       charSize = 156 * m.avatarSize;
       break;
     case "cursor":
-      pointer = { x: m.x, y: m.y };
+      // Outside the window (y -1) always counts: the window gets no events there.
+      if (m.y === -1 || now() - nativeMoveAt > 0.25) pointer = { x: m.x, y: m.y };
       updateInteractive();
       break;
     case "geom":
@@ -1413,9 +1432,6 @@ bridge.onMessage(raw => {
       break;
     case "recording":
       recordingStartedAt = m.startedAt;
-      break;
-    case "meeting":
-      isInMeeting = m.on;
       break;
     case "texter":
       activeTexterName = m.name;

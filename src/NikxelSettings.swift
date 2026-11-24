@@ -87,6 +87,8 @@ enum NikxelSettings {
         var userContext: String?
         var botMemoryDays: Int?
         var googleSyncEnabled: Bool?
+        var openSummariesInApp: Bool?
+        var appearance: String?
         var summaryTemplate: String?
         var waBotMode: String?
         var waGroupReplies: Bool?
@@ -266,6 +268,18 @@ enum NikxelSettings {
     static var googleSyncEnabled: Bool {
         get { load().googleSyncEnabled ?? true }
         set { save { $0.googleSyncEnabled = newValue } }
+    }
+
+    /// The Nikxel window's look: "system", "light" or "dark".
+    static var appearance: String {
+        get { load().appearance.flatMap { ["light", "dark"].contains($0) ? $0 : nil } ?? "system" }
+        set { save { $0.appearance = newValue } }
+    }
+
+    /// Summary pages open in the Nikxel window's reader instead of the browser.
+    static var openSummariesInApp: Bool {
+        get { load().openSummariesInApp ?? true }
+        set { save { $0.openSummariesInApp = newValue } }
     }
 
     /// When the WhatsApp bot may reply. See `WABotMode`.

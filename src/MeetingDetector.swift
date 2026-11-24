@@ -14,6 +14,12 @@ class MeetingDetector {
     private var autoDetected = false
     /// What the auto-detection saw, for the "record it?" prompt: "a WhatsApp call", "Google Meet". nil when none.
     private(set) var source: String?
+    /// Any other app holding the microphone (a voice recorder, a call app not
+    /// in `callApps`), by name. Not a meeting -- it doesn't change
+    /// `isInMeeting`, so the WhatsApp bot isn't put in meeting mode by
+    /// dictation -- but Nikxel offers to record it all the same.
+    private(set) var micApp: String?
+    var onMicAppChanged: ((String?) -> Void)?
 
     /// When true, force `isInMeeting` regardless of auto-detection. Used for
     /// offline / in-person meetings where there's no Meet tab to detect.
@@ -56,12 +62,14 @@ class MeetingDetector {
             // The mic first: one CoreAudio read says whether a call app has it open right now.
             // A browser holding the mic is named after the Meet window when one is showing.
             let meet = { Self.checkWindowTitles() || Self.checkArcTabs() }
-            let mic = Self.micCallSource()
+            let (mic, other) = Self.micUsers()
             let source = mic == Self.browserCall ? (meet() ? "Google Meet" : mic) : mic ?? (meet() ? "Google Meet" : nil)
             DispatchQueue.main.async {
-                self?.source = source
-                self?.autoDetected = source != nil
-                self?.recomputeState()
+                guard let self else { return }
+                self.source = source
+                self.autoDetected = source != nil
+                self.recomputeState()
+                if other != self.micApp { self.micApp = other; self.onMicAppChanged?(other) }
             }
         }
     }
@@ -79,16 +87,23 @@ class MeetingDetector {
     ]
     private static let browserCall = "a call in your browser"
 
-    /// The first call app with microphone input running, via CoreAudio's per-process objects (macOS 14.2+).
-    private static func micCallSource() -> String? {
+    /// Holding the mic without it being a recording: Nikxel itself (its own
+    /// recorder and chat mic), Siri and dictation.
+    private static let ignoredMicApps = ["com.nikxel.", "com.apple.siri", "com.apple.assistant", "com.apple.corespeech",
+                                         "com.apple.speechrecognitioncore", "com.apple.dictation", "com.apple.hearingaids"]
+
+    /// Who has microphone input running, via CoreAudio's per-process objects (macOS 14.2+):
+    /// the first call app, and the first other app by name.
+    private static func micUsers() -> (call: String?, other: String?) {
+        var other: String?
         func addr(_ sel: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
             AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         }
         let system = AudioObjectID(kAudioObjectSystemObject)
         var a = addr(kAudioHardwarePropertyProcessObjectList), size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(system, &a, 0, nil, &size) == noErr, size > 0 else { return nil }
+        guard AudioObjectGetPropertyDataSize(system, &a, 0, nil, &size) == noErr, size > 0 else { return (nil, nil) }
         var procs = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(system, &a, 0, nil, &size, &procs) == noErr else { return nil }
+        guard AudioObjectGetPropertyData(system, &a, 0, nil, &size, &procs) == noErr else { return (nil, nil) }
         for p in procs {
             var running: UInt32 = 0, rs = UInt32(MemoryLayout<UInt32>.size)
             var ra = addr(kAudioProcessPropertyIsRunningInput)
@@ -97,9 +112,18 @@ class MeetingDetector {
             var ba = addr(kAudioProcessPropertyBundleID)
             guard AudioObjectGetPropertyData(p, &ba, 0, nil, &bs, &bundle) == noErr,
                   let id = bundle?.takeRetainedValue() as String? else { continue }
-            if let hit = callApps.first(where: { id.lowercased().hasPrefix($0.0.lowercased()) }) { return hit.1 }  // helpers report lowercase IDs
+            let lower = id.lowercased()   // helpers report lowercase IDs
+            if let hit = callApps.first(where: { lower.hasPrefix($0.0.lowercased()) }) { return (hit.1, nil) }
+            if other == nil, !ignoredMicApps.contains(where: { lower.hasPrefix($0) }) { other = appName(id) }
         }
-        return nil
+        return (nil, other)
+    }
+
+    /// "Voice Memos" for com.apple.VoiceMemos: the running app's name, else the installed app's, else the ID's last part.
+    private static func appName(_ bundleID: String) -> String {
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first, let name = app.localizedName { return name }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return url.deletingPathExtension().lastPathComponent }
+        return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
     }
 
     private static func checkArcTabs() -> Bool {

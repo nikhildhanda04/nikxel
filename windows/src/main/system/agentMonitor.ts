@@ -24,6 +24,10 @@ export class AgentMonitor {
   private lastPid: number | null = null;
   private currentAgent: string | null = null;
   private busy = false;
+  /// No agent running: look every 8 s, not every 2. Each look is a PowerShell
+  /// process scan (far dearer than the Mac's `ps`), and most of the day
+  /// there's nothing to find; an agent starting is seen within 8 s.
+  private nextCheck = 0;
   /// pid -> (CPU seconds, when) from the previous poll, to turn the
   /// cumulative CPU time Windows reports into a percentage.
   private prevCpu = new Map<number, { cpu: number; at: number }>();
@@ -46,11 +50,12 @@ export class AgentMonitor {
 
   private async check(): Promise<void> {
     // A slow poll (a cold PowerShell start) must not stack ticks behind it.
-    if (this.busy) return;
+    if (this.busy || Date.now() < this.nextCheck) return;
     this.busy = true;
     try {
       const found = await this.findAgent();
       const sm = this.stateMachine;
+      this.nextCheck = found ? 0 : Date.now() + 7500;
       if (!found) {
         this.lastActive = null; this.lastPid = null; this.currentAgent = null;
         if (sm.state === "thinking" || sm.state === "done") sm.setState("idle");

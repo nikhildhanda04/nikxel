@@ -5,7 +5,7 @@ import Foundation
 /// of the user's dashboard projects. Mirrors projectShare.ts.
 enum ProjectShare {
     /// What a share of the minutes page `file` sends: the stem is the meeting id,
-    /// the "# " line the title, the stem's first 10 characters the date.
+    /// the "# " line the title, the stem's stamp (NoteName) the date.
     /// nil when the page isn't saved meeting minutes.
     static func meeting(_ file: URL) -> (id: String, title: String, date: String, body: String)? {
         guard file.deletingLastPathComponent().lastPathComponent == "meetings",
@@ -13,7 +13,7 @@ enum ProjectShare {
         let stem = file.deletingPathExtension().lastPathComponent
         let title = md.components(separatedBy: "\n").first { $0.hasPrefix("# ") }
             .map { $0.dropFirst(2).trimmingCharacters(in: .whitespaces) } ?? ""
-        return (stem, String((title.isEmpty ? "Meeting" : title).prefix(200)), String(stem.prefix(10)), CloudSync.meetingShareBody(md))
+        return (stem, String((title.isEmpty ? "Meeting" : title).prefix(200)), String(NoteName.stamp(stem).prefix(10)), CloudSync.meetingShareBody(md))
     }
 
     /// `project` nil: {paired, projects, body}, body being exactly what Send would send.

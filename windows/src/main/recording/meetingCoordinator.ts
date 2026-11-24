@@ -15,6 +15,7 @@ import { MeetResult, MeetSpeakers } from "./meetSpeakers";
 import { TwinDistiller } from "../system/twinDistiller";
 import { TwinProfile } from "../system/twinProfile";
 import { GoogleSync } from "../google/googleSync";
+import { Automations } from "../system/automations";
 
 /// Port of MeetingCoordinator.swift.
 
@@ -316,6 +317,7 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
       lifetime: 25,
       action: () => { void openFile(outPath); },
     });
+    if (mode === "meeting") Automations.fire("meeting", mdPath);
   }
 
   private showFailureCard(title: string, error: unknown, hint: string): void {

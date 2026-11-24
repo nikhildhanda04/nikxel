@@ -1,30 +1,28 @@
 import AppKit
+import WebKit
 
-/// First-run (and reopenable-anytime, via the status bar) setup wizard: pick an
-/// avatar, check the transcription tools, connect WhatsApp, and choose which
-/// coding agent Nikxel should shell out to.
+/// First-run (and reopenable-anytime, via the status bar) setup wizard: say
+/// hello, tour what Nikxel does, pick an avatar, check the transcription tools,
+/// connect WhatsApp and Google, and choose which coding agent Nikxel should
+/// shell out to.
 ///
-/// Deliberately AppKit, like the rest of the app. The SwiftUI version of this
-/// screen only compiled on some Macs: in newer SDKs `@State` is a macro, and a
-/// bare `swiftc` build (no Xcode project, no SwiftPM) can't find the
-/// SwiftUIMacros plugin, so every property failed to expand and this file threw
-/// ~30 errors on a fresh clone. AppKit has no such toolchain dependency.
-final class OnboardingWindowController: NSWindowController {
-    private enum Step: Int {
-        case welcome, avatar, deps, whatsapp, google, agent
+/// The window is a WKWebView (OnboardingPage.swift) animated with Framer
+/// Motion's standalone DOM build, vendored at vendor/framer-motion-dom.js --
+/// no React, no node at build time. This controller owns every bit of state
+/// and every side effect; the page only draws `state()` and posts back the
+/// buttons it was clicked. It is not SwiftUI on purpose: in newer SDKs `@State`
+/// is a macro a bare `swiftc` build can't expand.
+final class OnboardingWindowController: NSWindowController, WKScriptMessageHandler, WKNavigationDelegate {
+    private enum Step: String {
+        case welcome, tour, avatar, deps, whatsapp, google, agent, ready
     }
 
     private let momGenerator: MOMGenerator
+    private let web: WKWebView
+    private var pageLoaded = false
     private var step: Step = .welcome
 
-    // Welcome step
-    private var nameField: NSTextField?
-
     // Avatar step
-    private var previewFrames: [NSImage] = []
-    private var previewIndex = 0
-    private var previewTimer: Timer?
-    private var previewImageView: NSImageView?
     private var usingCustomSheet = NikxelSprites.hasCustom
     private var sheetError: String?
     private var promptCopied = false
@@ -40,7 +38,6 @@ final class OnboardingWindowController: NSWindowController {
     private var modelDownloading = false
     private var modelProgress: Double = 0
     private var modelError: String?
-    private var modelProgressBar: NSProgressIndicator?
     /// Running while the Terminal install is going, so the step fills itself
     /// in as whisper and ffmpeg land -- no Re-check click needed.
     private var depsPoll: Timer?
@@ -63,26 +60,49 @@ final class OnboardingWindowController: NSWindowController {
     private var agentTestRun = 0
     private var googlePoll: Timer?
 
-    private static let contentWidth: CGFloat = 440
-    private static let contentHeight: CGFloat = 440
-    private static let padding: CGFloat = 28
+    /// The dashboard's paper (#f6f4ee), so nothing flashes white before the page paints.
+    private static let paper = NSColor(srgbRed: 0.965, green: 0.957, blue: 0.933, alpha: 1)
 
     init(momGenerator: MOMGenerator) {
         self.momGenerator = momGenerator
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: Self.contentWidth, height: Self.contentHeight),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 1160, height: 860),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = "Set up Nikxel"
-        window.center()
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        // The page is light-only, so keep the traffic lights light too.
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = Self.paper
+        window.minSize = NSSize(width: 980, height: 780)
         // Keep the controller (and window) alive across hide/show instead of
         // being deallocated on close, so "Setup Wizard…" can reopen the same
         // window with its current step/state intact.
         window.isReleasedWhenClosed = false
+
+        let config = WKWebViewConfiguration()
+        PageAssets.install(into: config.userContentController)
+        web = WKWebView(frame: .zero, configuration: config)
         super.init(window: window)
-        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: Self.contentHeight))
-        render()
+        config.userContentController.add(self, name: "nx")
+        web.navigationDelegate = self
+        web.setValue(false, forKey: "drawsBackground")
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 1160, height: 860))
+        web.frame = content.bounds
+        web.autoresizingMask = [.width, .height]
+        content.addSubview(web)
+        // The page runs under the transparent title bar, and a web view swallows
+        // drags -- this strip gives the window back somewhere to be moved by.
+        let strip = DragStrip(frame: NSRect(x: 0, y: content.bounds.height - 44, width: content.bounds.width, height: 44))
+        strip.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(strip)
+        window.contentView = content
+        window.center()
+
+        web.loadHTMLString(OnboardingPage.html, baseURL: nil)
     }
 
     required init?(coder: NSCoder) {
@@ -90,420 +110,170 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     deinit {
-        previewTimer?.invalidate()
         waPollTimer?.invalidate()
     }
 
     func show() {
         refreshDeps()
         refreshAvailableAgents()
-        if step == .avatar { startPreview() }
+        // Reopened from the menu: start the page over so the splash plays
+        // again. The step and everything set so far live here, so the page
+        // comes back where the user left it.
+        if pageLoaded, window?.isVisible == false {
+            pageLoaded = false
+            web.loadHTMLString(OnboardingPage.html, baseURL: nil)
+        }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Rendering
+    // MARK: - Page bridge
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageLoaded = true
+        pushFrames()
+        push()
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        let index = body["index"] as? Int ?? -1
+        switch type {
+        case "go":
+            guard let next = (body["step"] as? String).flatMap(Step.init(rawValue:)) else { return }
+            if step == .welcome, let typed = (body["name"] as? String)?.trimmingCharacters(in: .whitespaces), !typed.isEmpty {
+                NikxelSettings.userName = typed
+            }
+            if step == .agent && next == .ready { NikxelSettings.connectedAgent = chosenAgent }
+            go(to: next)
+        case "copyPrompt": copyPrompt()
+        case "chooseSheet": chooseSheet()
+        case "resetSheet": resetSheet()
+        case "downloadModel": downloadModel()
+        case "installDeps": installDeps()
+        case "recheckDeps": refreshDeps()
+        case "language":
+            guard let code = body["code"] as? String else { return }
+            NikxelSettings.transcriptionLanguage = code
+            push()
+        case "connectWhatsApp": startWhatsAppConnect()
+        case "getChrome": openChromeDownload()
+        case "connectGoogle": connectGoogle()
+        case "pickAgent": pickAgent(index)
+        case "copyAgent": copyInstallCommand(index)
+        case "retestAgents": refreshAvailableAgents()
+        case "finish": finishSetup()
+        default: break
+        }
+    }
+
+    /// Hands the page everything it draws. Cheap enough to send whole on every
+    /// change; the page only animates when `step` moves.
+    private func push() {
+        guard pageLoaded, let json = PageAssets.json(state()) else { return }
+        web.evaluateJavaScript("nx.state(\(json))")
+    }
+
+    /// Every row of the active sheet, as PNG data URIs: the page plays the
+    /// row that fits each step (headphones while it listens, typing at the
+    /// agent, the jump when it's done) and runs on row 5 between them. Idle is
+    /// still what the avatar step previews -- a wrong row layout, the likeliest
+    /// way a user's sheet is broken, shows up there immediately.
+    private func pushFrames() {
+        guard pageLoaded else { return }
+        guard let json = PageAssets.json(PageAssets.spriteRows()) else { return }
+        web.evaluateJavaScript("nx.frames(\(json))")
+    }
+
+    private func state() -> [String: Any] {
+        let browser = ChromeBot.availableBrowser()
+        let ready = whisperFound && ffmpegFound && (!usingWhisperCpp || modelInstalled)
+        let agents: [[String: Any]] = CodingAgent.allCases.map { agent in
+            let health = agentHealth[agent]
+            let (text, tone, hint) = Self.describe(health, agent: agent)
+            return [
+                "name": agent.displayName, "text": text, "tone": tone, "hint": hint ?? "",
+                "enabled": health != nil && health != .notInstalled,
+                "chosen": agent == chosenAgent, "copied": agentCopied == agent,
+            ]
+        }
+        return [
+            "step": step.rawValue,
+            "name": NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""),
+            "avatar": [
+                "custom": usingCustomSheet, "error": sheetError ?? "", "copied": promptCopied, "importing": importing,
+                "spec": "PNG, \(NikxelSprites.cols) columns × \(NikxelSprites.rows) rows of \(NikxelSprites.frameSize)px frames (\(NikxelSprites.cols * NikxelSprites.frameSize)×\(NikxelSprites.rows * NikxelSprites.frameSize)). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.",
+            ],
+            "deps": [
+                "checked": depsChecked, "whisper": whisperFound, "ffmpeg": ffmpegFound, "brew": brewFound,
+                "cpp": usingWhisperCpp, "model": modelInstalled, "downloading": modelDownloading,
+                "progress": modelProgress, "modelError": modelError ?? "",
+                "modelName": WhisperModel.defaultName, "modelSize": WhisperModel.defaultDownloadSize,
+                "installing": depsPoll != nil, "ready": ready,
+                "language": NikxelSettings.transcriptionLanguage,
+                "languages": Self.languageOptions.map { ["title": $0.title, "note": $0.note, "code": $0.code] },
+            ],
+            "wa": [
+                "browser": browser?.name ?? "browser", "noBrowser": waNoBrowser, "launchFailed": waLaunchFailed,
+                "connected": waConnected, "connecting": waConnecting,
+                "missing": ChromeBot.missingBrowserMessage, "port": ChromeBot.debugPort,
+            ],
+            "google": [
+                "connected": GoogleAuth.shared.isAuthorized, "oneClick": GoogleAuth.shared.isOneClick,
+                "waiting": googlePoll != nil,
+            ],
+            "agents": agents,
+            "testing": agentHealth.count < CodingAgent.allCases.count,
+        ]
+    }
 
     private func go(to next: Step) {
-        if step == .avatar { stopPreview() }
         if step == .whatsapp { stopPolling() }
         if next == .agent { refreshAvailableAgents() }
         step = next
-        if next == .avatar { startPreview() }
-        render()
+        push()
     }
 
-    private func render() {
-        guard let content = window?.contentView else { return }
-        content.subviews.forEach { $0.removeFromSuperview() }
-        previewImageView = nil
-        nameField = nil
-
-        let body = NSStackView()
-        body.orientation = .vertical
-        body.spacing = 12
-        body.translatesAutoresizingMaskIntoConstraints = false
-
-        let nav = NSStackView()
-        nav.orientation = .horizontal
-        nav.spacing = 8
-        nav.translatesAutoresizingMaskIntoConstraints = false
-
-        switch step {
-        case .welcome: buildWelcome(body: body, nav: nav)
-        case .avatar: buildAvatar(body: body, nav: nav)
-        case .deps: buildDeps(body: body, nav: nav)
-        case .whatsapp: buildWhatsApp(body: body, nav: nav)
-        case .google: buildGoogle(body: body, nav: nav)
-        case .agent: buildAgent(body: body, nav: nav)
-        }
-
-        content.addSubview(body)
-        content.addSubview(nav)
-        NSLayoutConstraint.activate([
-            body.topAnchor.constraint(equalTo: content.topAnchor, constant: Self.padding),
-            body.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Self.padding),
-            body.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.padding),
-            body.bottomAnchor.constraint(lessThanOrEqualTo: nav.topAnchor, constant: -12),
-
-            nav.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Self.padding),
-            nav.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.padding),
-            nav.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.padding),
-        ])
-    }
-
-    // MARK: - Steps
-
-    private func buildWelcome(body: NSStackView, nav: NSStackView) {
-        body.alignment = .centerX
-        body.spacing = 16
-
-        if let img = Self.avatarFrame(0) {
-            body.addArrangedSubview(imageView(img, size: 96))
-        }
-        body.addArrangedSubview(label("Welcome to Nikxel", size: 20, bold: true))
-        body.addArrangedSubview(label(
-            "Let's pick your avatar, check the transcription tools, connect WhatsApp auto-replies, and choose which coding agent Nikxel should use — takes about a minute.",
-            secondary: true
-        ))
-
-        // Meeting summaries label the mic channel with this name. Without it
-        // the summary has to call the user something generic, and a wrong
-        // name is worse than none.
-        body.addArrangedSubview(label("What should Nikxel call you in your notes?", size: 12, secondary: true))
-        let field = NSTextField(string: NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""))
-        field.placeholderString = "Your first name (optional)"
-        field.alignment = .center
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        nameField = field
-        body.addArrangedSubview(field)
-
-        nav.addArrangedSubview(spacer())
-        nav.addArrangedSubview(defaultButton("Get Started", #selector(nextFromWelcome)))
-    }
-
-    private func buildAvatar(body: NSStackView, nav: NSStackView) {
-        body.alignment = .centerX
-        body.spacing = 10
-
-        body.addArrangedSubview(label("Your avatar", size: 20, bold: true))
-
-        let preview = imageView(previewFrames.first ?? Self.avatarFrame(0), size: 112)
-        previewImageView = preview
-        body.addArrangedSubview(preview)
-
-        body.addArrangedSubview(label(
-            usingCustomSheet ? "Using your own sprite sheet." : "Using the avatar that ships with Nikxel.",
-            secondary: true
-        ))
-
-        if let err = sheetError {
-            body.addArrangedSubview(label(err, size: 11, color: .systemRed))
-        }
-
-        let buttons = NSStackView()
-        buttons.orientation = .horizontal
-        buttons.spacing = 8
-        buttons.addArrangedSubview(button(promptCopied ? "Prompt copied ✓" : "Copy Gemini prompt", #selector(copyPrompt)))
-        let chooser = button("Use my own sprite sheet…", #selector(chooseSheet))
-        chooser.isEnabled = !importing
-        buttons.addArrangedSubview(chooser)
-        if usingCustomSheet {
-            buttons.addArrangedSubview(button("Reset to default", #selector(resetSheet)))
-        }
-        body.addArrangedSubview(buttons)
-
-        if importing {
-            let spinner = NSProgressIndicator()
-            spinner.style = .spinning
-            spinner.controlSize = .small
-            spinner.startAnimation(nil)
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 8
-            row.addArrangedSubview(spinner)
-            row.addArrangedSubview(label("Processing sheet…", size: 11, secondary: true))
-            body.addArrangedSubview(row)
-        }
-
-        body.addArrangedSubview(label(
-            "Paste the prompt into Gemini along with a photo of yourself, then load the PNG it gives you straight back here — Nikxel removes the magenta background and re-frames it for you.",
-            size: 11, secondary: true
-        ))
-        body.addArrangedSubview(label(
-            "PNG, \(NikxelSprites.cols) columns x \(NikxelSprites.rows) rows of \(NikxelSprites.frameSize)px frames (\(NikxelSprites.cols * NikxelSprites.frameSize)x\(NikxelSprites.rows * NikxelSprites.frameSize)). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.",
-            size: 11, secondary: true
-        ))
-
-        nav.addArrangedSubview(button("Back", #selector(backToWelcome)))
-        nav.addArrangedSubview(spacer())
-        nav.addArrangedSubview(defaultButton("Next", #selector(avatarToDeps)))
-    }
-
-    // Meeting transcription shells out to whisper (speech-to-text) and ffmpeg
-    // (audio decode). Neither ships with the app, and without them recording
-    // produces an audio file and nothing else — so surface it during setup
-    // instead of letting the first meeting fail silently.
-    private func buildDeps(body: NSStackView, nav: NSStackView) {
-        body.alignment = .leading
-        body.spacing = 12
-
-        body.addArrangedSubview(label("Transcription tools", size: 20, bold: true, align: .left))
-        body.addArrangedSubview(label(
-            "Nikxel records meetings, transcribes them with whisper, then has your coding agent write the summary. These two are needed for transcription.",
-            secondary: true, align: .left
-        ))
-        body.addArrangedSubview(depRow("whisper", found: whisperFound, note: "speech-to-text"))
-        body.addArrangedSubview(depRow("ffmpeg", found: ffmpegFound, note: "audio decoding"))
-
-        // whisper.cpp (what Homebrew installs) ships no model of its own, so
-        // transcription silently can't run until one is downloaded.
-        if usingWhisperCpp {
-            body.addArrangedSubview(depRow("speech model", found: modelInstalled, note: "needed by whisper.cpp"))
-            if modelDownloading {
-                let bar = NSProgressIndicator()
-                bar.style = .bar
-                bar.isIndeterminate = false
-                bar.minValue = 0
-                bar.maxValue = 1
-                bar.doubleValue = modelProgress
-                bar.translatesAutoresizingMaskIntoConstraints = false
-                bar.widthAnchor.constraint(equalToConstant: 240).isActive = true
-                modelProgressBar = bar
-                body.addArrangedSubview(bar)
-                body.addArrangedSubview(label("Downloading \(WhisperModel.defaultName)…", size: 11, secondary: true, align: .left))
-            } else if !modelInstalled {
-                body.addArrangedSubview(button("Download speech model (\(WhisperModel.defaultDownloadSize))", #selector(downloadModel)))
-            }
-            if let err = modelError {
-                body.addArrangedSubview(label(err, size: 11, color: .systemRed, align: .left))
-            }
-        }
-
-        body.addArrangedSubview(label("Spoken language", bold: true, align: .left))
-        body.addArrangedSubview(label(
-            "Leave this on English unless your meetings are mostly Hindi — English also transcribes Hindi, as Hinglish, and keeps English words spelled correctly.",
-            size: 11, secondary: true, align: .left
-        ))
-        for (i, option) in Self.languageOptions.enumerated() {
-            let radio = NSButton(radioButtonWithTitle: option.title, target: self, action: #selector(pickLanguage(_:)))
-            radio.tag = i
-            radio.state = option.code == NikxelSettings.transcriptionLanguage ? .on : .off
-            body.addArrangedSubview(radio)
-        }
-
-        if depsChecked && !(whisperFound && ffmpegFound) {
-            if depsPoll != nil {
-                body.addArrangedSubview(label(
-                    "Installing in Terminal…\(brewFound ? "" : " Type your Mac password there when asked (nothing shows as you type).") This page updates by itself, and the speech model downloads as soon as whisper is in.",
-                    size: 11, secondary: true, align: .left
-                ))
-            } else {
-                // Always a button: without Homebrew the script installs it
-                // first, rather than leaving the user with a command to copy.
-                body.addArrangedSubview(button(brewFound ? "Install" : "Install (with Homebrew)", #selector(installDeps)))
-                body.addArrangedSubview(label(
-                    brewFound ? "Opens Terminal and runs: brew install whisper-cpp ffmpeg"
-                              : "Homebrew isn't installed. One click installs it and then the tools — Terminal will ask for your Mac password once.",
-                    size: 11, secondary: true, align: .left
-                ))
-            }
-        }
-        body.addArrangedSubview(button("Re-check", #selector(recheckDeps)))
-
-        nav.addArrangedSubview(button("Back", #selector(backToAvatar)))
-        nav.addArrangedSubview(spacer())
-        let ready = whisperFound && ffmpegFound && (!usingWhisperCpp || modelInstalled)
-        nav.addArrangedSubview(defaultButton(ready ? "Next" : "Skip for now", #selector(depsToWhatsApp)))
-    }
-
-    private func buildWhatsApp(body: NSStackView, nav: NSStackView) {
-        body.alignment = .centerX
-        body.spacing = 16
-
-        body.addArrangedSubview(label("Connect WhatsApp", size: 20, bold: true))
-        let browser = ChromeBot.availableBrowser()
-        body.addArrangedSubview(label(
-            "Nikxel can reply on your behalf — during meetings, or all day. Click Connect, then scan the QR code in the \(browser?.name ?? "browser") window that opens.",
-            secondary: true
-        ))
-
-        if waNoBrowser {
-            body.addArrangedSubview(label(ChromeBot.missingBrowserMessage, secondary: true))
-            body.addArrangedSubview(button("Get Google Chrome", #selector(openChromeDownload)))
-        } else if waLaunchFailed {
-            body.addArrangedSubview(label(
-                "Couldn't start \(browser?.name ?? "the browser") with remote debugging on port \(ChromeBot.debugPort). If something else is already using that port, quit it and try again.",
-                secondary: true))
-            body.addArrangedSubview(button("Try again", #selector(startWhatsAppConnect)))
-        } else if waConnected {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 6
-            if let check = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil) {
-                row.addArrangedSubview(symbol(check, color: .systemGreen))
-            }
-            row.addArrangedSubview(label("Connected", color: .systemGreen))
-            body.addArrangedSubview(row)
-        } else if waConnecting {
-            let spinner = NSProgressIndicator()
-            spinner.style = .spinning
-            spinner.controlSize = .small
-            spinner.startAnimation(nil)
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 8
-            row.addArrangedSubview(spinner)
-            row.addArrangedSubview(label("Waiting for QR scan…", secondary: true))
-            body.addArrangedSubview(row)
-        } else {
-            body.addArrangedSubview(button("Connect WhatsApp", #selector(startWhatsAppConnect)))
-        }
-
-        nav.addArrangedSubview(button("Back", #selector(backToDeps)))
-        nav.addArrangedSubview(button("Skip for now", #selector(whatsappToGoogle)))
-        nav.addArrangedSubview(spacer())
-        if waConnected {
-            nav.addArrangedSubview(defaultButton("Next", #selector(whatsappToGoogle)))
-        }
-    }
-
-    private func buildGoogle(body: NSStackView, nav: NSStackView) {
-        body.alignment = .leading
-        body.spacing = 12
-        let connected = GoogleAuth.shared.isAuthorized
-        body.addArrangedSubview(label("Google (optional)", size: 20, bold: true, align: .left))
-        body.addArrangedSubview(label(
-            "Connect to get a heads-up before calendar events, and to file a meeting's action items in Google Tasks and follow-ups on your calendar. Nothing is sent without your OK.",
-            secondary: true, align: .left
-        ))
-        body.addArrangedSubview(depRow("Google account", found: connected, note: connected ? "connected" : "not connected"))
-        if !connected {
-            body.addArrangedSubview(button(GoogleAuth.shared.isOneClick ? "Connect Google" : "Connect Google…", #selector(connectGoogle)))
-            body.addArrangedSubview(label(
-                GoogleAuth.shared.isOneClick
-                    ? "Opens your browser to sign in. You can skip this and connect later from the menu bar."
-                    : "This build needs your own Google client first; the button walks you through it. You can skip and connect later from the menu bar.",
-                size: 11, secondary: true, align: .left
-            ))
-        }
-        nav.addArrangedSubview(button("Back", #selector(backToWhatsApp)))
-        nav.addArrangedSubview(spacer())
-        nav.addArrangedSubview(defaultButton(connected ? "Next" : "Skip for now", #selector(googleToAgent)))
-    }
-
-    private func buildAgent(body: NSStackView, nav: NSStackView) {
-        body.alignment = .leading
-        body.spacing = 12
-
-        body.addArrangedSubview(label("Choose your coding agent", size: 20, bold: true, align: .left))
-        body.addArrangedSubview(label(
-            "Nikxel shells out to this to write meeting notes/MOMs and WhatsApp replies.",
-            secondary: true, align: .left
-        ))
-
-        for (i, agent) in CodingAgent.allCases.enumerated() {
-            let health = agentHealth[agent]
-            let radio = NSButton(radioButtonWithTitle: agent.displayName, target: self, action: #selector(pickAgent(_:)))
-            radio.tag = i
-            radio.state = (agent == chosenAgent) ? .on : .off
-            radio.isEnabled = health != nil && health != .notInstalled
-            body.addArrangedSubview(radio)
-
-            let (text, color, hint) = Self.describe(health, agent: agent)
-            let status = label(text, size: 11, color: color, align: .left)
-            body.addArrangedSubview(status)
-            if let hint = hint {
-                let row = NSStackView()
-                row.orientation = .horizontal
-                row.spacing = 8
-                let cmd = label(hint, size: 11, secondary: true, align: .left)
-                cmd.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                cmd.isSelectable = true
-                row.addArrangedSubview(cmd)
-                let copy = NSButton(
-                    title: agentCopied == agent ? "Copied ✓" : "Copy",
-                    target: self, action: #selector(copyInstallCommand(_:))
-                )
-                copy.bezelStyle = .rounded
-                copy.controlSize = .small
-                copy.tag = i
-                row.addArrangedSubview(copy)
-                row.addArrangedSubview(spacer())
-                body.addArrangedSubview(row)
-            }
-        }
-
-        let testing = agentHealth.count < CodingAgent.allCases.count
-        body.addArrangedSubview(label(
-            testing ? "Testing each one with a real request — this takes a few seconds…"
-                    : "Fix anything marked above in a terminal, then click Test again.",
-            size: 11, secondary: true, align: .left
-        ))
-        let retest = button("Test again", #selector(recheckAgents))
-        retest.isEnabled = !testing
-        body.addArrangedSubview(retest)
-
-        nav.addArrangedSubview(button("Back", #selector(backToGoogle)))
-        nav.addArrangedSubview(spacer())
-        nav.addArrangedSubview(defaultButton("Finish", #selector(finishSetup)))
-    }
-
-    /// Status line, its colour, and an optional copyable terminal command.
+    /// Status line, its tone, and an optional copyable terminal command.
     /// Login is fixed by running the agent itself, so that's the command shown.
-    private static func describe(_ health: MOMGenerator.AgentHealth?, agent: CodingAgent) -> (String, NSColor, String?) {
+    private static func describe(_ health: MOMGenerator.AgentHealth?, agent: CodingAgent) -> (String, String, String?) {
         let bin = agent.rawValue
         switch health {
         case nil:
-            return ("Testing…", .secondaryLabelColor, nil)
+            return ("Testing…", "muted", nil)
         case .notInstalled:
-            return ("Not installed", .secondaryLabelColor, agent.installCommand)
+            return ("Not installed", "muted", agent.installCommand)
         case .broken(let why):
-            return ("Installed but won't start: \(why)", .systemRed, agent.installCommand)
+            return ("Installed but won't start: \(readable(why))", "red", agent.installCommand)
         case .notLoggedIn:
-            return ("Installed, but not logged in", .systemOrange, bin)
+            return ("Installed, but not logged in", "orange", bin)
         case .failing(let why):
-            return ("Installed, but a test request failed: \(why)", .systemRed, nil)
+            return ("Installed, but a test request failed: \(readable(why))", "red", nil)
         case .working(let version):
-            return ("✓ Installed, logged in and working" + (version.isEmpty ? "" : " (\(version))"), .systemGreen, nil)
+            // "2.1.311 (Claude Code)" -> "2.1.311"; "codex-cli 0.145.0" stays.
+            let v = version.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
+            return ("Installed, logged in and working" + (v.isEmpty ? "" : " (\(v))"), "green", nil)
         }
     }
 
-    private func depRow(_ name: String, found: Bool, note: String) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-        let symbolName = found ? "checkmark.circle.fill" : "xmark.circle"
-        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-            row.addArrangedSubview(symbol(img, color: found ? .systemGreen : .secondaryLabelColor))
+    /// An agent's error as a person would say it. OpenCode fails with its raw
+    /// JSON event ({"type":"error",…,"data":{"message":"Unexpected server
+    /// error…"}}), which is one unbreakable line of braces; its "message" is
+    /// the part worth showing.
+    private static func readable(_ why: String) -> String {
+        if let r = why.range(of: #""message"\s*:\s*"((?:[^"\\]|\\.)*)""#, options: .regularExpression) {
+            let match = String(why[r])
+            if let q = match.range(of: #":\s*""#, options: .regularExpression) {
+                return String(match[q.upperBound...].dropLast())
+                    .replacingOccurrences(of: "\\\"", with: "\"")
+            }
         }
-        row.addArrangedSubview(label(name, align: .left))
-        row.addArrangedSubview(label("— \(note)", secondary: true, align: .left))
-        if !found {
-            row.addArrangedSubview(label("not installed", size: 11, secondary: true, align: .left))
-        }
-        row.addArrangedSubview(spacer())
-        return row
+        return why
     }
 
-    // MARK: - Navigation actions
+    // MARK: - Actions
 
-    @objc private func nextFromWelcome() {
-        let typed = nameField?.stringValue.trimmingCharacters(in: .whitespaces) ?? ""
-        if !typed.isEmpty { NikxelSettings.userName = typed }
-        go(to: .avatar)
-    }
-    @objc private func backToWelcome() { go(to: .welcome) }
-    @objc private func avatarToDeps() { go(to: .deps) }
-    @objc private func backToAvatar() { go(to: .avatar) }
-    @objc private func depsToWhatsApp() { go(to: .whatsapp) }
-    @objc private func backToDeps() { go(to: .deps) }
-    @objc private func whatsappToGoogle() { go(to: .google) }
-    @objc private func backToWhatsApp() { go(to: .whatsapp) }
-    @objc private func googleToAgent() { go(to: .agent) }
-    @objc private func backToGoogle() { go(to: .google) }
-    @objc private func connectGoogle() {
+    private func connectGoogle() {
         // Through the watcher so calendar polling starts the moment consent
         // finishes; this page just watches for the token to appear.
         (NSApp.delegate as? NikxelAppDelegate)?.calendarWatcher.reauthenticate()
@@ -513,12 +283,11 @@ final class OnboardingWindowController: NSWindowController {
             guard let self = self else { t.invalidate(); return }
             if GoogleAuth.shared.isAuthorized || Date().timeIntervalSince(started) > 300 {
                 t.invalidate(); self.googlePoll = nil
-                if self.step == .google { self.render() }
+                self.push()
             }
         }
+        push()
     }
-    @objc private func recheckDeps() { refreshDeps() }
-    @objc private func recheckAgents() { refreshAvailableAgents() }
 
     /// "en" handles all three cases and is what almost everyone should use.
     /// Measured on the small model: English stays clean, Hindi comes back as
@@ -526,87 +295,82 @@ final class OnboardingWindowController: NSWindowController {
     /// meeting me shamil nahi ho paunga"), and Hinglish resolves to English.
     /// Picking "hi" makes pure English come out as Devanagari gibberish, and
     /// auto-detect reads Indian-accented English as Hindi.
-    static let languageOptions: [(title: String, code: String)] = [
-        ("English — handles Hindi and Hinglish too (recommended)", "en"),
-        ("Hindi — only for heavy Hindi; breaks pure English", "hi"),
-        ("Auto-detect — not recommended, misreads Indian English as Hindi", "auto"),
+    static let languageOptions: [(title: String, note: String, code: String)] = [
+        ("English", "Also Hindi & Hinglish", "en"),
+        ("Hindi", "Breaks pure English", "hi"),
+        ("Auto-detect", "Misreads Indian English", "auto"),
     ]
 
-    @objc private func pickLanguage(_ sender: NSButton) {
-        guard sender.tag < Self.languageOptions.count else { return }
-        NikxelSettings.transcriptionLanguage = Self.languageOptions[sender.tag].code
-        render()
-    }
-
-    @objc private func copyInstallCommand(_ sender: NSButton) {
-        guard sender.tag < CodingAgent.allCases.count else { return }
-        let agent = CodingAgent.allCases[sender.tag]
+    private func copyInstallCommand(_ index: Int) {
+        guard CodingAgent.allCases.indices.contains(index) else { return }
+        let agent = CodingAgent.allCases[index]
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(Self.describe(agentHealth[agent], agent: agent).2 ?? agent.installCommand, forType: .string)
         agentCopied = agent
-        render()
+        push()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self = self, self.step == .agent else { return }
             self.agentCopied = nil
-            self.render()
+            self.push()
         }
     }
 
-    @objc private func downloadModel() {
+    private func downloadModel() {
         modelDownloading = true
         modelProgress = 0
         modelError = nil
-        render()
+        push()
         WhisperModel.downloadDefault(progress: { [weak self] fraction in
-            // Nudge the existing bar rather than re-rendering the whole step on
+            // Nudge the page's bar rather than resending the whole state on
             // every progress callback.
-            self?.modelProgress = fraction
-            self?.modelProgressBar?.doubleValue = fraction
+            guard let self = self else { return }
+            self.modelProgress = fraction
+            if self.pageLoaded { self.web.evaluateJavaScript("nx.progress(\(fraction))") }
         }, completion: { [weak self] result in
             guard let self = self else { return }
             self.modelDownloading = false
             if case .failure(let error) = result {
                 self.modelError = "Download failed: \(error.localizedDescription)"
             }
+            self.push()
             self.refreshDeps()
         })
     }
 
-    @objc private func pickAgent(_ sender: NSButton) {
-        guard sender.tag < CodingAgent.allCases.count else { return }
-        chosenAgent = CodingAgent.allCases[sender.tag]
-        render()
+    private func pickAgent(_ index: Int) {
+        guard CodingAgent.allCases.indices.contains(index) else { return }
+        chosenAgent = CodingAgent.allCases[index]
+        push()
     }
 
-    @objc private func finishSetup() {
+    private func finishSetup() {
         NikxelSettings.connectedAgent = chosenAgent
         NikxelSettings.onboardingCompleted = true
-        stopPreview()
         stopPolling()
         close()
     }
 
     // MARK: - Avatar actions
 
-    @objc private func copyPrompt() {
+    private func copyPrompt() {
         guard let path = Bundle.main.path(forResource: "sprite_prompt", ofType: "txt"),
               let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             sheetError = "Couldn't find the bundled prompt."
-            render()
+            push()
             return
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         promptCopied = true
-        render()
+        push()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self = self, self.step == .avatar else { return }
             self.promptCopied = false
-            self.render()
+            self.push()
         }
     }
 
-    @objc private func chooseSheet() {
+    private func chooseSheet() {
         let panel = NSOpenPanel()
         panel.allowedFileTypes = ["png"]
         panel.allowsMultipleSelection = false
@@ -616,7 +380,7 @@ final class OnboardingWindowController: NSWindowController {
 
         sheetError = nil
         importing = true
-        render()
+        push()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var failure: String?
@@ -637,23 +401,23 @@ final class OnboardingWindowController: NSWindowController {
                 if failure == nil {
                     self.usingCustomSheet = true
                     NotificationCenter.default.post(name: NikxelSprites.changedNotification, object: nil)
-                    self.startPreview()
+                    self.pushFrames()
                 }
-                self.render()
+                self.push()
             }
         }
     }
 
-    @objc private func resetSheet() {
+    private func resetSheet() {
         try? FileManager.default.removeItem(at: NikxelSprites.customURL)
         sheetError = nil
         usingCustomSheet = NikxelSprites.hasCustom
         NotificationCenter.default.post(name: NikxelSprites.changedNotification, object: nil)
-        startPreview()
-        render()
+        pushFrames()
+        push()
     }
 
-    @objc private func installDeps() {
+    private func installDeps() {
         // A .command file so the install runs in Terminal, where the user can
         // watch progress and answer any prompt -- a silent background `brew
         // install` would look like a hang for several minutes.
@@ -687,24 +451,24 @@ final class OnboardingWindowController: NSWindowController {
         depsPoll = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] t in
             guard let self = self, self.step == .deps, Date().timeIntervalSince(started) < 1200 else {
                 t.invalidate(); self?.depsPoll = nil
-                if self?.step == .deps { self?.render() }
+                if self?.step == .deps { self?.push() }
                 return
             }
             self.refreshDeps()
         }
-        render()
+        push()
     }
 
-    @objc private func startWhatsAppConnect() {
+    private func startWhatsAppConnect() {
         waNoBrowser = false
         waLaunchFailed = false
         guard ChromeBot.availableBrowser() != nil else {
             waNoBrowser = true
-            render()
+            push()
             return
         }
         waConnecting = true
-        render()
+        push()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let ok = ChromeBot.launchIfNeeded()
             DispatchQueue.main.async {
@@ -714,13 +478,13 @@ final class OnboardingWindowController: NSWindowController {
                 } else {
                     self.waConnecting = false
                     self.waLaunchFailed = true
-                    self.render()
+                    self.push()
                 }
             }
         }
     }
 
-    @objc private func openChromeDownload() {
+    private func openChromeDownload() {
         if let url = URL(string: "https://www.google.com/chrome/") {
             NSWorkspace.shared.open(url)
         }
@@ -754,7 +518,7 @@ final class OnboardingWindowController: NSWindowController {
                 if isCpp && !hasModel && !self.modelDownloading && self.modelError == nil {
                     self.downloadModel()
                 } else if changed {
-                    self.render()
+                    self.push()
                 }
             }
         }
@@ -768,7 +532,7 @@ final class OnboardingWindowController: NSWindowController {
         agentTestRun += 1
         let run = agentTestRun
         agentHealth = [:]
-        if step == .agent { render() }
+        if step == .agent { push() }
         for agent in CodingAgent.allCases {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
@@ -781,7 +545,7 @@ final class OnboardingWindowController: NSWindowController {
                     if self.agentHealth[self.chosenAgent]?.isWorking != true, health.isWorking {
                         self.chosenAgent = agent
                     }
-                    if self.step == .agent { self.render() }
+                    if self.step == .agent { self.push() }
                 }
             }
         }
@@ -798,7 +562,7 @@ final class OnboardingWindowController: NSWindowController {
                     self.waConnecting = false
                     NikxelSettings.whatsappConnected = true
                     self.stopPolling()
-                    self.render()
+                    self.push()
                 }
             }
         }
@@ -809,52 +573,7 @@ final class OnboardingWindowController: NSWindowController {
         waPollTimer = nil
     }
 
-    // MARK: - Avatar preview
-
-    /// Animates row 0 (idle) of the active sheet. A single static frame would
-    /// hide a wrong row layout, which is the most likely way a user's sheet is
-    /// broken -- the animation shows it immediately.
-    private func startPreview() {
-        previewFrames = Self.idleFrames()
-        previewIndex = 0
-        previewTimer?.invalidate()
-        previewImageView?.image = previewFrames.first
-        guard previewFrames.count > 1 else { return }
-        // 3 fps, same rate NikxelView animates the idle row at.
-        previewTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 3, repeats: true) { [weak self] _ in
-            guard let self = self, !self.previewFrames.isEmpty else { return }
-            self.previewIndex = (self.previewIndex + 1) % self.previewFrames.count
-            self.previewImageView?.image = self.previewFrames[self.previewIndex]
-        }
-    }
-
-    private func stopPreview() {
-        previewTimer?.invalidate()
-        previewTimer = nil
-    }
-
-    /// Row 0 of the active sheet -- the idle animation.
-    private static func idleFrames() -> [NSImage] {
-        (0..<NikxelSprites.cols).compactMap { avatarFrame($0) }
-    }
-
-    /// One frame of the active sheet. The avatar actually drawn on screen comes
-    /// from this sheet -- nikxel_avatar.png is only the no-sprite-sheet
-    /// fallback, so showing that here would greet the user with a different
-    /// character than the app runs.
-    private static func avatarFrame(_ col: Int) -> NSImage? {
-        let f = NikxelSprites.frameSize
-        if let path = NikxelSprites.activePath,
-           let sheet = NSImage(contentsOfFile: path),
-           let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil),
-           let frame = cg.cropping(to: CGRect(x: col * f, y: 0, width: f, height: f)) {
-            return NSImage(cgImage: frame, size: NSSize(width: f, height: f))
-        }
-        if let path = Bundle.main.path(forResource: "nikxel_avatar", ofType: "png") {
-            return NSImage(contentsOfFile: path)
-        }
-        return nil
-    }
+    // MARK: - Helpers
 
     private static func onPath(_ name: String) -> Bool {
         for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin"]
@@ -870,66 +589,5 @@ final class OnboardingWindowController: NSWindowController {
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return !out.isEmpty && FileManager.default.isExecutableFile(atPath: out)
-    }
-
-    // MARK: - View helpers
-
-    private func label(
-        _ text: String,
-        size: CGFloat = 13,
-        bold: Bool = false,
-        secondary: Bool = false,
-        color: NSColor? = nil,
-        align: NSTextAlignment = .center
-    ) -> NSTextField {
-        let field = NSTextField(wrappingLabelWithString: text)
-        field.font = bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size)
-        field.textColor = color ?? (secondary ? .secondaryLabelColor : .labelColor)
-        field.alignment = align
-        field.isSelectable = false
-        field.preferredMaxLayoutWidth = Self.contentWidth - Self.padding * 2
-        field.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        return field
-    }
-
-    private func imageView(_ image: NSImage?, size: CGFloat) -> NSImageView {
-        let view = NSImageView()
-        view.wantsLayer = true
-        view.image = image
-        view.imageScaling = .scaleProportionallyUpOrDown
-        // Nearest-neighbour, so the pixel art stays crisp when scaled up.
-        view.layer?.magnificationFilter = .nearest
-        view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            view.widthAnchor.constraint(equalToConstant: size),
-            view.heightAnchor.constraint(equalToConstant: size),
-        ])
-        return view
-    }
-
-    private func symbol(_ image: NSImage, color: NSColor) -> NSImageView {
-        let view = NSImageView()
-        view.image = image
-        view.contentTintColor = color
-        return view
-    }
-
-    private func button(_ title: String, _ action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
-        b.bezelStyle = .rounded
-        return b
-    }
-
-    private func defaultButton(_ title: String, _ action: Selector) -> NSButton {
-        let b = button(title, action)
-        b.keyEquivalent = "\r"
-        return b
-    }
-
-    private func spacer() -> NSView {
-        let v = NSView()
-        v.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return v
     }
 }

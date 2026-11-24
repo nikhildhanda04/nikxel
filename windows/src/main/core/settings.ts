@@ -91,6 +91,9 @@ interface Stored {
   botEnabled?: boolean;
   /// Mac: UserDefaults "nikxel.micMuted". Recording keeps a silent mic track.
   micMuted?: boolean;
+  openSummariesInApp?: boolean;
+  dashboardSideCollapsed?: boolean;
+  appearance?: string;
   /// Any key this version doesn't know is kept on save.
   [k: string]: unknown;
 }
@@ -284,6 +287,21 @@ export const Settings = {
   /// Mic mute (AudioRecorder.isMicMuted): recording continues, the mic track is silent.
   get micMuted(): boolean { return load().micMuted ?? false; },
   set micMuted(v: boolean) { save(s => { s.micMuted = v; }); },
+
+  /// Summary pages open in the Nikxel window's tabs instead of the browser.
+  get openSummariesInApp(): boolean { return load().openSummariesInApp ?? true; },
+  set openSummariesInApp(v: boolean) { save(s => { s.openSummariesInApp = v; }); },
+
+  /// The Nikxel window's look: "system", "light" or "dark".
+  get appearance(): "system" | "light" | "dark" {
+    const a = load().appearance;
+    return a === "light" || a === "dark" ? a : "system";
+  },
+  set appearance(v: "system" | "light" | "dark") { save(s => { s.appearance = v; }); },
+
+  /// The Nikxel window's sidebar folded to icons (Mac: UserDefaults).
+  get dashboardSideCollapsed(): boolean { return load().dashboardSideCollapsed ?? false; },
+  set dashboardSideCollapsed(v: boolean) { save(s => { s.dashboardSideCollapsed = v; }); },
 };
 
 /// Where the avatar's sprite sheet comes from: ~/.nikxel/sprites.png when the

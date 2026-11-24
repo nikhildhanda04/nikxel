@@ -9,6 +9,7 @@ import { NotePage } from "../recording/notePage";
 import { Transcriber } from "../recording/transcriber";
 import { wavHeader } from "../recording/wavWriter";
 import * as Learning from "./learning";
+import * as NoteName from "./noteName";
 
 /// Edits a finished summary from a sentence: "Speaker 3 is Rahul", "merge the
 /// 2nd and 4th action items". The agent gets the summary's Markdown, the
@@ -17,7 +18,7 @@ import * as Learning from "./learning";
 ///
 /// Meeting and notes pages only. Daily and weekly summaries are editable in
 /// the owner's private Mac build alone; there's no such build on Windows.
-const backups = () => nikxelPath("edits");
+export const backups = () => nikxelPath("edits");
 let agent: MOMGenerator | null = null;
 
 const stem = (page: string) => page.slice(0, -path.extname(page).length);
@@ -47,6 +48,22 @@ export function parseReply(out: string): { note: string; renames: [string, strin
     }
   }
   return { note, renames, markdown };
+}
+
+/// A title for a summary still named by its timestamp (noteName.ts). Asked
+/// once, then kept beside the edit history so reopening the page is instant.
+export async function suggestName(page: string): Promise<string | null> {
+  const cache = path.join(backups(), path.basename(stem(page)), "name.txt");
+  const saved = readText(cache);
+  if (saved) return saved;
+  const md = readText(stem(page) + ".md");
+  if (md === null) return null;
+  agent ??= new MOMGenerator();
+  let name: string;
+  try { name = NoteName.clean(await agent.runPrompt(NoteName.prompt(md), "note-name", "haiku", 60)); } catch { return null; }
+  if (!name) return null;
+  try { ensureDir(path.dirname(cache)); writeAtomic(cache, name); } catch { /* asked again next open */ }
+  return name;
 }
 
 /// Runs the instruction against `page`'s summary. Resolves to the agent's

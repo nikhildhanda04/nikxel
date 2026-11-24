@@ -1,4 +1,5 @@
 import * as path from "path";
+import * as NoteName from "./noteName";
 import { cblog } from "../core/diag";
 import { readText } from "../core/paths";
 import { CloudSync } from "./cloudSync";
@@ -16,7 +17,7 @@ export function meeting(file: string): { id: string; title: string; date: string
   if (md == null) return null;
   const stem = path.basename(file).replace(/\.html$/i, "");
   const title = (md.split("\n").find((l) => l.startsWith("# ")) ?? "").slice(2).trim();
-  return { id: stem, title: (title || "Meeting").slice(0, 200), date: stem.slice(0, 10), body: CloudSync.meetingShareBody(md) };
+  return { id: stem, title: (title || "Meeting").slice(0, 200), date: NoteName.stamp(stem).slice(0, 10), body: CloudSync.meetingShareBody(md) };
 }
 
 /// `project` null: {paired, projects, body}, body being exactly what Send would send.

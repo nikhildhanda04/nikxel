@@ -284,6 +284,35 @@ enum DayPage {
 
     /// Ticks (or unticks) the `index`th task under "## Open tasks": its tail
     /// becomes "— done" (or "— open"). Nil when there's no such task.
+    /// Ticks open task `index` on a day page: "— done" in the .md (what
+    /// tomorrow's summary and the morning card read) and the box in the .html.
+    static func tick(_ page: URL, index i: Int, done: Bool) -> Bool {
+        let md = page.deletingPathExtension().appendingPathExtension("md")
+        guard let text = try? String(contentsOf: md, encoding: .utf8),
+              let updated = markTask(in: text, index: i, done: done),
+              let html = try? String(contentsOf: page, encoding: .utf8),
+              (try? updated.write(to: md, atomically: true, encoding: .utf8)) != nil else { return false }
+        let ticked = html.replacingOccurrences(of: "data-i=\"\(i)\"( checked)?", with: "data-i=\"\(i)\"" + (done ? " checked" : ""), options: .regularExpression)
+        try? ticked.write(to: page, atomically: true, encoding: .utf8)
+        return true
+    }
+
+    /// The day's open tasks with the index `tick` and the page use: [(i, text)].
+    static func openTasks(in markdown: String) -> [(i: Int, text: String)] {
+        var out: [(Int, String)] = [], inside = false, n = 0
+        for raw in markdown.components(separatedBy: "\n") {
+            if raw.hasPrefix("## ") { inside = raw.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "open tasks"; continue }
+            guard inside, raw.hasPrefix("- ") || raw.hasPrefix("* ") else { continue }
+            let ns = raw as NSString
+            guard let m = status.firstMatch(in: raw, range: NSRange(location: 0, length: ns.length)) else { continue }
+            if ns.substring(with: m.range(at: 1)).lowercased() != "done" {
+                out.append((n, ns.substring(with: NSRange(location: 2, length: m.range.location - 2)).replacingOccurrences(of: "**", with: "")))
+            }
+            n += 1
+        }
+        return out
+    }
+
     static func markTask(in markdown: String, index: Int, done: Bool) -> String? {
         var lines = markdown.components(separatedBy: "\n"), inside = false, n = 0
         for (k, raw) in lines.enumerated() {

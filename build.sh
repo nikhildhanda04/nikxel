@@ -9,6 +9,11 @@ mkdir -p Nikxel.app/Contents/MacOS Nikxel.app/Contents/Resources
 [ -f Nikxel.app/Contents/Resources/sprites.png ] || cp sprites.png Nikxel.app/Contents/Resources/sprites.png
 # The onboarding "Your avatar" step copies this to the clipboard for Gemini.
 cp sprite_prompt.txt Nikxel.app/Contents/Resources/sprite_prompt.txt
+# Framer Motion's standalone DOM build (no React), for the onboarding window's
+# animations. Vendored so a clone builds offline with no node toolchain.
+cp vendor/framer-motion-dom.js Nikxel.app/Contents/Resources/framer-motion-dom.js
+# The dashboard's dithered clouds (nikxel-admin/src/clouds.png), the onboarding's ground.
+cp vendor/clouds.png Nikxel.app/Contents/Resources/clouds.png
 # The clone this was built from, so Check for Updates finds it even when the
 # app is opened from a copy or link elsewhere (Applications, Dock, login item).
 echo "$PWD" > Nikxel.app/Contents/Resources/repo_path

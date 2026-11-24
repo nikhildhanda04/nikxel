@@ -3,7 +3,7 @@
 // the parts that are new on Windows plus the Meet title rules carried over.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { detectMeeting, isMeetTitle, isMeetingMicUser, isZoomMeetingWindow, meetingSource } from "../main/whatsapp/meetingDetector";
+import { detectMeeting, isMeetTitle, isMeetingMicUser, isZoomMeetingWindow, meetingSource, micOtherApp } from "../main/whatsapp/meetingDetector";
 
 test("Google Meet in a browser: same title rules as the Mac", () => {
   assert.ok(isMeetTitle("Meet - abc-defg-hij - Google Chrome"));
@@ -52,4 +52,13 @@ test("what the meeting is, for the record prompt", () => {
   assert.equal(meetingSource({ windows: [], mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), "a call in your browser");
   assert.equal(meetingSource({ windows: [{ proc: "chrome", title: "Meet - abc-defg-hij - Google Chrome" }],
     mic: ["C:#Program Files#Google#Chrome#Application#chrome.exe"] }), "Google Meet");
+});
+
+test("any other app holding the mic, by name", () => {
+  assert.equal(micOtherApp(["Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe"]), "WindowsSoundRecorder");
+  assert.equal(micOtherApp(["C:#Program Files#obs-studio#bin#64bit#obs64.exe"]), "obs64");
+  assert.equal(micOtherApp(["C:#Program Files#Zoom#bin#Zoom.exe"]), null, "a call app is a call, not an other app");
+  assert.equal(micOtherApp(["C:#Users#me#AppData#Local#Programs#Nikxel#Nikxel.exe", "Microsoft.Windows.Cortana_cw5n1h2txyewy"]), null, "Nikxel and Cortana are ignored");
+  assert.equal(micOtherApp(["C:#Program Files#Zoom#bin#Zoom.exe", "C:#Tools#Audacity.exe"]), "Audacity", "found past a call app");
+  assert.equal(micOtherApp([]), null);
 });

@@ -241,7 +241,12 @@ extension NikxelView {
 extension NSWorkspace {
     /// Notes registers for .md, and on a Mac with no other editor it's the
     /// default: every tap imported the file as a new note. TextEdit instead.
+    /// A summary page opens in the Nikxel window's reader, unless the user
+    /// chose the browser.
     func openFile(_ url: URL) {
+        if NikxelSettings.openSummariesInApp, DashboardWindowController.canRead(url) {
+            DashboardWindowController.open(summary: url); return
+        }
         guard let app = urlForApplication(toOpen: url),
               Bundle(url: app)?.bundleIdentifier == "com.apple.Notes",
               let edit = urlForApplication(withBundleIdentifier: "com.apple.TextEdit")

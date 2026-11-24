@@ -82,6 +82,10 @@ function safeParse<T>(json: string | null, fallback: T): T {
 let win: BrowserWindow | null = null;
 let cdp: CDPClient | null = null;
 let quitting = false;
+/// Whether the bot is polling right now (ChatbotEngine). Only then does the
+/// hidden page need full-rate timers; the rest of the day Chromium may
+/// throttle it like any background tab, which is most of its idle CPU.
+let live = false;
 let quitHooked = false;
 
 function createWindow(): BrowserWindow {
@@ -114,13 +118,14 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       // No Hunspell and dictionary download for a window the bot types into.
       spellcheck: false,
-      // Keep timers and rendering alive while hidden, or the bot's polling
-      // sees a frozen page. Also keeps the Page Visibility API "visible".
-      backgroundThrottling: false,
+      // Unthrottled only while the bot polls (setLive): then timers and
+      // rendering stay alive while hidden, or the bot's polling sees a frozen
+      // page. Also keeps the Page Visibility API "visible".
+      backgroundThrottling: !live,
     },
   });
   w.webContents.setUserAgent(ua);
-  w.webContents.setBackgroundThrottling(false);
+  w.webContents.setBackgroundThrottling(!live);
 
   // Links in chats open in the user's own browser, not in a stray Electron window.
   w.webContents.setWindowOpenHandler(({ url }) => {
@@ -191,6 +196,14 @@ function showWindow(w: BrowserWindow): void {
 /// All WhatsApp Web interaction goes through one CDP connection to the
 /// WhatsApp window. No focus stealing; no clipboard hijack; no screen-coord math.
 export const ChromeWhatsApp = {
+  /// The bot started or stopped polling: lift or restore background throttling.
+  setLive(on: boolean): void {
+    if (live === on) return;
+    live = on;
+    if (win && !win.isDestroyed()) win.webContents.setBackgroundThrottling(!on);
+    cblog(`ChromeWhatsApp: ${on ? "live (unthrottled)" : "idle (throttled)"}`);
+  },
+
   /// The window, if it has been created. For wiring (e.g. a tray item).
   get window(): BrowserWindow | null { return win && !win.isDestroyed() ? win : null; },
 

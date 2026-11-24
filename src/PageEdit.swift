@@ -11,7 +11,7 @@ import WebKit
 /// build with a private/ folder (see build.sh) -- that code isn't on GitHub.
 enum PageEdit {
     private static let root = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/nikxel").resolvingSymlinksInPath()
-    private static let backups = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits")
+    static let backups = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits")
     private static let agent = MOMGenerator()
 
     static var daysEditable: Bool {
@@ -74,6 +74,22 @@ enum PageEdit {
         try save(updated, md: md, page: page)
         Learning.logEdit(instruction, page: page)  // repeated fixes can become a standing rule
         return note
+    }
+
+    /// A title for a summary still named by its timestamp (NoteName). Asked
+    /// once, then kept beside the edit history so reopening the page is instant.
+    /// Slow the first time (an agent run): call off main.
+    static func suggestName(for page: URL) -> String? {
+        let cache = backups.appendingPathComponent(page.deletingPathExtension().lastPathComponent).appendingPathComponent("name.txt")
+        if let saved = try? String(contentsOf: cache, encoding: .utf8), !saved.isEmpty { return saved }
+        guard let md = try? String(contentsOf: page.deletingPathExtension().appendingPathExtension("md"), encoding: .utf8),
+              let out = try? agent.runPrompt(NoteName.prompt(summary: md), kind: "note-name", claudeModel: "haiku", timeout: 60)
+        else { return nil }
+        let name = NoteName.clean(out)
+        guard !name.isEmpty else { return nil }
+        try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? name.write(to: cache, atomically: true, encoding: .utf8)
+        return name
     }
 
     /// Puts back the version before the last edit. False when there's none.

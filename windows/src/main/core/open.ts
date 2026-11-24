@@ -4,11 +4,16 @@ import { spawn } from "child_process";
 import { ensureDir, isWin } from "./paths";
 import { diag } from "./diag";
 
+/// The Nikxel window claims summary pages here (dashboardWindow.ts), so they
+/// open in its tabs; set there to keep this module free of window code.
+export const summaryOpener: { open: ((file: string) => boolean) | null } = { open: null };
+
 /// Opens a file the way NSWorkspace.openFile did. A fresh Windows install has
 /// no app registered for .md/.txt/.json-ish files the user edits, and
 /// shell.openPath then fails with "no application is associated"; Notepad is
 /// the TextEdit of Windows, so fall back to it.
 export async function openFile(file: string): Promise<void> {
+  if (summaryOpener.open?.(file)) return;
   const err = await shell.openPath(file);
   if (!err) return;
   diag("open", `openPath failed for ${file}: ${err}`);

@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as NoteName from "./noteName";
 import { cblog } from "../core/diag";
 import { dayStamp, documentsDir, ensureDir, nikxelPath, readText, writeAtomic } from "../core/paths";
 import { Settings } from "../core/settings";
@@ -161,9 +162,9 @@ function meetings(days: Set<string>): Suggestions.Meeting[] {
   let names: string[] = [];
   try { names = fs.readdirSync(dir); } catch { /* no meetings yet */ }
   for (const name of names) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})?\.md$/.exec(name);
-    if (!m || !days.has(name.slice(0, 10))) continue;  // also skips .transcript files
-    const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)).getTime() / 1000;
+    const m = /(?:^|\s)((\d{4})-(\d{2})-(\d{2}))-(\d{2})(\d{2})(\d{2})?\.md$/.exec(name);  // "<name> <stamp>.md" once named (noteName.ts)
+    if (!m || !days.has(m[1])) continue;  // also skips .transcript files
+    const start = new Date(+m[2], +m[3] - 1, +m[4], +m[5], +m[6], +(m[7] ?? 0)).getTime() / 1000;
     let end: number;
     try { end = fs.statSync(path.join(dir, name)).mtimeMs / 1000; } catch { continue; }
     if (end - start > 4 * 3600) continue;  // a later edit of the summary moves the write time: not a real end

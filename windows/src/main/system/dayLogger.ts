@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as NoteName from "./noteName";
 import { Worker } from "worker_threads";
 import { HOME, isWin, documentsDir, dayStamp, ensureDir, readText, nikxelPath, writeAtomic } from "../core/paths";
 import { isNone } from "../recording/markdown";
@@ -246,7 +247,7 @@ export class DayLogger {
     // the .md check, so a meeting is never counted twice.
     try {
       const key = dayStamp(date);
-      stats.meetings = fs.readdirSync(this.meetingsDir).filter(f => f.startsWith(key) && f.endsWith(".md")).length;
+      stats.meetings = fs.readdirSync(this.meetingsDir).filter(f => f.endsWith(".md") && NoteName.stamp(f.slice(0, -3)).startsWith(key)).length;
     } catch { /* no meetings folder yet */ }
 
     stats.messages = DayLogger.countMessages(safeReadLog("chats", date));
@@ -786,14 +787,15 @@ ${report}`;
     let files: string[];
     try { files = await fs.promises.readdir(this.meetingsDir); } catch { return ""; }
     const key = dayStamp(date);
-    const today = files.filter(f => f.startsWith(key) && path.extname(f) === ".md").sort();
+    const stamp = (f: string) => NoteName.stamp(path.basename(f, ".md"));
+    const today = files.filter(f => path.extname(f) === ".md" && stamp(f).startsWith(key)).sort((a, b) => stamp(a).localeCompare(stamp(b)));
     if (today.length === 0) return "";
     const lines: string[] = [];
     for (const f of today) {
       const stem = path.basename(f, ".md");
       // Stem format: yyyy-MM-dd-HHmmss (or the Windows-safe
       // yyyy-MM-dd_HH-mm-ss that fileStamp() produces).
-      const m = stem.match(/^\d{4}-\d{2}-\d{2}[-_](\d{2})-?(\d{2})-?\d{2}/);
+      const m = NoteName.stamp(stem).match(/^\d{4}-\d{2}-\d{2}[-_](\d{2})-?(\d{2})-?\d{2}/);
       const time = m ? `${m[1]}:${m[2]}` : "?";
       // Pull the Summary section out of the MOM, if present, to give the LLM something to anchor on.
       let blurb = "";

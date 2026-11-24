@@ -24,6 +24,10 @@ export const VIEW_HEIGHT = 700;
 export const AVATAR_BOTTOM_INSET = 350;
 /// Avatar centre in window coordinates, y-down. The Swift view is y-up with
 /// the centre 350 pt above the bottom; 700 - 350 puts it at the same spot.
+type AvatarWindow = AvatarSurface & {
+  window: BrowserWindow; recordKeystroke(): void; globalMouseDown(): void; globalMouseUp(): void;
+};
+
 const AVATAR_CENTER = { x: VIEW_WIDTH / 2, y: VIEW_HEIGHT - AVATAR_BOTTOM_INSET };
 
 /// Card as sent to the renderer: the callbacks stay here, keyed by id.
@@ -61,7 +65,6 @@ export type ToRenderer =
   | { type: "dismissReminder"; id: string }
   | { type: "reminderText"; text: string | null }
   | { type: "recording"; startedAt: number | null }
-  | { type: "meeting"; on: boolean }
   | { type: "texter"; name: string | null };
 
 /// renderer → main, on "avatar:event".
@@ -76,7 +79,9 @@ export type FromRenderer =
   | { type: "cardTap"; id: number }
   | { type: "cardButton"; id: number; index: number }
   | { type: "cardGone"; id: number }
-  | { type: "reminderTap"; id: string };
+  | { type: "reminderTap"; id: string }
+  /// Any left press the window received, sent before whatever it turns into.
+  | { type: "press" };
 
 async function readOrNull(file: string): Promise<Uint8Array | null> {
   try { return await fs.promises.readFile(file); }
@@ -94,7 +99,7 @@ async function loadSprites(): Promise<{ sprite: Uint8Array | null; fallback: Uin
 export function createAvatarWindow(
   sm: StateMachine,
   handlers: { onDoubleClick: () => void; onClick: (avatar: Rectangle) => void },
-): AvatarSurface & { window: BrowserWindow; recordKeystroke(): void } {
+): AvatarWindow {
   // Starts with the avatar centred on the primary display.
   const primary = screen.getPrimaryDisplay().bounds;
   const start = {
@@ -161,10 +166,21 @@ export function createAvatarWindow(
   let bubblesBelow = false;
   let wantVisible = true;
   let interactive = false;
+  /// Click-through follows what the renderer last said, applied again on every
+  /// report, show and display change rather than only when it flips: a style
+  /// Windows dropped (a hide/show, a DPI or monitor change) would otherwise
+  /// stay dropped, and Nikxel kept moving but took no clicks.
+  const applyInteractive = () => {
+    if (!win.isDestroyed()) win.setIgnoreMouseEvents(!interactive, { forward: true });
+  };
+  /// For the global-hook fallback and the Copy Logs line.
+  let lastPressAt = 0;
+  const stats = { reports: 0, presses: 0, missed: 0 };
+  let hookPress: { at: number; x: number; y: number } | null = null;
   let pendingClick: ReturnType<typeof setTimeout> | undefined;
   /// Last values of the persistent overlays, replayed if the renderer reloads.
-  const sticky: { reminderText: string | null; recording: number | null; meeting: boolean; texter: string | null } =
-    { reminderText: null, recording: null, meeting: false, texter: null };
+  const sticky: { reminderText: string | null; recording: number | null; texter: string | null } =
+    { reminderText: null, recording: null, texter: null };
 
   const setBubblesBelow = (on: boolean) => {
     if (on === bubblesBelow) return;
@@ -293,10 +309,15 @@ export function createAvatarWindow(
     if (x < 0 || y < 0 || x >= b.width || y >= b.height) { x = x < b.width / 2 ? -1 : b.width + 1; y = -1; }
     const key = `${x},${y}`;
     if (key === lastCursor) return;
+    // Coming in from outside: re-assert click-through before it matters.
+    if (lastCursor.endsWith(",-1") && y !== -1) applyInteractive();
     lastCursor = key;
     send({ type: "cursor", x, y });
   };
   const cursorTimer = setInterval(pollCursor, 33);   // the renderer draws at 30 fps
+  screen.on("display-metrics-changed", applyInteractive);
+  screen.on("display-added", applyInteractive);
+  screen.on("display-removed", applyInteractive);
 
   // ---- Events from the renderer -------------------------------------------
 
@@ -309,6 +330,9 @@ export function createAvatarWindow(
         loaded = false;
         lastGeom = "";
         lastCursor = "";
+        // The new page starts click-through; match it.
+        interactive = false;
+        applyInteractive();
         loadSprites().then(async ({ sprite, fallback }) => {
           const [fontBold, fontMedium] = await Promise.all([
             readOrNull(resourcePath("fonts/DMSans-Bold.ttf")),
@@ -321,7 +345,6 @@ export function createAvatarWindow(
                     sprite, fallback, fontBold, fontMedium });
           sendNow({ type: "reminderText", text: sticky.reminderText });
           sendNow({ type: "recording", startedAt: sticky.recording });
-          sendNow({ type: "meeting", on: sticky.meeting });
           sendNow({ type: "texter", name: sticky.texter });
           // A card already up survives a renderer reload.
           if (current && !queue.some(m => m.type === "card")) sendNow({ type: "card", card: wire(current.id, current.card) });
@@ -343,10 +366,13 @@ export function createAvatarWindow(
         }
         break;
       case "interactive":
-        if (evt.on !== interactive) {
-          interactive = evt.on;
-          win.setIgnoreMouseEvents(!interactive, { forward: true });
-        }
+        interactive = evt.on;
+        stats.reports++;
+        applyInteractive();
+        break;
+      case "press":
+        lastPressAt = Date.now();
+        stats.presses++;
         break;
       case "dragStart":
         startDrag();
@@ -429,6 +455,7 @@ export function createAvatarWindow(
     // Windows lets the taskbar and other topmost windows climb over a
     // topmost window; re-asserting puts Nikxel back on top.
     win.setAlwaysOnTop(true, "screen-saver");
+    applyInteractive();
     pollCursor();
   };
 
@@ -442,6 +469,9 @@ export function createAvatarWindow(
   win.on("closed", () => {
     stopDrag();
     clearInterval(cursorTimer);
+    screen.off("display-metrics-changed", applyInteractive);
+    screen.off("display-added", applyInteractive);
+    screen.off("display-removed", applyInteractive);
     ipcMain.removeListener("avatar:event", onEvent);
     sm.off("state", onState);
     bus.off("spritesChanged", reloadSprites);
@@ -451,7 +481,7 @@ export function createAvatarWindow(
 
   // ---- The surface everything else talks to (via core/ui) -------------------
 
-  const surface: AvatarSurface & { window: BrowserWindow; recordKeystroke(): void } = {
+  const surface: AvatarWindow = {
     window: win,
 
     isVisible: () => wantVisible && !win.isDestroyed(),
@@ -494,7 +524,6 @@ export function createAvatarWindow(
     dismissReminder(id: string) { send({ type: "dismissReminder", id }); },
     setReminderText(text: string | null) { sticky.reminderText = text; send({ type: "reminderText", text }); },
     setRecordingStartedAt(ms: number | null) { sticky.recording = ms; send({ type: "recording", startedAt: ms }); },
-    setInMeeting(on: boolean) { sticky.meeting = on; send({ type: "meeting", on }); },
     setActiveTexter(name: string | null) { sticky.texter = name; send({ type: "texter", name }); },
 
     applyAvatarSize() {
@@ -510,7 +539,52 @@ export function createAvatarWindow(
 
     /// One key-down from InputHandler, for the WPM overheat.
     recordKeystroke() { send({ type: "key" }); },
+
+    /// A left press anywhere, from InputHandler's global hook. If the cursor
+    /// was on Nikxel (the renderer said so) and the window never heard the
+    /// press, Windows isn't delivering clicks to it: pick Nikxel up from here
+    /// instead, so it can still be dragged and clicked.
+    globalMouseDown() {
+      if (!wantVisible || win.isDestroyed() || !win.isVisible() || !interactive || dragging) return;
+      const at = Date.now();
+      const p = screen.getCursorScreenPoint();
+      setTimeout(() => {
+        // The hook can be heard a little after the window's own report of the same press.
+        if (lastPressAt >= at - 300 || dragging || win.isDestroyed()) return;
+        stats.missed++;
+        if (stats.missed === 1 || stats.missed % 20 === 0) {
+          diag("avatar", `a press on Nikxel didn't reach its window (${stats.missed} so far); handled from the global hook. ${diagnostics()}`);
+        }
+        hookPress = { at, x: p.x, y: p.y };
+        startDrag();
+      }, 150);
+    },
+
+    globalMouseUp() {
+      const press = hookPress;
+      if (!press) return;
+      hookPress = null;
+      const p = screen.getCursorScreenPoint();
+      mouseUp();
+      // Same rule as a press the window saw: barely moved is a click.
+      if (clickDecision(Math.hypot(p.x - press.x, p.y - press.y), false) === "chat") {
+        const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
+        runSafely("onClick", () => handlers.onClick({ x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h }));
+      }
+    },
+
+    diagnostics,
   };
+
+  function diagnostics(): string {
+    if (win.isDestroyed()) return "window gone";
+    const b = win.getBounds(), c = screen.getCursorScreenPoint();
+    const d = screen.getDisplayMatching(b);
+    return `bounds ${b.x},${b.y} ${b.width}x${b.height} on a ${d.size.width}x${d.size.height} display at ${d.scaleFactor}x `
+      + `(${screen.getAllDisplays().length} display(s)); cursor ${c.x - b.x},${c.y - b.y} in the window; `
+      + `clickable=${interactive}, ${stats.reports} hover reports, ${stats.presses} presses, ${stats.missed} missed; `
+      + `visible=${win.isVisible()}, state=${sm.state}`;
+  }
 
   ui.setAvatar(surface);
   return surface;

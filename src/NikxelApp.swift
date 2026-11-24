@@ -78,6 +78,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
 
         dayLogger = DayLogger(momGenerator: meetingCoordinator.momGen)
+        Automations.shared.start(agent: meetingCoordinator.momGen)
         dayLogger.onSummaryReady = { [weak self] line, fileURL in
             // Ten minutes: this fires at 10pm, so it has to survive the user
             // being away from the Mac when it lands.
@@ -85,6 +86,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 icon: "🌙", title: "Today, in short", lines: [line],
                 kind: .info, lifetime: 600,
                 action: { NSWorkspace.shared.openFile(fileURL) })
+            Automations.shared.fire("day", file: fileURL.deletingPathExtension().appendingPathExtension("md"))
         }
 
         // Both land around 9am on a Sunday. Each waits for an answer, and the
@@ -92,6 +94,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // card brings the tasks back.
         dayLogger.onMorningTasks = { [weak self] tasks, page in self?.showOpenTasks(tasks, page: page) }
         dayLogger.onWeekReady = { [weak self] line, fileURL in
+            Automations.shared.fire("week", file: fileURL.deletingPathExtension().appendingPathExtension("md"))
             let back: () -> Void = { [weak self] in self?.pendingTasksCard?() }
             NikxelView.ask(icon: "☀️", title: "Your week, in short", lines: [line], buttons: [
                 ("Open", { NSWorkspace.shared.openFile(fileURL); back() }),
@@ -100,6 +103,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         meetingDetector = MeetingDetector.shared
+        meetingDetector.onMicAppChanged = { [weak self] app in self?.offerToRecord(micApp: app) }
         chatbotEngine = ChatbotEngine.shared
         chatbotEngine.onRepliesSent = { [weak self] batch, drafted in
             self?.showReplyCard(batch, drafted: drafted)
@@ -279,6 +283,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func openAboutMe() { AboutMe.show() }
+    /// Every setting in one window (DashboardWindow.swift).
+    @objc func openDashboard() { DashboardWindowController.show() }
 
     func showOnboarding() {
         if onboardingWindowController == nil {
@@ -315,196 +321,33 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(NSMenuItem(title: "Nikxel (private)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         #endif
-        let toggle = NSMenuItem(title: "Show/Hide Nikxel", action: #selector(toggleVisibility), keyEquivalent: "")
-        toggle.target = self; menu.addItem(toggle)
+        // Only what's needed in a hurry; every setting lives in the Nikxel window.
+        let dashboard = NSMenuItem(title: "Open Nikxel…", action: #selector(openDashboard), keyEquivalent: ",")
+        dashboard.target = self; menu.addItem(dashboard)
+        menu.addItem(NSMenuItem.separator())
 
         let record = NSMenuItem(title: "Start/Stop Recording", action: #selector(toggleRecording), keyEquivalent: "r")
         record.target = self; menu.addItem(record)
         self.recordMenuItem = record
-
-        let forceMeet = NSMenuItem(title: "Force Meeting Mode (offline)", action: #selector(toggleForceMeeting), keyEquivalent: "")
-        forceMeet.target = self; menu.addItem(forceMeet)
-        self.forceMeetingItem = forceMeet
-        refreshForceMeetingItem()
 
         let mute = NSMenuItem(title: "Mute Mic", action: #selector(toggleMicMute), keyEquivalent: "m")
         mute.target = self; menu.addItem(mute)
         self.muteMenuItem = mute
         refreshMuteMenuItem()
 
-        let waItem = NSMenuItem(title: "WhatsApp Bot", action: nil, keyEquivalent: "")
-        let waMenu = NSMenu()
-        waMenu.delegate = self   // menuWillOpen: Connect/Disconnect stays current
+        let forceMeet = NSMenuItem(title: "Force Meeting Mode (offline)", action: #selector(toggleForceMeeting), keyEquivalent: "")
+        forceMeet.target = self; menu.addItem(forceMeet)
+        self.forceMeetingItem = forceMeet
+        refreshForceMeetingItem()
 
-        let bot = NSMenuItem(title: "Auto-Replies: On",
-                             action: #selector(toggleBotEnabled), keyEquivalent: "")
-        bot.target = self; waMenu.addItem(bot)
+        menu.addItem(NSMenuItem.separator())
+        let bot = NSMenuItem(title: "WhatsApp Auto-Replies: On", action: #selector(toggleBotEnabled), keyEquivalent: "")
+        bot.target = self; menu.addItem(bot)
         self.botMenuItem = bot
-
-        waMenu.addItem(NSMenuItem.separator())
-        waMenu.addItem(sectionHeader("Reply…"))
-        for mode in WABotMode.allCases {
-            let item = NSMenuItem(title: mode.displayName, action: #selector(setWABotMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            waMenu.addItem(item)
-            waModeItems.append(item)
-        }
-
-        waMenu.addItem(NSMenuItem.separator())
-        let groups = NSMenuItem(title: "Group Chats: Off",
-                                action: #selector(toggleWAGroups), keyEquivalent: "")
-        groups.target = self; waMenu.addItem(groups)
-        self.waGroupItem = groups
-
-        let draft = NSMenuItem(title: "Draft Only (don't send): Off",
-                               action: #selector(toggleWADraftOnly), keyEquivalent: "")
-        draft.target = self; waMenu.addItem(draft)
-        self.waDraftItem = draft
-
-        let quiet = NSMenuItem(title: "Quiet Hours: Off",
-                               action: #selector(toggleWAQuietHours), keyEquivalent: "")
-        quiet.target = self; waMenu.addItem(quiet)
-        self.waQuietItem = quiet
-
-        let ctx = NSMenuItem(title: "Knows What You're Working On: On",
-                             action: #selector(toggleWAWorkContext), keyEquivalent: "")
-        ctx.target = self; waMenu.addItem(ctx)
-        self.waContextItem = ctx
-
-        let chatTasks = NSMenuItem(title: "Tasks from Chats: On",
-                                   action: #selector(toggleWAChatTasks), keyEquivalent: "")
-        chatTasks.target = self; waMenu.addItem(chatTasks)
-        self.waChatTasksItem = chatTasks
-
-        waMenu.addItem(NSMenuItem.separator())
-        let openWA = NSMenuItem(title: "Open WhatsApp Window", action: #selector(openWhatsAppWindow), keyEquivalent: "")
-        openWA.target = self; waMenu.addItem(openWA)
-        let editPersonalityWA = NSMenuItem(title: "Edit Bot Personality…", action: #selector(editBotPersonality), keyEquivalent: "")
-        editPersonalityWA.target = self; waMenu.addItem(editPersonalityWA)
-
-        let editTrusted = NSMenuItem(title: "Edit Trusted Contacts…", action: #selector(editTrustedContacts), keyEquivalent: "")
-        editTrusted.target = self; waMenu.addItem(editTrusted)
-
-        let editNever = NSMenuItem(title: "Edit Never-Reply List…", action: #selector(editNeverReply), keyEquivalent: "")
-        editNever.target = self; waMenu.addItem(editNever)
-
-        waMenu.addItem(NSMenuItem.separator())
-        let waConn = NSMenuItem(title: "Disconnect WhatsApp…", action: #selector(toggleWhatsAppConnection), keyEquivalent: "")
-        waConn.target = self; waMenu.addItem(waConn)
-        self.waConnectItem = waConn
-
-        waItem.submenu = waMenu
-        menu.addItem(waItem)
         refreshWAMenu()
 
-        let erpItem = NSMenuItem(title: "Connect Forklyft ERP…", action: #selector(connectERP), keyEquivalent: "")
-        erpItem.target = self; menu.addItem(erpItem)
-        self.erpConnectItem = erpItem
-        refreshERPMenu()
-
-        let dashItem = NSMenuItem(title: "Connect to Dashboard…", action: #selector(connectDashboard), keyEquivalent: "")
-        dashItem.target = self; menu.addItem(dashItem)
-
-        let aboutMe = NSMenuItem(title: "Tell Nikxel About You…", action: #selector(openAboutMe), keyEquivalent: "")
-        aboutMe.target = self; menu.addItem(aboutMe)
-
-        let modeItem = NSMenuItem(title: "Capture Mode", action: nil, keyEquivalent: "")
-        let modeSubmenu = NSMenu()
-        let notesMode = NSMenuItem(title: "Notes (videos, lectures, podcasts)", action: #selector(setModeNotes), keyEquivalent: "")
-        notesMode.target = self; modeSubmenu.addItem(notesMode)
-        self.modeNotesItem = notesMode
-        let meetingMode = NSMenuItem(title: "Meeting (per-speaker)", action: #selector(setModeMeeting), keyEquivalent: "")
-        meetingMode.target = self; modeSubmenu.addItem(meetingMode)
-        self.modeMeetingItem = meetingMode
-        modeItem.submenu = modeSubmenu
-        menu.addItem(modeItem)
-        refreshModeMenuItems()
-
-        let formatItem = NSMenuItem(title: "Note Format", action: nil, keyEquivalent: "")
-        let formatSubmenu = NSMenu()
-        for format in NoteExporter.Format.allCases {
-            let item = NSMenuItem(title: format.displayName, action: #selector(setNoteFormat(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = format.rawValue
-            formatSubmenu.addItem(item)
-            noteFormatItems.append(item)
-        }
-        formatItem.submenu = formatSubmenu
-        menu.addItem(formatItem)
-        refreshNoteFormatMenuItems()
-
-        let sizeItem = NSMenuItem(title: "Avatar Size", action: nil, keyEquivalent: "")
-        let sizeSubmenu = NSMenu()
-        for (title, size) in [("Small", 0.6), ("Medium", 0.8), ("Large", 1.0), ("Extra Large", 1.25)] {
-            let item = NSMenuItem(title: title, action: #selector(setAvatarSize(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = size
-            sizeSubmenu.addItem(item)
-            avatarSizeItems.append(item)
-        }
-        sizeItem.submenu = sizeSubmenu
-        menu.addItem(sizeItem)
-        refreshAvatarSizeMenuItems()
-
-        let openNotes = NSMenuItem(title: "Open Notes Folder", action: #selector(openNotes), keyEquivalent: "")
-        openNotes.target = self; menu.addItem(openNotes)
-
-        let openMoms = NSMenuItem(title: "Open Meetings Folder", action: #selector(openMeetings), keyEquivalent: "")
-        openMoms.target = self; menu.addItem(openMoms)
-
-        let openDaily = NSMenuItem(title: "Open Daily Summaries Folder", action: #selector(openDaily), keyEquivalent: "")
-        openDaily.target = self; menu.addItem(openDaily)
-
-        let summarizeNow = NSMenuItem(title: "Summarize Today Now", action: #selector(summarizeNow), keyEquivalent: "")
-        summarizeNow.target = self; menu.addItem(summarizeNow)
-
-        let summarizeWeek = NSMenuItem(title: "Summarize This Week Now", action: #selector(summarizeWeekNow), keyEquivalent: "")
-        summarizeWeek.target = self; menu.addItem(summarizeWeek)
-
-        let usageItem = NSMenuItem(title: "AI Usage", action: nil, keyEquivalent: "")
-        let usageSubmenu = NSMenu()
-        usageSubmenu.delegate = self   // filled in menuNeedsUpdate, fresh on every open
-        usageItem.submenu = usageSubmenu
-        menu.addItem(usageItem)
-
-        let connectGCal = NSMenuItem(title: "Connect Google Account…", action: #selector(connectGoogleCalendar), keyEquivalent: "")
-        connectGCal.target = self; menu.addItem(connectGCal)
-
-        let gsync = NSMenuItem(title: "Send Meeting Tasks to Google: On",
-                               action: #selector(toggleGoogleSync), keyEquivalent: "")
-        gsync.target = self; menu.addItem(gsync)
-        googleSyncMenuItem = gsync
-        refreshGoogleSyncMenuTitle()
-
-        let connectReminders = NSMenuItem(title: "Connect Apple Reminders…", action: #selector(connectAppleReminders), keyEquivalent: "")
-        connectReminders.target = self; menu.addItem(connectReminders)
-
-        let connectSlack = NSMenuItem(title: "Connect Slack…", action: #selector(connectSlack), keyEquivalent: "")
-        connectSlack.target = self; menu.addItem(connectSlack)
-
-        let templateItem = NSMenuItem(title: "Summary Template", action: nil, keyEquivalent: "")
-        let templateSubmenu = NSMenu()
-        templateItem.submenu = templateSubmenu
-        templateMenu = templateSubmenu
-        rebuildTemplateMenu()
-        menu.addItem(templateItem)
-
-        let editSettings = NSMenuItem(title: "Edit Nikxel Settings (name, language)…", action: #selector(editSettings), keyEquivalent: "")
-        editSettings.target = self; menu.addItem(editSettings)
-
-        let regenerate = NSMenuItem(title: "Regenerate Unfinished Summary…", action: #selector(regenerateUnfinished), keyEquivalent: "")
-        regenerate.target = self; menu.addItem(regenerate)
-
-        let setupWizard = NSMenuItem(title: "Setup Wizard…", action: #selector(openOnboarding), keyEquivalent: "")
-        setupWizard.target = self; menu.addItem(setupWizard)
-
-        let copyLogs = NSMenuItem(title: "Copy Logs (to share when something breaks)", action: #selector(copyLogs), keyEquivalent: "")
-        copyLogs.target = self; menu.addItem(copyLogs)
-
-        let update = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-        update.target = self; menu.addItem(update)
-        self.updateMenuItem = update
+        let toggle = NSMenuItem(title: "Show/Hide Nikxel", action: #selector(toggleVisibility), keyEquivalent: "")
+        toggle.target = self; menu.addItem(toggle)
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "Quit Nikxel", action: #selector(quitApp), keyEquivalent: "q")
@@ -605,10 +448,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return "\(twelve)\(suffix)"
     }
 
-    private func refreshWAMenu() {
+    func refreshWAMenu() {
         let on = ChatbotEngine.shared.isEnabled
         botMenuItem?.state = on ? .on : .off
-        botMenuItem?.title = on ? "Auto-Replies: On" : "Auto-Replies: Off"
+        botMenuItem?.title = on ? "WhatsApp Auto-Replies: On" : "WhatsApp Auto-Replies: Off"
 
         let mode = NikxelSettings.waBotMode
         for item in waModeItems {
@@ -664,13 +507,6 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                                      }
                                  }),
                                  ("Cancel", {})])
-    }
-
-    /// A disabled item used as a label inside a submenu.
-    private func sectionHeader(_ title: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
     }
 
     @objc func setModeNotes() {
@@ -746,37 +582,65 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func handleMeetingStateChanged() {
         let state = MeetingDetector.shared.isInMeeting
         cblog("NikxelApp: handleMeetingStateChanged → isInMeeting=\(state)")
-        window.nikxelView?.isInMeeting = state
         offerToRecord(state)
     }
 
-    private var callPromptAt = Date.distantPast
+    /// When each prompt was last shown, by title: a Meet tab moved to the
+    /// background drops out of detection and comes back as a "new" call, so
+    /// the same call or app isn't asked about again for 30 minutes.
+    private var promptedAt: [String: Date] = [:]
+    /// The record prompt on screen, so it can go when the call or the mic does.
+    private var recordPrompt: String?
     private let callPromptTitle = "You're in "
+
+    /// Any other app took the microphone: offer to record that too, unless a call prompt already covers it.
+    func offerToRecord(micApp: String?) {
+        guard let app = micApp else {
+            if !meetingDetector.isInMeeting { dismissRecordPrompt() }
+            return
+        }
+        guard !meetingDetector.isInMeeting else { return }
+        askToRecord(title: "\(app) is using your mic", autoRecord: false)
+    }
+
+    private func dismissRecordPrompt() {
+        if let t = recordPrompt, let v = NikxelView.main, v.card?.title == t { v.dismissCard() }
+        recordPrompt = nil
+    }
 
     /// A call or Meet just started and nothing is recording: ask once. At most every 30 min, since a
     /// Meet tab moved to the background drops out of detection and comes back as a "new" call.
     private func offerToRecord(_ inMeeting: Bool) {
         guard inMeeting else {
             // The call ended with the question still up: it's moot now.
-            if let v = NikxelView.main, v.card?.title.hasPrefix(callPromptTitle) == true { v.dismissCard() }
+            if meetingDetector.micApp == nil { dismissRecordPrompt() }
             return
         }
-        guard let source = meetingDetector.source, !meetingCoordinator.isRecording,
-              Date().timeIntervalSince(callPromptAt) > 30 * 60 else { return }
-        callPromptAt = Date()
-        // The user agreed to this once (Learning.offerAutoRecord): record without asking.
-        if NikxelSettings.autoRecordCalls {
+        guard let source = meetingDetector.source else { return }
+        askToRecord(title: callPromptTitle + source, autoRecord: NikxelSettings.autoRecordCalls, recording: "Recording " + source)
+    }
+
+    /// "Want me to record it?", once per call or app every 30 minutes, and
+    /// never while already recording. `autoRecord`: the user agreed to this
+    /// once (Learning.offerAutoRecord), so record without asking.
+    private func askToRecord(title: String, autoRecord: Bool, recording: String = "Recording") {
+        guard !meetingCoordinator.isRecording,
+              Date().timeIntervalSince(promptedAt[title] ?? .distantPast) > 30 * 60 else { return }
+        promptedAt[title] = Date()
+        if autoRecord {
             meetingCoordinator.toggleRecording()
-            NikxelView.tell(icon: "🎙️", title: "Recording " + source, lines: ["Double-click me to stop."])
+            NikxelView.tell(icon: "🎙️", title: recording, lines: ["Double-click me to stop."])
             return
         }
-        NikxelView.ask(icon: "🎙️", title: callPromptTitle + source, lines: ["Want me to record it and write the notes?"], buttons: [
+        recordPrompt = title
+        NikxelView.ask(icon: "🎙️", title: title, lines: ["Want me to record it and write the notes?"], buttons: [
             ("Record", { [weak self] in
                 Learning.count("call.record")
+                self?.recordPrompt = nil
                 guard let mc = self?.meetingCoordinator, !mc.isRecording else { return }
                 mc.toggleRecording()
             }),
-            ("Not now", { Learning.count("call.skip") }),
+            ("Not now", { [weak self] in Learning.count("call.skip"); self?.recordPrompt = nil }),
         ])
     }
 
@@ -1030,6 +894,11 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func openWhatsAppWindow() { ChromeWhatsApp.activate() }
 
     @objc func editBotPersonality() {
+        NSWorkspace.shared.openFile(botPersonalityURL())
+    }
+
+    /// ~/.nikxel/bot_personality.txt, written with the default first if missing.
+    func botPersonalityURL() -> URL {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".nikxel", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1042,7 +911,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             """
             try? def.write(to: url, atomically: true, encoding: .utf8)
         }
-        NSWorkspace.shared.openFile(url)
+        return url
     }
 
     @objc func editSettings() {
@@ -1256,38 +1125,7 @@ struct NikxelMain {
     }
 }
 
-// MARK: - AI usage submenu
-
-extension NikxelAppDelegate: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
-        if menu.items.contains(where: { $0 === waConnectItem }) { refreshWAMenu() }
-    }
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        // Only the AI Usage submenu is rebuilt; the WhatsApp one just refreshes.
-        guard !menu.items.contains(where: { $0 === waConnectItem }) else { return }
-        menu.removeAllItems()
-        func info(_ title: String) {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        let today = UsageLog.totals(for: Date())
-        var all = UsageLog.Totals()
-        for t in today.values { all.calls += t.calls; all.tokens += t.tokens; all.cost += t.cost }
-        info("Today: " + UsageLog.line(all))
-        for (kind, t) in today.sorted(by: { $0.value.cost > $1.value.cost }) {
-            info("    \(kind): " + UsageLog.line(t))
-        }
-        let (avg, days) = UsageLog.dailyAverage()
-        info(days == 0 ? "Daily average: no history yet"
-                       : "Daily average (last \(days) day\(days == 1 ? "" : "s")): " + UsageLog.line(avg))
-        menu.addItem(.separator())
-        let open = NSMenuItem(title: "Open Usage Log Folder", action: #selector(openUsageFolder), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
-    }
-
+extension NikxelAppDelegate {
     @objc func openUsageFolder() {
         try? FileManager.default.createDirectory(at: UsageLog.directory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(UsageLog.directory)

@@ -40,6 +40,9 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
     // Fetched once as the box opens, while the user types; every question reuses it.
     private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
     private var waSnapshot = ""   // a read of WhatsApp at open time (unread, recent chats, open thread)
+    private var mailSnapshot = "" // the inbox at open time, when Gmail is connected
+    private var knownMailIds: Set<String> = []  // ids the chat has shown the model; labels only touch these
+    private var lastDraftId: String?            // what "send it" sends
     private let feedReady = DispatchGroup()
     private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
 
@@ -73,6 +76,11 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         DispatchQueue.global(qos: .userInitiated).async {
             self.feed = CloudSync.projectFeed(get: CloudSync.getter(timeout: 3))
             self.waSnapshot = AvatarChat.waContextBlock() ?? ""   // read WhatsApp once; every question reuses it
+            if Gmail.isReady {
+                let (unread, recent) = Gmail.inbox()
+                self.mailSnapshot = MailIntent.contextBlock(unread: unread, recent: recent)
+                self.knownMailIds = Set((unread + recent).map(\.id))
+            }
             self.feedReady.leave()
         }
 
@@ -137,9 +145,22 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
                 // What Nikxel is doing right now and has done today (apps, code, agent asks),
                 // then the WhatsApp read, then the written summaries/notes/projects.
                 let live = (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting)).map { "### right now\n\($0)" } ?? ""
-                let context = [NikxelSettings.userContextBlock, live, self.waSnapshot,
+                var context = [NikxelSettings.userContextBlock, live, self.waSnapshot, self.mailSnapshot,
                                ChatContext.build(ChatContext.localBlocks(root: root, today: today) + ChatContext.projectBlocks(feed),
                                                  cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                // Mail: "send it", drafts and labels answer here; a search adds to the context.
+                switch self.handleMail(text: text, context: context, history: history, today: today) {
+                case .reply(let reply):
+                    DispatchQueue.main.async {
+                        self.history.append((q: text, a: reply))
+                        self.resolve(id, ["text": reply, "offline": offline, "error": false])
+                    }
+                    return
+                case .context(let more):
+                    context += "\n\n" + more
+                case .none:
+                    break
+                }
                 // "make a task to …" creates one in ERP, drafted from the same
                 // meeting/WhatsApp/project context, then opens it to review.
                 if ERP.looksLikeTaskRequest(text) {
@@ -226,6 +247,54 @@ final class AvatarChat: NSObject, NSWindowDelegate, WKScriptMessageHandler {
         if let p = draft.project { line += " · \(p)" }
         if let d = draft.due { line += " · due \(d)" }
         return line + ". Opening it so you can review and edit."
+    }
+
+    private enum MailOutcome { case none, reply(String), context(String) }
+
+    /// Off the main thread. Sending is decided here, never by the model: only "send it"
+    /// for the draft this chat made. Everything else mail-like goes through the router.
+    private func handleMail(text: String, context: String, history: [(q: String, a: String)], today: Date) -> MailOutcome {
+        if MailIntent.isSendCommand(text) {
+            guard let d = lastDraftId else { return .reply("There's no draft from this chat to send.") }
+            guard Gmail.sendDraft(d) else { return .reply("Gmail didn't send it. The draft is still in your Drafts.") }
+            lastDraftId = nil
+            return .reply("Sent.")
+        }
+        guard MailIntent.looksLikeMail(text), GoogleAuth.shared.isAuthorized else { return .none }
+        guard Gmail.isReady else { return .reply("Reconnect Google from the Nikxel menu to give me your mail.") }
+        let routed: String
+        do {
+            routed = try agent.runPrompt(MailIntent.routerPrompt(request: text, context: context, history: history, today: today),
+                                         kind: "mail", claudeModel: "haiku", timeout: 30)
+        } catch { return .none }
+        switch MailIntent.parseAction(routed) {
+        case .answer:
+            return .none
+        case .search(let q):
+            let found = Gmail.search(q)
+            knownMailIds.formUnion(found.map(\.id))
+            return .context(MailIntent.searchBlock(query: q, found))
+        case .draft(let d):
+            let original = d.replyTo.flatMap { knownMailIds.contains($0) ? Gmail.message($0) : nil }
+            var draft = d
+            if let o = original {
+                if draft.to.isEmpty { draft.to = o.from }
+                if draft.subject.isEmpty { draft.subject = o.subject.lowercased().hasPrefix("re:") ? o.subject : "Re: \(o.subject)" }
+            }
+            guard !draft.to.isEmpty else { return .reply("Who should it go to? Give me a name from your mail or an address.") }
+            guard let made = Gmail.createDraft(draft, replyTo: original) else { return .reply("Gmail didn't save the draft.") }
+            lastDraftId = made.draftId
+            if let u = URL(string: "https://mail.google.com/mail/u/0/#drafts?compose=\(made.messageId)") {
+                DispatchQueue.main.async { NSWorkspace.shared.open(u) }
+            }
+            return .reply("Draft to \(draft.to) — “\(draft.subject)”. Opened in Gmail; say “send it” to send.")
+        case .label(let ids, let op):
+            let known = ids.filter(knownMailIds.contains)
+            guard !known.isEmpty else { return .reply("I couldn't tell which emails you meant.") }
+            guard Gmail.modify(known, op) else { return .reply("Gmail didn't make that change.") }
+            let verb = switch op { case .archive: "Archived"; case .read: "Marked read:"; case .unread: "Marked unread:"; case .star: "Starred" }
+            return .reply("\(verb) \(known.count) email\(known.count == 1 ? "" : "s").")
+        }
     }
 
     /// A read of WhatsApp for the chat: who's waiting (unread), the recent chats,

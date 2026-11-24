@@ -12,6 +12,9 @@ import * as ERP from "./erp";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import { DayLogger } from "./dayLogger";
 import { MeetingDetector } from "../whatsapp/meetingDetector";
+import { GoogleAuth } from "../google/googleAuth";
+import * as Gmail from "../google/gmail";
+import * as MailIntent from "../google/mailIntent";
 
 /// The chat a single click on the avatar opens (no panel, just bubbles and a field floating beside it): ask about your last two weeks of meetings, days, notes and
 /// projects. Clicking the avatar again or Esc closes it, and forgets the conversation. Port of src/AvatarChat.swift.
@@ -41,6 +44,71 @@ async function makeERPTask(request: string, context: string, today: Date, agent:
   if (draft.project) line += ` · ${draft.project}`;
   if (draft.due) line += ` · due ${draft.due}`;
   return line + ". Opening it so you can review and edit.";
+}
+
+/// This chat's mail state: ids the model has been shown (labels only touch these) and
+/// the draft "send it" sends.
+interface MailState { known: Set<string>; lastDraftId: string | null }
+type MailOutcome = { kind: "none" } | { kind: "reply"; text: string } | { kind: "context"; text: string };
+
+/// Sending is decided here, never by the model: only "send it" for the draft this chat
+/// made. Everything else mail-like goes through the router. Port of AvatarChat.handleMail.
+async function handleMail(text: string, context: string, history: { q: string; a: string }[], today: Date,
+  agent: MOMGenerator, st: MailState): Promise<MailOutcome> {
+  const reply = (t: string): MailOutcome => ({ kind: "reply", text: t });
+  if (MailIntent.isSendCommand(text)) {
+    if (!st.lastDraftId) return reply("There's no draft from this chat to send.");
+    if (!(await Gmail.sendDraft(st.lastDraftId))) return reply("Gmail didn't send it. The draft is still in your Drafts.");
+    st.lastDraftId = null;
+    return reply("Sent.");
+  }
+  if (!MailIntent.looksLikeMail(text) || !GoogleAuth.shared.isAuthorized) return { kind: "none" };
+  if (!Gmail.isReady()) return reply("Reconnect Google from the Nikxel menu to give me your mail.");
+  let routed: string;
+  try {
+    routed = await agent.runPrompt(MailIntent.routerPrompt(text, context, history, today), "mail", "haiku", 30);
+  } catch { return { kind: "none" }; }
+  const a = MailIntent.parseAction(routed);
+  switch (a.kind) {
+    case "answer":
+      return { kind: "none" };
+    case "search": {
+      const found = await Gmail.search(a.query);
+      for (const m of found) st.known.add(m.id);
+      return { kind: "context", text: MailIntent.searchBlock(a.query, found) };
+    }
+    case "draft": {
+      const original = a.draft.replyTo && st.known.has(a.draft.replyTo) ? await Gmail.message(a.draft.replyTo) : null;
+      const draft = { ...a.draft };
+      if (original) {
+        if (!draft.to) draft.to = original.from;
+        if (!draft.subject) draft.subject = /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`;
+      }
+      if (!draft.to) return reply("Who should it go to? Give me a name from your mail or an address.");
+      const made = await Gmail.createDraft(draft, original);
+      if (!made) return reply("Gmail didn't save the draft.");
+      st.lastDraftId = made.draftId;
+      void shell.openExternal(`https://mail.google.com/mail/u/0/#drafts?compose=${made.messageId}`);
+      return reply(`Draft to ${draft.to} — “${draft.subject}”. Opened in Gmail; say “send it” to send.`);
+    }
+    case "label": {
+      const known = a.ids.filter(id => st.known.has(id));
+      if (!known.length) return reply("I couldn't tell which emails you meant.");
+      if (!(await Gmail.modify(known, a.op))) return reply("Gmail didn't make that change.");
+      const verb = { archive: "Archived", read: "Marked read:", unread: "Marked unread:", star: "Starred" }[a.op];
+      return reply(`${verb} ${known.length} email${known.length === 1 ? "" : "s"}.`);
+    }
+  }
+}
+
+/// The inbox at chat open, when Gmail is connected; its ids go into `known`.
+async function mailContextBlock(known: Set<string>): Promise<string> {
+  if (!Gmail.isReady()) return "";
+  try {
+    const { unread, recent } = await Gmail.inbox();
+    for (const m of [...unread, ...recent]) known.add(m.id);
+    return MailIntent.contextBlock(unread, recent);
+  } catch { return ""; }
 }
 
 /// A read of WhatsApp for the chat: who's waiting (unread), the recent chats,
@@ -101,6 +169,8 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
   // Fetched once as the box opens, while the user types; every question reuses it.
   const feedP = CloudSync.projectFeed(CloudSync.getter(3000));
   const waP = waContextBlock(); // read WhatsApp once; every question reuses it
+  const mail: MailState = { known: new Set(), lastDraftId: null };
+  const mailP = mailContextBlock(mail.known);
 
   ipcMain.handle(`chat:send:${id}`, async (_e, text: string) => {
     const today = new Date();
@@ -109,8 +179,15 @@ export function toggle(avatar: Rectangle, pinnedTo: BrowserWindow, agent: MOMGen
     // now and has done today, then the WhatsApp read, then the written summaries.
     const live = DayLogger.current ? "### right now\n" + (await DayLogger.current.liveContextAsync(MeetingDetector.shared.isInMeeting)) : "";
     const wa = await waP;
-    const context = [Settings.userContextBlock, live, wa ?? "",
+    let context = [Settings.userContextBlock, live, wa ?? "", await mailP,
       build([...localBlocks(path.join(documentsRoot(), "nikxel"), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
+    // Mail: "send it", drafts and labels answer here; a search adds to the context.
+    const m = await handleMail(text, context, history, today, agent, mail);
+    if (m.kind === "reply") {
+      history.push({ q: text, a: m.text });
+      return { text: m.text, offline, error: false };
+    }
+    if (m.kind === "context") context += "\n\n" + m.text;
     // "make a task to …" creates one in ERP, drafted from the same
     // meeting/WhatsApp/project context, then opens it to review.
     if (ERP.looksLikeTaskRequest(text)) {

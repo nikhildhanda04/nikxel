@@ -26,6 +26,7 @@ export class GoogleAuth {
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/gmail.modify",
   ];
 
   private readonly credsPath: string;
@@ -436,6 +437,7 @@ export class GoogleAuth {
       case "https://www.googleapis.com/auth/calendar.readonly": return "Read your calendar (meeting reminders)";
       case "https://www.googleapis.com/auth/calendar.events": return "Create calendar events (follow-up meetings)";
       case "https://www.googleapis.com/auth/tasks": return "Create tasks (action items in Google Tasks)";
+      case "https://www.googleapis.com/auth/gmail.modify": return "Read, draft and organise your mail (avatar chat)";
       default: return scope;
     }
   }

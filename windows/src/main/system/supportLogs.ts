@@ -29,7 +29,8 @@ async function report(): Promise<string> {
   out += `Avatar: ${safe(() => ui.avatar?.diagnostics() ?? "not created")}\n`;
 
   out += section("chatbot.log", await tail(path.join(nx, "chatbot.log"), 60));
-  out += section("debug.log", await tail(path.join(nx, "debug.log"), 40));
+  // The health lines (errors, hangs, crashes, usage) live here: more of it.
+  out += section("debug.log", await tail(path.join(nx, "debug.log"), 150));
   out += section("update.log", await tail(path.join(nx, "update.log"), 30));
 
   // Newest summary run: its stderr/stdout say why notes failed.

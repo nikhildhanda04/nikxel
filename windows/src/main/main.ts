@@ -2,6 +2,7 @@ import { app, clipboard, dialog, Menu, MenuItemConstructorOptions, nativeImage, 
 import * as fs from "fs";
 import * as path from "path";
 import { bus } from "./core/bus";
+import * as Health from "./core/health";
 import { cblog } from "./core/diag";
 import { openFile, openFolder, openUrl } from "./core/open";
 import { documentsDir, nikxelPath, resourcePath } from "./core/paths";
@@ -51,6 +52,7 @@ app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  Health.start();
   app.on("second-instance", () => nikxel?.showAvatar());
   app.setAppUserModelId("com.nikxel.Nikxel");
   app.whenReady().then(() => { nikxel = new NikxelApp(); nikxel.launch(); });

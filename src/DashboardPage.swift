@@ -56,7 +56,7 @@ enum DashboardPage {
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;overflow-x:clip}
 body{background:var(--color-paper);color:var(--color-ink);font:15px/1.5 var(--font-body);-webkit-font-smoothing:antialiased;overflow:clip;
-  display:grid;grid-template-columns:248px minmax(0,1fr);-webkit-user-select:none;user-select:none;cursor:default}
+  display:grid;grid-template-columns:248px minmax(0,1fr);grid-template-rows:minmax(0,1fr);-webkit-user-select:none;user-select:none;cursor:default}
 body::before{content:'';position:fixed;inset:0;z-index:50;pointer-events:none;opacity:var(--grain);mix-blend-mode:var(--grain-blend);
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 1.4 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
 .clouds{position:fixed;inset:0;z-index:0;pointer-events:none;background:var(--color-cloud);
@@ -75,17 +75,18 @@ button,input,select,textarea{font:inherit;color:inherit}
 html{caret-color:var(--color-accent);scrollbar-color:var(--color-line-2) transparent}
 
 /* sidebar */
-.side{position:relative;z-index:2;display:flex;flex-direction:column;gap:24px;padding:56px 16px 20px;background:var(--color-side);border-right:1px solid var(--color-line);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.side{position:relative;z-index:2;display:flex;flex-direction:column;gap:24px;min-height:0;overflow:hidden;padding:56px 16px 20px;background:var(--color-side);border-right:1px solid var(--color-line);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 .brand{display:flex;align-items:center;gap:8px;padding:0 8px}
 .brand .sp{width:40px;height:40px}
 .mark{font:600 24px/1 var(--font-display);letter-spacing:-.02em}
-.nav{display:flex;flex-direction:column;gap:4px}
+/* The sections scroll when the window is short; the brand and the record/mute footer stay put. */
+.nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -8px;padding:0 8px}
 .nav .label{font:600 11.5px/1 var(--font-body);letter-spacing:.08em;text-transform:uppercase;color:var(--color-faint);padding:16px 12px 8px}
 .nav button{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:12px;padding:10px 12px;cursor:pointer;font:500 15px/1.2 var(--font-body);color:var(--color-ink-2);
   transition:background-color .5s var(--ease),color .5s var(--ease)}
 .nav button:hover{background:var(--color-paper-2);color:var(--color-ink)}
 .nav button[aria-current="page"]{background:var(--color-card);color:var(--color-accent-text);font-weight:600;box-shadow:inset 0 0 0 1px var(--color-line)}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.side-foot{margin-top:auto;flex:none;display:flex;flex-direction:column;gap:8px}
 .rec{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border-radius:14px;border:1px solid var(--color-line);background:var(--color-card);cursor:pointer;font:600 14px/1.2 var(--font-body);color:var(--color-ink);text-align:left;
   transition:border-color .5s var(--ease),background-color .5s var(--ease)}
 .rec:hover{border-color:var(--color-line-2)}

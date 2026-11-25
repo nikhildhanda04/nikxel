@@ -86,6 +86,23 @@ export const APP_HELP = [
   `- The files themselves, only if they ask for the folder: ${path.join(documentsRoot(), "nikxel")} (meetings, daily, weekly, notes), settings in ${path.join(HOME, ".nikxel")}. Advanced in the Nikxel window opens them.`,
 ].join("\n");
 
+/// "open my latest meeting summary", "show me the Sarvam minutes": which of `entries` (newest first, as
+/// summaryLibrary.scan gives them) to open, or null when the question isn't asking to open a summary.
+/// Port of ChatContext.openTarget.
+export function openTarget(question: string, entries: { kind: string; title: string }[]): number | null {
+  const q = question.toLowerCase(), has = (re: RegExp) => re.test(q);
+  if (!has(/\b(open|show me|pull up|bring up)\b/) || !has(/summar|minutes|\bmom\b|\bnotes?\b|meeting|\bcall\b|recap/)) return null;
+  const kind = has(/meeting|minutes|\bmom\b|\bcall\b/) ? "meetings" : has(/\bweek/) ? "weekly"
+    : has(/\b(day|daily)\b/) ? "daily" : has(/\bnotes?\b/) ? "notes" : null;
+  const pool = entries.map((_, i) => i).filter(i => kind === null || entries[i].kind === kind);
+  if (has(/\b(latest|last|most recent|newest|recent|just now)\b/)) return pool[0] ?? null;
+  const generic = new Set(["open", "show", "pull", "bring", "summary", "summaries", "meeting", "meetings", "minutes", "notes",
+    "note", "recap", "please", "call", "daily", "weekly", "today", "from", "with", "about", "that", "this", "file"]);
+  const words = q.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4 && !generic.has(w));
+  if (!words.length) return pool[0] ?? null;
+  return pool.find(i => words.some(w => entries[i].title.toLowerCase().includes(w))) ?? null;
+}
+
 export function prompt(context: string, history: { q: string; a: string }[], question: string, today: Date): string {
   let p = `You are the user's desk avatar. Today is ${ymd(today)}. Answer using only the notes below. ` +
     `If the answer isn't in them, say so plainly; never guess. Reply in a few short lines or bullets, ` +

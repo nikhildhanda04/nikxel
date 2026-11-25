@@ -562,7 +562,12 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
       var v = nin.value.trim(); if (!v) { nin.focus(); return; }
       nok.disabled = true; nmsg.textContent = "Renaming…";
       call("name", { to: v }).then(function (r) {
-        if (r.url) { location.replace(r.url); return; }
+        if (r.url) {
+          location.replace(r.url);
+          // Renamed on disk either way; if this page wasn't swapped for the new one, say so instead of hanging.
+          setTimeout(function () { nin.disabled = true; nb.querySelector(".nxn-no").remove(); nok.remove(); nmsg.textContent = "Renamed to \u201c" + v + "\u201d. It shows under that name in Library."; }, 2000);
+          return;
+        }
         nok.disabled = false; nmsg.textContent = r.error || "Couldn't rename.";
       });
     };

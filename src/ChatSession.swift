@@ -68,6 +68,19 @@ final class ChatSession {
     /// so what it says can't be taken as a mail or ERP command.
     func send(_ text: String, attach: String = "", done: @escaping ([String: Any]) -> Void) {
         let history = self.history, agent = self.agent, today = Date()
+        // "open my latest meeting summary": opened here, never left to the model, which can only answer in words.
+        let library = SummaryLibrary.scan()
+        if attach.isEmpty, let i = ChatContext.openTarget(text, entries: library.map { (kind: $0.kind, title: $0.title) }) {
+            let e = library[i]
+            // Always the Nikxel window's reader, whatever "open summaries in" says; a .md-only one has no page to show.
+            DispatchQueue.main.async {
+                if DashboardWindowController.canRead(e.file) { DashboardWindowController.open(summary: e.file) } else { NSWorkspace.shared.openFile(e.file) }
+            }
+            let shelf = ["meetings": "Meetings", "daily": "Days", "weekly": "Weeks", "notes": "Notes"][e.kind] ?? "Library"
+            let reply = "Opened “\(e.title)” in the Nikxel window. You'll find it any time under Library → \(shelf). It's saved only on this computer."
+            self.history.append((q: text, a: reply))
+            return done(["text": reply, "offline": false, "error": false])
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             self.feedReady.wait()
             let (feed, offline) = self.feed

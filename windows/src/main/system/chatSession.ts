@@ -4,7 +4,8 @@ import { cblog } from "../core/diag";
 import { Settings } from "../core/settings";
 import { documentsRoot } from "../core/paths";
 import { MOMError, MOMGenerator } from "../recording/momGenerator";
-import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
+import { CAP, build, localBlocks, openTarget, projectBlocks, prompt } from "./chatContext";
+import * as SummaryLibrary from "./summaryLibrary";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
 import { ChromeWhatsApp, WAMessage } from "../whatsapp/chromeWhatsApp";
@@ -75,6 +76,17 @@ export class ChatSession {
   /// only (an automation's meeting summary), so what it says can't be taken as a
   /// mail or ERP command.
   async send(text: string, attach = ""): Promise<{ text: string; offline: boolean; error: boolean }> {
+    // "open my latest meeting summary": opened here, never left to the model, which can only answer in words.
+    const library = SummaryLibrary.scan(), i = attach ? null : openTarget(text, library);
+    if (i !== null) {
+      const e = library[i];
+      // Required here: dashboardWindow imports this file.
+      (require("./dashboardWindow") as typeof import("./dashboardWindow")).openSummary(e.file);
+      const shelf = ({ meetings: "Meetings", daily: "Days", weekly: "Weeks", notes: "Notes" } as Record<string, string>)[e.kind] ?? "Library";
+      const reply = `Opened “${e.title}” in the Nikxel window. You'll find it any time under Library → ${shelf}. It's saved only on this computer.`;
+      this.history.push({ q: text, a: reply });
+      return { text: reply, offline: false, error: false };
+    }
     const history = [...this.history], today = new Date();
     await this.ready;
     const { feed, offline } = this.feed;

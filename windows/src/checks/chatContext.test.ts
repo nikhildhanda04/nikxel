@@ -4,7 +4,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { localBlocks, projectBlocks, build, prompt, clickDecision, Block, CAP } from "../main/system/chatContext";
+import { localBlocks, projectBlocks, build, prompt, clickDecision, openTarget, Block, CAP } from "../main/system/chatContext";
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const today = new Date();
@@ -52,4 +52,16 @@ test("build: 350 x 10k blocks fit under the cap", () => {
   const big: Block[] = Array.from({ length: 350 }, (_, i) => ({ kind: i % 3 === 0 ? "daily" : "meeting", date: day(i % 14), name: `b${i}`, text: "y".repeat(10_000) }));
   const out = build(big, CAP);
   assert.ok(out.length <= CAP && out.length > CAP - 10_100);
+});
+
+test("openTarget: which summary a chat question asks to open", () => {
+  const lib = [{ kind: "daily", title: "Tue 25 Nov" }, { kind: "meetings", title: "Nikxel product sync" },
+    { kind: "meetings", title: "Sarvam Voice Agent Dashboard Integration" }, { kind: "weekly", title: "Week to 22 Nov" }];
+  assert.equal(openTarget("can you open the latest meeting summary that was made", lib), 1);
+  assert.equal(openTarget("open the Sarvam minutes", lib), 2);
+  assert.equal(openTarget("show me my last daily summary", lib), 0);
+  assert.equal(openTarget("open the weekly recap", lib), 3);
+  assert.equal(openTarget("open the Zebra meeting", lib), null);
+  assert.equal(openTarget("what did Piyush say in the last meeting?", lib), null);
+  assert.equal(openTarget("open whatsapp", lib), null);
 });

@@ -98,6 +98,24 @@ enum ChatContext {
         - The files themselves, only if they ask for the folder: ~/Documents/nikxel (meetings, daily, weekly, notes), settings in ~/.nikxel. Advanced in the Nikxel window opens them.
         """
 
+    /// "open my latest meeting summary", "show me the Sarvam minutes": which of `entries` (newest first, as
+    /// SummaryLibrary.scan gives them) to open, or nil when the question isn't asking to open a summary.
+    /// Mirrors windows/src/main/system/chatContext.ts.
+    static func openTarget(_ question: String, entries: [(kind: String, title: String)]) -> Int? {
+        let q = question.lowercased()
+        func has(_ re: String) -> Bool { q.range(of: re, options: .regularExpression) != nil }
+        guard has(#"\b(open|show me|pull up|bring up)\b"#), has(#"summar|minutes|\bmom\b|\bnotes?\b|meeting|\bcall\b|recap"#) else { return nil }
+        let kind = has(#"meeting|minutes|\bmom\b|\bcall\b"#) ? "meetings" : has(#"\bweek"#) ? "weekly"
+            : has(#"\b(day|daily)\b"#) ? "daily" : has(#"\bnotes?\b"#) ? "notes" : nil
+        let pool = entries.indices.filter { kind == nil || entries[$0].kind == kind }
+        if has(#"\b(latest|last|most recent|newest|recent|just now)\b"#) { return pool.first }
+        let generic: Set = ["open", "show", "pull", "bring", "summary", "summaries", "meeting", "meetings", "minutes", "notes",
+                            "note", "recap", "please", "call", "daily", "weekly", "today", "from", "with", "about", "that", "this", "file"]
+        let words = q.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 4 && !generic.contains($0) }
+        if words.isEmpty { return pool.first }
+        return pool.first { i in words.contains { entries[i].title.lowercased().contains($0) } }
+    }
+
     static func prompt(context: String, history: [(q: String, a: String)], question: String, today: Date) -> String {
         var p = """
         You are the user's desk avatar. Today is \(dayString(today)). Answer using only the notes below. \

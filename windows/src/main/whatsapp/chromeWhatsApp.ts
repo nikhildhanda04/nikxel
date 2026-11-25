@@ -691,6 +691,45 @@ export const ChromeWhatsApp = {
     }
   },
 
+  /// The open chat's messages from `day` on: scrolls it up, and clicks "get
+  /// older messages from your phone" (WhatsApp Web keeps only the latest few),
+  /// until the oldest loaded is from before `day` or nothing older comes.
+  /// Read as it goes: the pane only keeps ~100 bubbles in the page.
+  /// ponytail: 20 steps of 1–3 s; a day further back comes back partly read.
+  async readBack(day: Date): Promise<WAMessage[]> {
+    const c = ensureCDP();
+    if (!c) return [];
+    let all: WAMessage[] = [], lastOldest = NaN, stuck = 0;
+    const seen = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const snap = await ChromeWhatsApp.readThread();
+      all = [...snap.filter(m => { const k = `${m.at?.getTime() ?? 0}|${m.sender ?? ""}|${m.text}`; return !seen.has(k) && !!seen.add(k); }), ...all];
+      const oldest = Math.min(...snap.filter(m => m.at).map(m => m.at!.getTime()));
+      if (oldest < day.getTime()) break;
+      stuck = oldest === lastOldest ? stuck + 1 : 0;
+      if (stuck >= 3) break;
+      lastOldest = oldest;
+      // To the top; the phone button if WhatsApp shows it, else a wheel up (setting scrollTop alone loads nothing).
+      const json = await c.eval(`(function(){
+        var p = document.querySelector('#main [data-testid="conversation-panel-messages"]'); if (!p) return '';
+        p.scrollTop = 0;
+        var b = [].slice.call(p.querySelectorAll('div,span,button')).filter(function(e){ return /older messages/i.test(e.textContent || ''); }).pop();
+        var r = (b || p).getBoundingClientRect();
+        return JSON.stringify({ button: !!b, x: r.x + r.width / 2, y: b ? r.y + r.height / 2 : r.y + 200 });
+      })()`);
+      let at: { button: boolean; x: number; y: number };
+      try { at = JSON.parse(json ?? ""); } catch { break; }
+      if (at.button) {
+        await c.clickAt(at.x, at.y);
+        await sleep(3000);
+      } else {
+        await c.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: at.x, y: at.y, deltaX: 0, deltaY: -3000 });
+        await sleep(1200);
+      }
+    }
+    return all;
+  },
+
   /// Every rendered bubble in the open chat, both directions, oldest first.
   async readThread(userOwnName: string = Settings.waOwnName): Promise<WAMessage[]> {
     const c = ensureCDP();

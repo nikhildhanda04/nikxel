@@ -31,33 +31,67 @@ enum Learning {
     // MARK: - Asking
 
     /// Asks unless `key` was answered before or something was already asked today. True when it asked.
+    /// `action` and `params` are a catalogue entry (Suggestions.catalogue): what a yes does, here or
+    /// later from the Nikxel window's Automations, where every bubble is kept in case it was missed.
     @discardableResult
-    static func offer(key: String, title: String, line: String, apply: @escaping () -> Void) -> Bool {
+    static func offer(key: String, title: String, line: String, action: String, params: [String: String] = [:]) -> Bool {
         let today = dayKey(Date())
         var asked = false
         update { s in
             guard (s["answered"] as? [String: Bool])?[key] == nil, s["askedDay"] as? String != today else { return }
             s["askedDay"] = today
             asked = true
+            remember(&s, ["key": key, "kind": "offer", "title": title, "line": line, "action": action, "params": params])
         }
         guard asked else { return false }
         cblog("Learning: asking \(key)")
         NikxelView.ask(icon: "💡", title: title, lines: [line, "Will this suit you better?"], buttons: [
-            ("Yes, do it", { answer(key, true); apply() }),
-            ("No thanks", { answer(key, false) }),
+            ("Yes, do it", { decide(key, yes: true) }),
+            ("No thanks", { decide(key, yes: false) }),
         ])
         return true
     }
 
-    private static func answer(_ key: String, _ yes: Bool) {
-        cblog("Learning: \(key) → \(yes ? "yes" : "no")")
+    /// One suggestion kept for the Nikxel window, newest last; the same key again replaces it.
+    private static func remember(_ s: inout [String: Any], _ entry: [String: Any]) {
+        var h = (s["history"] as? [[String: Any]] ?? []).filter { $0["key"] as? String != entry["key"] as? String }
+        h.append(entry.merging(["t": Date().timeIntervalSince1970]) { a, _ in a })
+        s["history"] = Array(h.suffix(40))
+    }
+
+    /// Every suggestion Nikxel has made, newest first, each with "answer": "yes", "no" or "" (still open).
+    static func history() -> [[String: Any]] {
+        let s = load(), answered = s["answered"] as? [String: Bool] ?? [:]
+        return (s["history"] as? [[String: Any]] ?? []).reversed().map { e in
+            var e = e
+            e["answer"] = (e["key"] as? String).flatMap { answered[$0] }.map { $0 ? "yes" : "no" } ?? ""
+            return e
+        }
+    }
+
+    /// A yes or no, from the bubble or the Nikxel window; only the first answer counts, so a yes never applies twice.
+    static func decide(_ key: String, yes: Bool) {
+        guard answer(key, yes), yes,
+              let e = (load()["history"] as? [[String: Any]])?.last(where: { $0["key"] as? String == key }),
+              let action = e["action"] as? String else { return }
+        apply(action, e["params"] as? [String: String] ?? [:])
+    }
+
+    @discardableResult
+    private static func answer(_ key: String, _ yes: Bool) -> Bool {
+        var first = false
         update { s in
-            var a = s["answered"] as? [String: Bool] ?? [:]; a[key] = yes; s["answered"] = a
+            var a = s["answered"] as? [String: Bool] ?? [:]
+            guard a[key] == nil else { return }
+            first = true
+            a[key] = yes; s["answered"] = a
             // A JSON object keeps no order, so the order answers came in is kept beside it for the weekly "latest 30".
             var o = s["answeredOrder"] as? [String] ?? []
             if !o.contains(key) { o.append(key) }
             s["answeredOrder"] = o
         }
+        if first { cblog("Learning: \(key) → \(yes ? "yes" : "no")") }
+        return first
     }
 
     static func count(_ name: String) {
@@ -114,19 +148,16 @@ enum Learning {
         let current = NikxelSettings.summaryMinutes
         guard let t = Habits.summaryTime(dayEnds: Habits.dayEnds(dayLogger.recentSamples(), now: Date()), current: current) else { return false }
         return offer(key: "summaryTime", title: "Your day summary",
-                     line: "You usually wrap up by about \(Habits.clock(t - 30)). I'm thinking of writing your day summary at \(Habits.clock(t)) instead of \(Habits.clock(current)).") {
-            NikxelSettings.summaryMinutes = t
-            DispatchQueue.main.async { dayLogger.reschedule() }
-        }
+                     line: "You usually wrap up by about \(Habits.clock(t - 30)). I'm thinking of writing your day summary at \(Habits.clock(t)) instead of \(Habits.clock(current)).",
+                     action: "summaryTime", params: ["minutes": "\(t)"])
     }
 
     private static func offerAutoRecord() -> Bool {
         let recorded = counter("call.record"), skipped = counter("call.skip")
         guard !NikxelSettings.autoRecordCalls, Habits.offerAutoRecord(recorded: recorded, skipped: skipped) else { return false }
         return offer(key: "autoRecord", title: "Recording your calls",
-                     line: "You've recorded \(recorded) of the \(recorded + skipped) calls I asked about. I'm thinking of starting the recording myself when a call begins — you'll see it, and a double-click stops it.") {
-            NikxelSettings.autoRecordCalls = true
-        }
+                     line: "You've recorded \(recorded) of the \(recorded + skipped) calls I asked about. I'm thinking of starting the recording myself when a call begins — you'll see it, and a double-click stops it.",
+                     action: "autoRecordCalls")
     }
 
     /// Repeated summary fixes → one standing rule for meeting summaries, added to the active
@@ -141,9 +172,8 @@ enum Learning {
                                                kind: "learning-rule", claudeModel: "haiku"),
               let r = Habits.parseRule(reply) else { return false }
         return offer(key: "rule:" + r.rule, title: "Your meeting summaries",
-                     line: "You've asked me this \(r.times) times\(r.example.isEmpty ? "" : " (\"\(r.example)\")"). I'm thinking of always doing it in your meeting summaries: \(r.rule)") {
-            addRule(r.rule)
-        }
+                     line: "You've asked me this \(r.times) times\(r.example.isEmpty ? "" : " (\"\(r.example)\")"). I'm thinking of always doing it in your meeting summaries: \(r.rule)",
+                     action: "summaryRule", params: ["text": r.rule])
     }
 
     /// A standing instruction appended to the active summary template -- a yes from the daily rule check or the weekly review.
@@ -223,7 +253,12 @@ enum Learning {
             }
         }
         let ideas = advice.isEmpty ? "" : "## Ideas for you\n" + advice.joined(separator: "\n") + "\n"
-        update { $0["queued"] = queued; $0["suggestedIdeas"] = ideas }
+        update { s in
+            s["queued"] = queued; s["suggestedIdeas"] = ideas
+            for item in items { if case let .advice(text, evidence) = item {
+                remember(&s, ["key": "advice:" + text, "kind": "advice", "title": "An idea for your week", "line": evidence.isEmpty ? text : "\(text) (\(evidence))"])
+            } }
+        }
         cblog("Learning: weekly suggestions \(weekKey): \(advice.count) advice, \(queued.count) offers")
         return ideas
     }
@@ -247,17 +282,17 @@ enum Learning {
               let line = q["line"] as? String else { return }
         let evidence = q["evidence"] as? String ?? ""
         let asked = offer(key: Suggestions.key(action: action, params: params), title: "An idea for your week",
-                          line: evidence.isEmpty ? line : "\(line) (\(evidence))") { apply(action, params, dayLogger) }
+                          line: evidence.isEmpty ? line : "\(line) (\(evidence))", action: action, params: params)
         if !asked { update { $0["queued"] = [q] + ($0["queued"] as? [[String: Any]] ?? []) } }  // something else asked first: back in line
     }
 
     /// What a yes to a weekly offer does, per catalogue action.
-    private static func apply(_ action: String, _ p: [String: String], _ dayLogger: DayLogger) {
+    private static func apply(_ action: String, _ p: [String: String]) {
         switch action {
         case "summaryTime":
             guard let m = Int(p["minutes"] ?? "") else { return }
             NikxelSettings.summaryMinutes = m
-            DispatchQueue.main.async { dayLogger.reschedule() }
+            DispatchQueue.main.async { (NSApp.delegate as? NikxelAppDelegate)?.dayLogger?.reschedule() }
         case "autoRecordCalls": NikxelSettings.autoRecordCalls = true
         case "waDraftOnly": NikxelSettings.waDraftOnly = true
         case "waChatTasks": NikxelSettings.waChatTasks = true

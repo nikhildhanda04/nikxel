@@ -222,6 +222,11 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         case "autoDelete":
             Automation.save(Automation.load().filter { $0.id != body["id"] as? String })
             push()
+        case "learnDecide":
+            if let key = body["key"] as? String {
+                let yes = body["yes"] as? Bool ?? false
+                DispatchQueue.global(qos: .userInitiated).async { Learning.decide(key, yes: yes); DispatchQueue.main.async { self.push() } }
+            }
         case "autoRun":
             if let a = Automation.load().first(where: { $0.id == body["id"] as? String }) { Automations.shared.runNow(a) }
         case "autoMake":
@@ -455,6 +460,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             "automations": Automation.load().map(\.dict),
             "automationRuns": Automations.shared.runs,
             "automationRunning": Automations.shared.running ?? "",
+            "nikxelSuggested": Learning.history(),
             "ideas": Automation.ideas.map(\.dict),
             "editor": editing.map { e -> [String: Any] in
                 ["title": e.title, "help": e.help, "text": (try? String(contentsOf: e.url, encoding: .utf8)) ?? ""]

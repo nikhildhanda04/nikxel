@@ -25,6 +25,7 @@ import { CloudSync } from "./cloudSync";
 import * as DashboardData from "./dashboardData";
 import * as DayPage from "./dayPage";
 import * as ERP from "./erp";
+import * as Learning from "./learning";
 import * as Slack from "./slack";
 import { spriteRows } from "./spriteFrames";
 import * as SummaryLibrary from "./summaryLibrary";
@@ -243,6 +244,7 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
       break;
     }
     case "autoDelete": Automation.save(Automation.load().filter(a => a.id !== m.id)); push(); break;
+    case "learnDecide": if (typeof m.key === "string") { Learning.decide(m.key, m.yes === true); push(); } break;
     case "autoRun": { const a = Automation.load().find(x => x.id === m.id); if (a) Automations.runNow(a); break; }
     case "autoMake": {
       const id = m.id;
@@ -566,6 +568,7 @@ function state(): Record<string, unknown> {
     automations: Automation.load().map(Automation.dict),
     automationRuns: Automations.runs,
     automationRunning: Automations.running ?? "",
+    nikxelSuggested: Learning.history(),
     ideas: Automation.IDEAS.map(Automation.dict),
   };
 }

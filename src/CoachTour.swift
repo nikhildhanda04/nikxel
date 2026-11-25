@@ -131,11 +131,18 @@ final class CoachPointer: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 enum CoachTour {
     private static var pointer: CoachPointer?
 
+    /// The avatar reports "drag", "click" and "double" here while the tour
+    /// runs. True means the tour took it: no chat box, no recording.
+    static var gesture: ((String) -> Bool)?
+
     /// Not in the middle of a call or a recording: it waits until both are over.
-    static func startIfNew() {
+    /// `waitForCalls: false` right after setup, where they're clearly at the
+    /// screen (and any browser tab holding the mic reads as a call).
+    static func startIfNew(waitForCalls: Bool = true) {
         guard !NikxelSettings.tourDone else { return }
-        if let app = NSApp.delegate as? NikxelAppDelegate,
+        if waitForCalls, let app = NSApp.delegate as? NikxelAppDelegate,
            MeetingDetector.shared.isInMeeting || app.meetingCoordinator?.isRecording == true {
+            cblog("CoachTour: waiting, a call or recording is on")
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) { startIfNew() }
             return
         }
@@ -144,11 +151,22 @@ enum CoachTour {
 
     static func start() {
         guard pointer == nil, let app = NSApp.delegate as? NikxelAppDelegate else { return }
+        cblog("CoachTour: start")
         if !app.window.isVisible { app.toggleVisibility() }
         let p = CoachPointer()
         pointer = p
-        var step = 0
-        let total = 3
+        var step = 0, tried = false
+        let total = 5
+        // The first three cards are practice: each waits for the gesture
+        // (Next skips it), ticks it off, and moves on.
+        let practice: [(gesture: String, title: String, text: String, done: String)] = [
+            ("drag", "Pick me up", "<p><b>Drag</b> me anywhere you like. Try it now.</p>",
+             "I stay wherever you put me."),
+            ("click", "Click me to chat", "<p><b>Click</b> me once to ask about your meetings, tasks and WhatsApp. Try it.</p>",
+             "That opens our chat, right beside me."),
+            ("double", "Double-click to record", "<p><b>Double-click</b> me to start recording a meeting, and again to stop. Try it; I won’t record during the tour.</p>",
+             "That’s it. Outside the tour I’d put my headphones on and take the notes."),
+        ]
         func avatarRect() -> NSRect {
             guard let view = app.window.nikxelView else { return app.window.frame }
             let f = app.window.frame, a = view.avatarCenter, h = view.halfChar
@@ -160,31 +178,48 @@ enum CoachTour {
         }
         func finish() {
             NikxelSettings.tourDone = true
-            p.close(); pointer = nil
+            p.close(); pointer = nil; gesture = nil
             cblog("CoachTour: ended at step \(min(step + 1, total)) of \(total)")
+            // Then what macOS still has to allow (Accessibility, Screen Recording),
+            // after the cards, so the bubble and the arrows never overlap.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { Permissions.offer() }
         }
         func render() {
-            switch step {
-            case 0:
-                p.show(at: avatarRect(), .init(title: "This is me, Nikxel",
-                    text: "<p><b>Click</b> me to chat. <b>Double-click</b> me to record a meeting.</p><p><b>Drag</b> me anywhere you like.</p>",
-                    step: 0, total: total))
-            case 1:
+            if step < practice.count {
+                let t = practice[step]
+                p.show(at: avatarRect(), tried
+                    ? .init(title: "\(t.title) ✓", text: "<p>\(t.done)</p>", step: step, total: total)
+                    : .init(title: t.title, text: t.text, step: step, total: total))
+                return
+            }
+            if step == practice.count {
                 p.show(at: menuIcon(), .init(title: "Find me up here",
                     text: "<p>My icon in the menu bar. Click it to record, mute, or open everything else.</p><p>Shortcut: <kbd>⌘</kbd> <kbd>,</kbd></p>",
-                    step: 1, total: total))
-            default:
+                    step: step, total: total))
+            } else {
                 p.show(at: menuIcon(), .init(title: "Everything else is in the Nikxel window",
                     text: "<p>Your meeting notes, chat, tasks and settings. Let me show you around it.</p>",
-                    step: 2, total: total, primary: "Open it"))
+                    step: step, total: total, primary: "Open it"))
             }
         }
-        p.onNext = {
-            step += 1
+        func next() {
+            step += 1; tried = false
             if step < total { render(); return }
             finish()
             DashboardWindowController.show(section: "home")
         }
+        gesture = { g in
+            // Clicks and double-clicks are the tour's until the practice is
+            // over, so a stray one never starts a recording.
+            let practising = step < practice.count
+            guard practising, !tried, g == practice[step].gesture else { return practising && g != "drag" }
+            tried = true
+            render()
+            let at = step
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { if step == at && pointer === p { next() } }
+            return true
+        }
+        p.onNext = { next() }
         p.onSkip = { finish() }
         render()
     }

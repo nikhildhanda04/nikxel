@@ -134,12 +134,15 @@ class NikxelWindow: NSWindow {
         if let p = pressStart {
             pressStart = nil
             let m = NSEvent.mouseLocation
-            if ChatContext.clickDecision(moved: Double(hypot(m.x - p.x, m.y - p.y)), secondClick: event.clickCount >= 2) == .chat {
+            let moved = Double(hypot(m.x - p.x, m.y - p.y))
+            if ChatContext.clickDecision(moved: moved, secondClick: event.clickCount >= 2) == .chat {
                 let w = DispatchWorkItem { [weak self] in self?.onSingleClick?() }
                 pendingClick?.cancel()
                 pendingClick = w
                 // Wait the system double-click interval, so a slow double-click never opens the box.
                 DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: w)
+            } else if moved >= 4 {
+                _ = CoachTour.gesture?("drag")
             }
         }
         // Don't disturb the recording (headphone) animation when releasing a drag.

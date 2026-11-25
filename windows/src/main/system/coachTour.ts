@@ -3,6 +3,7 @@ import { diag } from "../core/diag";
 import { preloadPath, rendererPath } from "../core/paths";
 import { powershell } from "../core/proc";
 import { Settings } from "../core/settings";
+import { Permissions } from "./permissions";
 
 /// Port of CoachTour.swift: a pointer card (src/CoachPage.swift) in a small
 /// transparent window beside something on screen, with an arrow at it, and
@@ -160,14 +161,31 @@ export interface TourHost {
 
 let tour: CoachPointer | null = null;
 
+/// The avatar's gestures during the practice cards (see CoachTour.gesture).
+interface Practice { gesture: string; title: string; text: string; done: string }
+const PRACTICE: Practice[] = [
+  { gesture: "drag", title: "Pick me up", text: "<p><b>Drag</b> me anywhere you like. Try it now.</p>",
+    done: "I stay wherever you put me." },
+  { gesture: "click", title: "Click me to chat", text: "<p><b>Click</b> me once to ask about your meetings, tasks and WhatsApp. Try it.</p>",
+    done: "That opens our chat, right beside me." },
+  { gesture: "double", title: "Double-click to record", text: "<p><b>Double-click</b> me to start recording a meeting, and again to stop. Try it; I won’t record during the tour.</p>",
+    done: "That’s it. Outside the tour I’d put my headphones on and take the notes." },
+];
+
 /// The first-run tour: arrows at the avatar and at the tray icon (or the ^
 /// hiding it), then the Nikxel window, whose page points at its own sections.
 /// Once; Advanced → "Show me around again" replays it.
 export const CoachTour = {
+  /// The avatar reports "drag", "click" and "double" here while the tour
+  /// runs. True means the tour took it: no chat box, no recording.
+  gesture: null as ((g: string) => boolean) | null,
+
   /// Not in the middle of a call or a recording: it waits until both are over.
-  startIfNew(host: TourHost): void {
+  /// `waitForCalls: false` right after setup, where they're clearly at the
+  /// screen (and any browser tab holding the mic reads as a call).
+  startIfNew(host: TourHost, waitForCalls = true): void {
     if (Settings.tourDone) return;
-    if (host.busy()) {
+    if (waitForCalls && host.busy()) {
       diag("CoachTour", "waiting: a call or recording is on");
       setTimeout(() => CoachTour.startIfNew(host), 60_000);
       return;
@@ -181,21 +199,29 @@ export const CoachTour = {
     host.showAvatar();
     const p = new CoachPointer();
     tour = p;
-    let step = 0, pinWatch: NodeJS.Timeout | null = null, pinned = false;
-    const total = 3;
+    let step = 0, pinWatch: NodeJS.Timeout | null = null, pinned = false, tried = false;
+    // The first three cards are practice: each waits for the gesture (Next
+    // skips it), ticks it off, and moves on.
+    const P = PRACTICE.length, total = P + 2;
     const stopWatch = () => { if (pinWatch) clearInterval(pinWatch); pinWatch = null; };
     const finish = () => {
       stopWatch();
       Settings.tourDone = true;
-      p.close(); tour = null;
+      p.close(); tour = null; CoachTour.gesture = null;
       diag("CoachTour", `ended at step ${Math.min(step + 1, total)} of ${total}`);
+      // Then what Windows still has to allow, after the cards, so the bubble and the arrows never overlap.
+      setTimeout(() => Permissions.offer(), 1500);
     };
     const render = () => {
+      if (step < P) {
+        const c = PRACTICE[step];
+        p.show(host.avatarRect(), tried
+          ? { title: `${c.title} ✓`, text: `<p>${c.done}</p>`, step, total }
+          : { title: c.title, text: c.text, step, total });
+        return;
+      }
       const t = trayTarget(host.tray());
-      if (step === 0) {
-        p.show(host.avatarRect(), { title: "This is me, Nikxel", step, total,
-          text: "<p><b>Click</b> me to chat. <b>Double-click</b> me to record a meeting.</p><p><b>Drag</b> me anywhere you like.</p>" });
-      } else if (step === 1 && t.hidden) {
+      if (step === P && t.hidden) {
         // Windows tucks new tray icons under the ^. Walk them through pinning
         // it, and notice the moment the icon shows on the taskbar.
         p.show(t.rect, { title: "Pin me to the taskbar", step, total, secondary: "Open taskbar settings",
@@ -203,12 +229,12 @@ export const CoachTour = {
                 "<li>Drag my icon (the little head) out onto the taskbar beside it.</li></ol>" +
                 "<p>Or click <b>Open taskbar settings</b> → <b>Other system tray icons</b> → turn <b>Nikxel</b> on.</p>" });
         if (!pinWatch) pinWatch = setInterval(() => {
-          if (step !== 1 || trayTarget(host.tray()).hidden) return;
+          if (step !== P || trayTarget(host.tray()).hidden) return;
           stopWatch(); pinned = true;
           diag("CoachTour", "tray icon pinned");
           render();
         }, 1500);
-      } else if (step === 1) {
+      } else if (step === P) {
         p.show(t.rect, pinned
           ? { title: "Pinned ✓", step, total, text: "<p>That’s my icon. <b>Click it</b> any time to open Nikxel, record or mute.</p>" }
           : { title: "This is my icon", step, total, text: "<p>Down here by the clock. <b>Click it</b> to open Nikxel, record or mute.</p>" });
@@ -218,12 +244,24 @@ export const CoachTour = {
           text: "<p>Click my icon, then <b>Open Nikxel…</b> for your meeting notes, chat, tasks and settings. Let me show you around it now.</p>" });
       }
     };
-    p.onNext = () => {
-      step++;
+    const next = () => {
+      step++; tried = false;
       if (step < total) { render(); return; }
       finish();
       host.openDashboard();
     };
+    CoachTour.gesture = g => {
+      // Clicks and double-clicks are the tour's until the practice is over,
+      // so a stray one never starts a recording.
+      const practising = step < P;
+      if (!practising || tried || g !== PRACTICE[step].gesture) return practising && g !== "drag";
+      tried = true;
+      render();
+      const at = step;
+      setTimeout(() => { if (step === at && tour === p) next(); }, 1600);
+      return true;
+    };
+    p.onNext = next;
     p.onSkip = finish;
     p.onExtra = () => { void shell.openExternal("ms-settings:taskbar"); };
     render();

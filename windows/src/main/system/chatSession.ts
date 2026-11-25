@@ -7,7 +7,7 @@ import { MOMError, MOMGenerator } from "../recording/momGenerator";
 import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
-import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
+import { ChromeWhatsApp, WAMessage } from "../whatsapp/chromeWhatsApp";
 import { ChatbotEngine } from "../whatsapp/chatbotEngine";
 import * as WAChatMatch from "../whatsapp/waChatMatch";
 import { DayLogger } from "./dayLogger";
@@ -81,7 +81,7 @@ export class ChatSession {
     // WhatsApp as it is now, not as it was when the chat opened, plus
     // any chat the question names, opened and read in full.
     this.waSnapshot = (await ChatSession.waContextBlock()) ?? "";
-    const named = (await ChatSession.waNamedThreads(text)) ?? "";
+    const named = (await this.waNamedThreads(text)) ?? "";
     const finish = (reply: string, answered: boolean) => {
       if (answered) this.history.push({ q: text, a: reply });
       return { text: reply, offline, error: !answered };
@@ -220,26 +220,42 @@ export class ChatSession {
   /// in the Nikxel group" reads the chats whose names share a word with it.
   /// Opening a chat marks it read in WhatsApp, as it would on the phone.
   /// Afterwards the chat that was open before is opened again.
-  private static async waNamedThreads(question: string): Promise<string | null> {
+  /// The chats the last question read: "and yesterday?" reads them again.
+  private lastWANames: string[] = [];
+
+  private async waNamedThreads(question: string): Promise<string | null> {
     try {
       if (!(await ChromeWhatsApp.isLoggedIn())) return null;
-      const names = WAChatMatch.named(question, (await ChromeWhatsApp.allChatsPreview(60)).map(c => c.name));
+      const day = WAChatMatch.day(question);
+      let names = WAChatMatch.named(question, (await ChromeWhatsApp.allChatsPreview(60)).map(c => c.name));
+      if (!names.length && day) names = this.lastWANames;
       if (!names.length) return null;
+      this.lastWANames = names;
       const when = (d: Date) => d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " ";
       const parts: string[] = [];
       await ChatbotEngine.shared.withPollingHeld(async () => {
         const back = await ChromeWhatsApp.conversationHeader();
         for (const name of names) {
           if (!(await ChromeWhatsApp.clickChat(name)) || !(await ChromeWhatsApp.waitForMessages())) continue;
-          const thread = (await ChromeWhatsApp.readThread()).slice(-40);
+          // A day asked about: scroll back to it and read that day; else the latest 40.
+          let thread: WAMessage[];
+          if (day) {
+            const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+            // Bubbles in a run carry no stamp: they take the one above.
+            let last: Date | null = null;
+            thread = (await ChromeWhatsApp.readBack(day)).map(m => ({ ...m, at: (last = m.at ?? last) }))
+              .filter(m => m.at && m.at >= day && m.at < end);
+          } else {
+            thread = (await ChromeWhatsApp.readThread()).slice(-40);
+          }
           if (!thread.length) continue;
-          parts.push(`${name}, read just now (each line: when, who, what):\n` + thread.map(m =>
+          parts.push(`${name}, read just now (each line: when, who, what):\n` + thread.slice(-200).map(m =>
             `${m.at ? when(m.at) : ""}${m.outgoing ? "You" : m.sender || name}: ${m.text.slice(0, 500)}`).join("\n"));
         }
         if (back && !names.includes(back)) await ChromeWhatsApp.clickChat(back);
         return true;
       });
-      cblog(`ChatSession: read ${parts.length} of ${names.length} WhatsApp chats the question named`);
+      cblog(`ChatSession: read ${parts.length} of ${names.length} WhatsApp chats the question named${day ? ` (back to ${day.toISOString()})` : ""}`);
       return parts.length ? "### whatsapp chats you asked about\n" + parts.join("\n\n") : null;
     } catch { return null; }
   }

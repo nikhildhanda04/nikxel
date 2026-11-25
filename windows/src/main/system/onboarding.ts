@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawn } from "child_process";
-import { BrowserWindow, clipboard, dialog, ipcMain, IpcMainEvent } from "electron";
+import { BrowserWindow, clipboard, dialog, ipcMain, IpcMainEvent, nativeImage } from "electron";
 import { HOME, preloadPath, rendererPath, resourcePath, readText } from "../core/paths";
 import { which } from "../core/proc";
 import { ui } from "../core/ui";
@@ -16,6 +16,7 @@ import { GoogleAuth } from "../google/googleAuth";
 import { CoachPointer, windowRectByTitle } from "./coachTour";
 import { spriteRows } from "./spriteFrames";
 import { SpriteSheetImporter } from "./spriteSheetImporter";
+import { CloudSync } from "./cloudSync";
 
 /// First-run (and reopenable-anytime, via the tray) setup wizard: say hello,
 /// tour what Nikxel does, pick an avatar, check the transcription tools,
@@ -35,7 +36,7 @@ type Tone = "muted" | "red" | "orange" | "green";
 
 /// What the page posts (webkit.messageHandlers.nx in OnboardingPage.swift).
 export interface OnboardingAction {
-  type: "go" | "copyPrompt" | "chooseSheet" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
+  type: "go" | "copyPrompt" | "chooseSheet" | "photoAvatar" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
     | "connectWhatsApp" | "getChrome" | "connectGoogle" | "pickAgent" | "copyAgent" | "installAgent" | "retestAgents" | "finish";
   step?: string; name?: string; code?: string; index?: number;
 }
@@ -83,6 +84,7 @@ export class OnboardingWindowController {
   private sheetError: string | null = null;
   private promptCopied = false;
   private importing = false;
+  private drawing = false;
 
   // Dependency step
   private whisperFound = false;
@@ -185,6 +187,12 @@ export class OnboardingWindowController {
       // Nobody is watching for the QR scan any more; reopening offers
       // Connect again rather than a spinner with nothing behind it.
       if (this.waConnecting) { this.waConnecting = false; this.stopPolling(); }
+      // Closed before "Start using Nikxel": still show them around (once), and
+      // the tour's end asks for permissions. Setup reopens at the next launch.
+      if (!Settings.onboardingCompleted) {
+        diag("onboarding", "closed before finishing");
+        setTimeout(() => this.onFinished?.(), 1200);
+      }
     });
     this.win = w;
   }
@@ -222,7 +230,7 @@ export class OnboardingWindowController {
       step: this.step,
       name: Settings.hasUserName ? Settings.userName : (accountName() ?? ""),
       avatar: {
-        custom: this.usingCustomSheet, error: this.sheetError ?? "", copied: this.promptCopied, importing: this.importing,
+        custom: this.usingCustomSheet, error: this.sheetError ?? "", copied: this.promptCopied, importing: this.importing, drawing: this.drawing,
         spec: `PNG, ${cols} columns × ${rows} rows of ${f}px frames (${cols * f}×${rows * f}). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.`,
       },
       deps: {
@@ -296,6 +304,7 @@ export class OnboardingWindowController {
       }
       case "copyPrompt": this.copyPrompt(); break;
       case "chooseSheet": void this.chooseSheet(); break;
+      case "photoAvatar": void this.makeFromPhoto(); break;
       case "resetSheet": this.resetSheet(); break;
       case "installDeps": void this.installDeps(); break;
       case "recheckDeps": void this.refreshDeps(); break;
@@ -513,6 +522,50 @@ export class OnboardingWindowController {
     const file = r.filePaths[0];
     if (r.canceled || !file) return;
 
+    await this.importSheet(async () => file);
+  }
+
+  /// Setup's "Make me from a photo": nikxel-api has Gemini draw the sheet
+  /// (its key, its prompts; the photo isn't kept), then the usual import.
+  private async makeFromPhoto(): Promise<void> {
+    if (this.importing || !this.win) return;
+    const r = await dialog.showOpenDialog(this.win, {
+      title: "Pick a clear photo of your face",
+      filters: [{ name: "Photo", extensions: ["jpg", "jpeg", "png"] }],
+      properties: ["openFile"],
+    });
+    const file = r.filePaths[0];
+    if (r.canceled || !file) return;
+    this.drawing = true;
+    await this.importSheet(async () => {
+      try { return await OnboardingWindowController.drawSheet(file); } finally { this.drawing = false; }
+    });
+  }
+
+  /// The photo, at most 1024px and as JPEG, to /api/avatar; the sheet it returns, as a temp file.
+  private static async drawSheet(file: string): Promise<string> {
+    let img = nativeImage.createFromPath(file);
+    if (img.isEmpty()) throw new Error("Couldn’t open that photo. Try a JPEG or PNG.");
+    const { width, height } = img.getSize();
+    if (Math.max(width, height) > 1024) img = img.resize(width >= height ? { width: 1024 } : { height: 1024 });
+    let res: Response;
+    try {
+      res = await fetch(CloudSync.backendBase() + "/api/avatar", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ photo: img.toJPEG(85).toString("base64"), mime: "image/jpeg" }),
+        signal: AbortSignal.timeout(240_000),
+      });
+    } catch { throw new Error("Couldn’t reach Nikxel’s server. Check your internet and try again."); }
+    let obj: { image?: string; error?: string };
+    try { obj = await res.json() as typeof obj; } catch { throw new Error("Nikxel’s server didn’t answer properly. Try again."); }
+    if (!obj.image) throw new Error(obj.error || "Couldn’t draw you just now. Try again.");
+    const out = path.join(os.tmpdir(), "nikxel-avatar-sheet.png");
+    await fs.promises.writeFile(out, Buffer.from(obj.image, "base64"));
+    return out;
+  }
+
+  /// Imports the sheet `source` gives (it may take a while).
+  private async importSheet(source: () => Promise<string>): Promise<void> {
     this.sheetError = null;
     this.importing = true;
     this.render();
@@ -522,7 +575,7 @@ export class OnboardingWindowController {
       // Keys out the magenta, finds the real grid and re-frames every
       // cell -- whatever Gemini returned, this is what makes it
       // usable, so the user never has to run remove_magenta.py.
-      const data = await SpriteSheetImporter.process(file);
+      const data = await SpriteSheetImporter.process(await source());
       await fs.promises.rm(Sprites.customPath, { force: true });
       await fs.promises.writeFile(Sprites.customPath, data);
     } catch (e) {

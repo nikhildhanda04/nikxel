@@ -759,6 +759,46 @@ enum ChromeWhatsApp {
         return fmt
     }
 
+    /// The open chat's messages from `day` on: scrolls it up, and clicks "get
+    /// older messages from your phone" (WhatsApp Web keeps only the latest few),
+    /// until the oldest loaded is from before `day` or nothing older comes.
+    /// Read as it goes: the pane only keeps ~100 bubbles in the page.
+    /// ponytail: 20 steps of 1–3 s; a day further back comes back partly read.
+    static func readBack(to day: Date) -> [WAMessage] {
+        guard let c = ensureCDP() else { return [] }
+        var all: [WAMessage] = [], seen = Set<String>(), lastOldest: Date?, stuck = 0
+        for _ in 0..<20 {
+            let snap = readThread()
+            func key(_ m: WAMessage) -> String { "\(m.at?.timeIntervalSince1970 ?? 0)|\(m.sender)|\(m.text)" }
+            all = snap.filter { seen.insert(key($0)).inserted } + all
+            let oldest = snap.compactMap(\.at).min()
+            if let oldest, oldest < day { break }
+            stuck = oldest == lastOldest ? stuck + 1 : 0
+            if stuck >= 3 { break }
+            lastOldest = oldest
+            // To the top; the phone button if WhatsApp shows it, else a wheel up (setting scrollTop alone loads nothing).
+            guard let json = c.eval("""
+            (function(){
+                var p = document.querySelector('#main [data-testid="conversation-panel-messages"]'); if (!p) return '';
+                p.scrollTop = 0;
+                var b = [].slice.call(p.querySelectorAll('div,span,button')).filter(function(e){ return /older messages/i.test(e.textContent || ''); }).pop();
+                var r = (b || p).getBoundingClientRect();
+                return JSON.stringify({ button: !!b, x: r.x + r.width / 2, y: b ? r.y + r.height / 2 : r.y + 200 });
+            })()
+            """), let d = json.data(using: .utf8),
+                  let at = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let x = at["x"] as? Double, let y = at["y"] as? Double else { break }
+            if at["button"] as? Bool == true {
+                c.clickAt(x: x, y: y)
+                Thread.sleep(forTimeInterval: 3)
+            } else {
+                c.sendSync("Input.dispatchMouseEvent", params: ["type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": -3000])
+                Thread.sleep(forTimeInterval: 1.2)
+            }
+        }
+        return all
+    }
+
     /// Block until the open conversation has actually rendered its messages.
     ///
     /// The message pane is virtualised and populates after the click settles;

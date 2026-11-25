@@ -22,8 +22,10 @@ import { WhatsAppActivityLogger } from "../whatsapp/whatsAppActivityLogger";
 interface Queued { action: string; params: Record<string, string>; line: string; evidence: string; at: number }
 interface State {
   answered?: Record<string, boolean>; askedDay?: string; counts?: Record<string, number>; reviewedEditsAt?: number
-  suggestedWeek?: string; suggestedIdeas?: string; queued?: Queued[]; answeredOrder?: string[]
+  suggestedWeek?: string; suggestedIdeas?: string; queued?: Queued[]; answeredOrder?: string[]; history?: Suggested[]
 }
+/// One suggestion kept for the Nikxel window's Automations, in case its bubble was missed.
+export interface Suggested { key: string; kind: "offer" | "advice"; title: string; line: string; action?: string; params?: Record<string, string>; t: number }
 const file = () => nikxelPath("learning.json");
 const editsFile = () => nikxelPath("edits", "instructions.jsonl");
 
@@ -38,27 +40,57 @@ function update(change: (s: State) => void): void {
 
 // MARK: - Asking
 
+/// The day logger a yes to a new summary time reschedules; set by `daily`.
+let logger: DayLogger | null = null;
+
 /// Asks unless `key` was answered before or something was already asked today. True when it asked.
-export function offer(key: string, title: string, line: string, apply: () => void): boolean {
+/// `action` and `params` are a catalogue entry (suggestions.ts): what a yes does, here or
+/// later from the Nikxel window's Automations, where every bubble is kept in case it was missed.
+export function offer(key: string, title: string, line: string, action: string, params: Record<string, string> = {}): boolean {
   const today = dayStamp(new Date());
   const s = load();
   if (s.answered?.[key] !== undefined || s.askedDay === today) return false;
-  update(x => { x.askedDay = today; });
+  update(x => { x.askedDay = today; remember(x, { key, kind: "offer", title, line, action, params, t: 0 }); });
   cblog(`Learning: asking ${key}`);
   ui.ask({ icon: "💡", title, lines: [line, "Will this suit you better?"], buttons: [
-    { title: "Yes, do it", action: () => { answer(key, true); apply(); } },
-    { title: "No thanks", action: () => answer(key, false) },
+    { title: "Yes, do it", action: () => decide(key, true) },
+    { title: "No thanks", action: () => decide(key, false) },
   ] });
   return true;
 }
 
-function answer(key: string, yes: boolean): void {
-  cblog(`Learning: ${key} → ${yes ? "yes" : "no"}`);
+/// Newest last; the same key again replaces it.
+function remember(s: State, e: Suggested): void {
+  s.history = [...(s.history ?? []).filter(x => x.key !== e.key), { ...e, t: Date.now() / 1000 }].slice(-40);
+}
+
+/// Every suggestion Nikxel has made, newest first, each with answer "yes", "no" or "" (still open).
+export function history(): (Suggested & { answer: string })[] {
+  const s = load();
+  return [...(s.history ?? [])].reverse().map(e => {
+    const a = s.answered?.[e.key];
+    return { ...e, answer: a === undefined ? "" : a ? "yes" : "no" };
+  });
+}
+
+/// A yes or no, from the bubble or the Nikxel window; only the first answer counts, so a yes never applies twice.
+export function decide(key: string, yes: boolean): void {
+  if (!answer(key, yes) || !yes) return;
+  const e = (load().history ?? []).filter(x => x.key === key).pop();
+  if (e?.action) apply(e.action, e.params ?? {});
+}
+
+function answer(key: string, yes: boolean): boolean {
+  let first = false;
   update(s => {
+    if (s.answered?.[key] !== undefined) return;
+    first = true;
     s.answered = { ...s.answered, [key]: yes };
     // A JSON object keeps no order, so the order answers came in is kept beside it for the weekly "latest 30".
     if (!s.answeredOrder?.includes(key)) s.answeredOrder = [...(s.answeredOrder ?? []), key];
   });
+  if (first) cblog(`Learning: ${key} → ${yes ? "yes" : "no"}`);
+  return first;
 }
 
 export function count(name: string): void {
@@ -101,8 +133,9 @@ export function editsBlock(since: Date): string {
 
 /// After the day summary: the first thing worth asking about, if any.
 export async function daily(dayLogger: DayLogger, agent: MOMGenerator): Promise<void> {
+  logger = dayLogger;
   if (offerSummaryTime(dayLogger) || offerAutoRecordCalls() || await offerRule(agent)) return;
-  offerQueued(dayLogger);
+  offerQueued();
 }
 
 function offerSummaryTime(dayLogger: DayLogger): boolean {
@@ -111,7 +144,7 @@ function offerSummaryTime(dayLogger: DayLogger): boolean {
   if (t === null) return false;
   return offer("summaryTime", "Your day summary",
     `You usually wrap up by about ${Habits.clock(t - 30)}. I'm thinking of writing your day summary at ${Habits.clock(t)} instead of ${Habits.clock(current)}.`,
-    () => { Settings.summaryMinutes = t; dayLogger.reschedule(); });
+    "summaryTime", { minutes: String(t) });
 }
 
 function offerAutoRecordCalls(): boolean {
@@ -119,7 +152,7 @@ function offerAutoRecordCalls(): boolean {
   if (Settings.autoRecordCalls || !Habits.offerAutoRecord(recorded, skipped)) return false;
   return offer("autoRecord", "Recording your calls",
     `You've recorded ${recorded} of the ${recorded + skipped} calls I asked about. I'm thinking of starting the recording myself when a call begins — you'll see it, and a double-click stops it.`,
-    () => { Settings.autoRecordCalls = true; });
+    "autoRecordCalls");
 }
 
 /// Repeated summary fixes → one standing rule for meeting summaries, added to the active
@@ -136,7 +169,7 @@ async function offerRule(agent: MOMGenerator): Promise<boolean> {
   if (!r) return false;
   return offer("rule:" + r.rule, "Your meeting summaries",
     `You've asked me this ${r.times} times${r.example ? ` ("${r.example}")` : ""}. I'm thinking of always doing it in your meeting summaries: ${r.rule}`,
-    () => addRule(r.rule));
+    "summaryRule", { text: r.rule });
 }
 
 /// A standing instruction appended to the active summary template -- a yes from the daily rule check or the weekly review.
@@ -202,7 +235,12 @@ export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey:
       else queued.push({ action: item.action, params: item.params, line: item.line, evidence: item.evidence, at: Date.now() / 1000 });
     }
     const ideas = advice.length ? "## Ideas for you\n" + advice.join("\n") + "\n" : "";
-    update(s => { s.queued = queued; s.suggestedIdeas = ideas; });
+    update(s => {
+      s.queued = queued; s.suggestedIdeas = ideas;
+      for (const item of Suggestions.parse(reply, settings, new Set(answered))) if (item.kind === "advice") {
+        remember(s, { key: "advice:" + item.text, kind: "advice", title: "An idea for your week", line: item.evidence ? `${item.text} (${item.evidence})` : item.text, t: 0 });
+      }
+    });
     cblog(`Learning: weekly suggestions ${weekKey}: ${advice.length} advice, ${queued.length} offers`);
     return ideas;
   } catch (e) {
@@ -212,7 +250,7 @@ export async function weekly(dayLogger: DayLogger, agent: MOMGenerator, weekKey:
 }
 
 /// The weekly review's offers, one a day: older than 14 days, answered, or no longer changing anything drops out first.
-function offerQueued(dayLogger: DayLogger): void {
+function offerQueued(): void {
   const now = Date.now() / 1000, settings = settingsNow(), today = dayStamp(new Date());
   let q: Queued | undefined;
   update(s => {  // filter and take the head in one go, so a weekly run's fresh queue is never overwritten by a stale one
@@ -226,14 +264,14 @@ function offerQueued(dayLogger: DayLogger): void {
   if (!q) return;
   const item = q;
   const asked = offer(Suggestions.key(item.action, item.params), "An idea for your week",
-    item.evidence ? `${item.line} (${item.evidence})` : item.line, () => apply(item.action, item.params, dayLogger));
+    item.evidence ? `${item.line} (${item.evidence})` : item.line, item.action, item.params);
   if (!asked) update(s => { s.queued = [item, ...(s.queued ?? [])]; });  // something else asked first: back in line
 }
 
 /// What a yes to a weekly offer does, per catalogue action.
-function apply(action: string, p: Record<string, string>, dayLogger: DayLogger): void {
+function apply(action: string, p: Record<string, string>): void {
   switch (action) {
-    case "summaryTime": Settings.summaryMinutes = Number(p.minutes); dayLogger.reschedule(); break;
+    case "summaryTime": Settings.summaryMinutes = Number(p.minutes); logger?.reschedule(); break;
     case "autoRecordCalls": Settings.autoRecordCalls = true; break;
     case "waDraftOnly": Settings.waDraftOnly = true; break;
     case "waChatTasks": Settings.waChatTasks = true; break;

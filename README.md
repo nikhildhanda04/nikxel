@@ -1,6 +1,6 @@
 # Nikxel — Your Pixel Desktop Companion
 
-A tiny pixel-art character that lives on your macOS or Windows desktop. Watches your AI
+A tiny pixel-art character that lives on your macOS, Windows or Linux desktop. Watches your AI
 agents work, records meetings and writes the notes for you, surfaces today's
 calendar events, and bubbles up reminders you added while you were away from
 your laptop.
@@ -356,6 +356,42 @@ tray icon → **Open Nikxel…** → **Advanced** → **Setup wizard**.
 
 Tray icon → **Open Nikxel…** → **Advanced** → **Check for updates…**, or run
 `.\setup.cmd` again. It quits the running copy, pulls, rebuilds and restarts.
+
+## Install (Linux, early)
+
+Linux runs the same Electron app from `windows/`. It's early: setup, the avatar,
+chat, the Nikxel window, WhatsApp and Google should work, but these don't yet:
+
+- **Meeting audio:** only your mic is recorded, not the other side of the call.
+- **Transcription:** the wizard can't install whisper on Linux yet.
+- **Agent and meeting detection**, and app names in the daily summary.
+- **Check for Updates:** run `./setup.sh` again instead.
+
+Tested target: Ubuntu 22.04 or 24.04, x64.
+
+### 1. Prerequisites
+
+```bash
+sudo apt install git nodejs npm   # Node.js must be 20 or later: node -v
+```
+
+Ubuntu's own Node can be too old; if `node -v` says below 20, install it from
+[nodejs.org](https://nodejs.org) or [nvm](https://github.com/nvm-sh/nvm).
+
+### 2. Clone and build
+
+```bash
+git clone https://github.com/nikhildhanda04/nikxel.git
+cd nikxel/windows
+./setup.sh
+```
+
+`setup.sh` installs the dependencies, builds, starts Nikxel, and adds it to the
+app menu and to startup apps. You can close the terminal once Nikxel is up. The
+tray icon is at the right of the top bar.
+
+It runs under XWayland (`--ozone-platform=x11`) so the avatar can stay above
+other windows on Ubuntu's default Wayland desktop.
 
 ## Make your own avatar
 

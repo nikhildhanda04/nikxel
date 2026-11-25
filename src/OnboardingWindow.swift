@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import UniformTypeIdentifiers
 
 /// First-run (and reopenable-anytime, via the status bar) setup wizard: say
 /// hello, tour what Nikxel does, pick an avatar, check the transcription tools,
@@ -27,6 +28,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
     private var sheetError: String?
     private var promptCopied = false
     private var importing = false
+    private var drawing = false
 
     // Dependency step
     private var whisperFound = false
@@ -94,6 +96,13 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         super.init(window: window)
         config.userContentController.add(self, name: "nx")
         web.navigationDelegate = self
+        // Closed before "Start using Nikxel": still show them around (once), and
+        // the tour's end asks for permissions. Setup reopens at the next launch.
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            guard !NikxelSettings.onboardingCompleted else { return }
+            cblog("Onboarding: closed before finishing")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { CoachTour.startIfNew(waitForCalls: false) }
+        }
         web.setValue(false, forKey: "drawsBackground")
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 1160, height: 860))
@@ -154,6 +163,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
             go(to: next)
         case "copyPrompt": copyPrompt()
         case "chooseSheet": chooseSheet()
+        case "photoAvatar": makeFromPhoto()
         case "resetSheet": resetSheet()
         case "downloadModel": downloadModel()
         case "installDeps": installDeps()
@@ -216,7 +226,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
             "step": step.rawValue,
             "name": NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""),
             "avatar": [
-                "custom": usingCustomSheet, "error": sheetError ?? "", "copied": promptCopied, "importing": importing,
+                "custom": usingCustomSheet, "error": sheetError ?? "", "copied": promptCopied, "importing": importing, "drawing": drawing,
                 "spec": "PNG, \(NikxelSprites.cols) columns × \(NikxelSprites.rows) rows of \(NikxelSprites.frameSize)px frames (\(NikxelSprites.cols * NikxelSprites.frameSize)×\(NikxelSprites.rows * NikxelSprites.frameSize)). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.",
             ],
             "deps": [
@@ -460,8 +470,9 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         NikxelSettings.onboardingCompleted = true
         stopPolling()
         close()
-        // Then show them where everything is.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { CoachTour.startIfNew() }
+        // Then show them where everything is: the whole tour on every finish,
+        // even for someone who saw it before (setup run again from Advanced).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { CoachTour.replay() }
     }
 
     // MARK: - Avatar actions
@@ -491,7 +502,55 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         panel.canChooseDirectories = false
         panel.message = "Pick the sprite sheet Gemini gave you"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        importSheet { url }
+    }
 
+    /// Setup's "Make me from a photo": nikxel-api has Gemini draw the sheet
+    /// (its key, its prompts; the photo isn't kept), then the usual import.
+    private func makeFromPhoto() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Pick a clear photo of your face"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        drawing = true
+        importSheet { [weak self] in
+            defer { DispatchQueue.main.async { self?.drawing = false } }
+            return try Self.drawSheet(fromPhoto: url)
+        }
+    }
+
+    /// The photo, at most 1024px and as JPEG (HEIC and rotation handled by
+    /// ImageIO), to /api/avatar; the sheet it returns, as a temp file.
+    private static func drawSheet(fromPhoto url: URL) throws -> URL {
+        func fail(_ m: String) -> NSError { NSError(domain: "Nikxel", code: 1, userInfo: [NSLocalizedDescriptionKey: m]) }
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 1024, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
+              let jpeg = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        else { throw fail("Couldn’t open that photo. Try a JPEG or PNG.") }
+        var req = URLRequest(url: URL(string: CloudSync.backendBase + "/api/avatar")!, timeoutInterval: 240)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["photo": jpeg.base64EncodedString(), "mime": "image/jpeg"])
+        var out: (Data?, Error?)
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { d, _, e in out = (d, e); done.signal() }.resume()
+        done.wait()
+        guard let d = out.0, let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
+            throw fail(out.1 == nil ? "Nikxel’s server didn’t answer properly. Try again." : "Couldn’t reach Nikxel’s server. Check your internet and try again.")
+        }
+        guard let b64 = obj["image"] as? String, let png = Data(base64Encoded: b64) else {
+            throw fail(obj["error"] as? String ?? "Couldn’t draw you just now. Try again.")
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-avatar-sheet.png")
+        try png.write(to: file)
+        return file
+    }
+
+    /// Imports the sheet `source` gives (it may take a while: it runs off the main thread).
+    private func importSheet(_ source: @escaping () throws -> URL) {
         sheetError = nil
         importing = true
         push()
@@ -502,7 +561,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
                 // Keys out the magenta, finds the real grid and re-frames every
                 // cell -- whatever Gemini returned, this is what makes it
                 // usable, so the user never has to run remove_magenta.py.
-                let data = try SpriteSheetImporter.process(url: url)
+                let data = try SpriteSheetImporter.process(url: try source())
                 try? FileManager.default.removeItem(at: NikxelSprites.customURL)
                 try data.write(to: NikxelSprites.customURL)
             } catch {

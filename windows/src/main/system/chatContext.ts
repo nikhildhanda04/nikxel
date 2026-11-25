@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as NoteName from "./noteName";
+import { documentsRoot, HOME } from "../core/paths";
 
 /// Builds the text the avatar chat answers from: the last 14 days of daily summaries, meeting minutes and notes
 /// under ~/Documents/nikxel, plus the dashboard project feed. Electron-free. Port of ChatContext.swift.
@@ -67,10 +68,32 @@ export function build(blocks: Block[], cap: number): string {
   return [...joined()].slice(0, cap).join("");
 }
 
+/// How to use Nikxel, for "how do I record a meeting?" or "where are my day summaries?". The Nikxel
+/// window comes first; folders only as a second way. Port of ChatContext.appHelp.
+const icon = process.platform === "linux" ? "the Nikxel icon at the right of the top bar" : "the Nikxel icon in the tray by the clock (under the ^ if it's hidden)";
+export const APP_HELP = [
+  `- Open the Nikxel window: click ${icon}, then Open Nikxel…. Everything below is in its sidebar.`,
+  "- Record a meeting: double-click me (the avatar) to start, double-click again to stop. Or the Record button in the Nikxel window, or the tray icon. When it stops I write the meeting summary.",
+  "- Chat with me: click me once on your screen, or Chat in the Nikxel window.",
+  "- Meeting summaries: Library → Meetings in the Nikxel window. Open one to read, share, edit or rename it there.",
+  "- Daily summaries: Library → Days; weekly ones: Library → Weeks. The time your day is written up: Recording & notes.",
+  "- Notes (not meetings): Library → Notes. Switch between Meeting and Notes recording in Recording & notes.",
+  "- Action items from meetings: Tasks. People you've met with: People.",
+  "- Things to do every time (after a meeting, each morning): Automations. My suggestions about how you work, including any you missed on screen: Automations → What I've suggested.",
+  "- WhatsApp replies and settings: WhatsApp. Google, Gmail, ERP and Slack: Connections. Your name, avatar and what I know about you: You.",
+  "- What I did on WhatsApp today and AI cost: Activity. Folders, logs, updates, setup again and the tour again: Advanced.",
+  "- Move me: drag me anywhere. Hide or show me, mute, record: the tray icon.",
+  `- The files themselves, only if they ask for the folder: ${path.join(documentsRoot(), "nikxel")} (meetings, daily, weekly, notes), settings in ${path.join(HOME, ".nikxel")}. Advanced in the Nikxel window opens them.`,
+].join("\n");
+
 export function prompt(context: string, history: { q: string; a: string }[], question: string, today: Date): string {
   let p = `You are the user's desk avatar. Today is ${ymd(today)}. Answer using only the notes below. ` +
     `If the answer isn't in them, say so plainly; never guess. Reply in a few short lines or bullets, ` +
-    `and name the meeting, person or date you got it from.\n\nNOTES:\n${context}\n`;
+    `and name the meeting, person or date you got it from.\n\n` +
+    `If the question is about Nikxel itself (how to do something, where something is), answer from HOW NIKXEL WORKS: ` +
+    `point to the place in the Nikxel window first, and give a folder only as a second way or if they ask for files. ` +
+    `End every answer about Nikxel with one short line saying that what Nikxel records and saves stays on this computer.\n\n` +
+    `HOW NIKXEL WORKS:\n${APP_HELP}\n\nNOTES:\n${context}\n`;
   for (const h of history) p += `\nUser: ${h.q}\nYou: ${h.a}\n`;
   return p + `\nUser: ${question}`;
 }

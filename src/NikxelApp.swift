@@ -55,8 +55,12 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         meetingCoordinator = MeetingCoordinator(stateMachine: stateMachine)
         meetingCoordinator.nikxelView = window.nikxelView
-        window.onDoubleClick = { [weak self] in self?.meetingCoordinator.toggleRecording(force: false) }
+        window.onDoubleClick = { [weak self] in
+            if CoachTour.gesture?("double") == true { return }
+            self?.meetingCoordinator.toggleRecording(force: false)
+        }
         window.onSingleClick = { [weak self] in
+            if CoachTour.gesture?("click") == true { return }
             guard let self, let view = self.window.nikxelView else { return }
             let f = self.window.frame, a = view.avatarCenter, h = view.halfChar
             let mc = self.meetingCoordinator!
@@ -184,7 +188,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             showOnboarding()
         } else {
             // After the avatar's puff, so the bubble has somewhere to land.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() }
+            // Before the tour, the tour's end asks instead.
+            if NikxelSettings.tourDone { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() } }
             maybeAskRole()
             // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) { CoachTour.startIfNew() }

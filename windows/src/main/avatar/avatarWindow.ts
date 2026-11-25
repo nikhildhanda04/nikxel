@@ -99,7 +99,7 @@ async function loadSprites(): Promise<{ sprite: Uint8Array | null; fallback: Uin
 
 export function createAvatarWindow(
   sm: StateMachine,
-  handlers: { onDoubleClick: () => void; onClick: (avatar: Rectangle) => void },
+  handlers: { onDoubleClick: () => void; onClick: (avatar: Rectangle) => void; onDrag?: () => void },
 ): AvatarWindow {
   // Starts with the avatar centred on the primary display.
   const primary = screen.getPrimaryDisplay().bounds;
@@ -388,7 +388,7 @@ export function createAvatarWindow(
             const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
             runSafely("onClick", () => handlers.onClick({ x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h }));
           }, 500);  // the OS default double-click interval, so a slow double-click never opens the box
-        }
+        } else if (evt.moved >= 4) runSafely("onDrag", () => handlers.onDrag?.());
         break;
       case "doubleClick":
         // The first click's chat toggle is still waiting: a double-click leaves the box as it is.
@@ -574,10 +574,11 @@ export function createAvatarWindow(
       const p = screen.getCursorScreenPoint();
       mouseUp();
       // Same rule as a press the window saw: barely moved is a click.
-      if (clickDecision(Math.hypot(p.x - press.x, p.y - press.y), false) === "chat") {
+      const moved = Math.hypot(p.x - press.x, p.y - press.y);
+      if (clickDecision(moved, false) === "chat") {
         const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
         runSafely("onClick", () => handlers.onClick({ x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h }));
-      }
+      } else if (moved >= 4) runSafely("onDrag", () => handlers.onDrag?.());
     },
 
     diagnostics,

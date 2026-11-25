@@ -74,7 +74,7 @@ final class ChatSession {
             // WhatsApp as it is now, not as it was when the chat opened, plus
             // any chat the question names, opened and read in full.
             if ChromeBot.isPortOpen() { self.waSnapshot = ChatSession.waContextBlock() ?? "" }
-            let named = ChatSession.waNamedThreads(text) ?? ""
+            let named = self.waNamedThreads(text) ?? ""
             func finish(_ reply: String, answered: Bool) {
                 DispatchQueue.main.async {
                     if answered { self.history.append((q: text, a: reply)) }
@@ -249,10 +249,16 @@ final class ChatSession {
     /// in the Nikxel group" reads the chats whose names share a word with it.
     /// Opening a chat marks it read in WhatsApp, as it would on the phone.
     /// Afterwards the chat that was open before is opened again.
-    private static func waNamedThreads(_ question: String) -> String? {
+    /// The chats the last question read: "and yesterday?" reads them again.
+    private var lastWANames: [String] = []
+
+    private func waNamedThreads(_ question: String) -> String? {
         guard ChromeBot.isPortOpen(), ChromeWhatsApp.isLoggedIn() else { return nil }
-        let names = WAChatMatch.named(in: question, chats: ChromeWhatsApp.allChatsPreview(limit: 60).map(\.name))
+        let day = WAChatMatch.day(in: question)
+        var names = WAChatMatch.named(in: question, chats: ChromeWhatsApp.allChatsPreview(limit: 60).map(\.name))
+        if names.isEmpty, day != nil { names = lastWANames }
         guard !names.isEmpty else { return nil }
+        lastWANames = names
         let when = DateFormatter()
         when.dateFormat = "d MMM h:mm a"
         var parts: [String] = []
@@ -260,16 +266,25 @@ final class ChatSession {
             let back = ChromeWhatsApp.conversationHeader()
             for name in names {
                 guard ChromeWhatsApp.clickChat(name: name), ChromeWhatsApp.waitForMessages() else { continue }
-                let thread = ChromeWhatsApp.readThread().suffix(40)
+                // A day asked about: scroll back to it and read that day; else the latest 40.
+                var thread = day.map(ChromeWhatsApp.readBack) ?? ChromeWhatsApp.readThread()
+                if let day, let end = Calendar.current.date(byAdding: .day, value: 1, to: day) {
+                    // Bubbles in a run carry no stamp: they take the one above.
+                    var last: Date?
+                    thread = thread.map { m in last = m.at ?? last; return WAMessage(outgoing: m.outgoing, at: last, text: m.text, sender: m.sender) }
+                        .filter { ($0.at ?? .distantPast) >= day && ($0.at ?? .distantPast) < end }
+                } else {
+                    thread = Array(thread.suffix(40))
+                }
                 guard !thread.isEmpty else { continue }
-                parts.append("\(name), read just now (each line: when, who, what):\n" + thread.map {
+                parts.append("\(name), read just now (each line: when, who, what):\n" + thread.suffix(200).map {
                     "\($0.at.map { when.string(from: $0) + " " } ?? "")\($0.outgoing ? "You" : $0.sender.isEmpty ? name : $0.sender): \($0.text.prefix(500))"
                 }.joined(separator: "\n"))
             }
             if let back, !names.contains(back) { _ = ChromeWhatsApp.clickChat(name: back) }
             return true
         }
-        cblog("ChatSession: read \(parts.count) of \(names.count) WhatsApp chats the question named")
+        cblog("ChatSession: read \(parts.count) of \(names.count) WhatsApp chats the question named\(day.map { " (back to \($0))" } ?? "")")
         return parts.isEmpty ? nil : "### whatsapp chats you asked about\n" + parts.joined(separator: "\n\n")
     }
 }

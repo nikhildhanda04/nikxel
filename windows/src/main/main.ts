@@ -143,8 +143,9 @@ class NikxelApp {
 
     this.meetingCoordinator = new MeetingCoordinator(sm);
     this.avatar = createAvatarWindow(sm, {
-      onDoubleClick: () => this.meetingCoordinator.toggleRecording(false),
-      onClick: avatar => AvatarChat.toggle(avatar, this.avatar.window, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
+      onDoubleClick: () => { if (!CoachTour.gesture?.("double")) this.meetingCoordinator.toggleRecording(false); },
+      onDrag: () => { CoachTour.gesture?.("drag"); },
+      onClick: avatar => CoachTour.gesture?.("click") || AvatarChat.toggle(avatar, this.avatar.window, this.meetingCoordinator.momGen, () => this.meetingCoordinator.isRecording),
     });
     this.inputHandler = new InputHandler(sm, () => this.avatar.recordKeystroke(),
       { down: () => this.avatar.globalMouseDown(), up: () => this.avatar.globalMouseUp() });
@@ -228,7 +229,8 @@ class NikxelApp {
       this.showOnboarding();
     } else {
       // After the avatar's puff, so the bubble has somewhere to land.
-      setTimeout(() => Permissions.offer(), 4000);
+      // Before the tour, the tour's end asks instead.
+      if (Settings.tourDone) setTimeout(() => Permissions.offer(), 4000);
       this.maybeAskRole();
       // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
       setTimeout(() => CoachTour.startIfNew(this.tourHost), 10_000);
@@ -297,7 +299,10 @@ class NikxelApp {
   private showOnboarding(): void {
     if (!this.onboarding) {
       this.onboarding = new OnboardingWindowController(this.meetingCoordinator.momGen);
-      this.onboarding.onFinished = () => CoachTour.startIfNew(this.tourHost);
+      // "Start using Nikxel": the whole tour every time, even for someone who
+      // saw it before. Closed before finishing: once, as before.
+      this.onboarding.onFinished = () => Settings.onboardingCompleted
+        ? CoachTour.replay(this.tourHost) : CoachTour.startIfNew(this.tourHost, false);
     }
     this.onboarding.show();
   }

@@ -663,6 +663,14 @@ var VIEWS = {
       : suggestions === null ? '<div class="banner" style="margin-top:0"><p>I can look at your recent meetings, days and notes and suggest automations made for <b>your</b> work.</p>' + '<button type="button" class="btn primary" data-autosuggest>Suggest some</button></div>'
       : suggestions.length ? '<div class="ideas">' + suggestions.map(function (a, i) { return ideaCard(a, i, 'sugg'); }).join('') + '</div><p style="margin:12px 0 0"><button type="button" class="link" data-autosuggest>Suggest others</button></p>'
       : '<p class="lead">Nothing stood out yet. Try again after a few more meetings.</p>';
+    // Every bubble Nikxel raised about how you work, in case one was missed: an open offer can still be answered here.
+    var made = (s.nikxelSuggested || []).length ? s.nikxelSuggested.map(function (x) {
+      var d = new Date(x.t * 1000), day = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      var ctl = x.kind !== 'offer' ? '<span class="chip">Idea</span>'
+        : x.answer === 'yes' ? '<span class="chip">You said yes</span>' : x.answer === 'no' ? '<span class="chip">You said no</span>'
+        : '<button type="button" class="btn primary" data-learnyes="' + esc(x.key) + '">Yes, do it</button><button type="button" class="link" data-learnno="' + esc(x.key) + '">No thanks</button>';
+      return '<div class="auto"><div><b>' + esc(x.title) + '</b><p>' + esc(x.line) + '</p><div class="meta"><span class="chip">' + esc(when({ date: day + ' ' + hhmm(x.t), kind: 'meetings' })) + '</span></div></div><div class="ctl">' + ctl + '</div></div>';
+    }).join('') : '<p class="empty">Nothing yet. As I learn how you work, my ideas show up here, even the ones you missed on screen.</p>';
     var runs = s.automationRuns.length ? s.automationRuns.slice(0, 15).map(function (r) {
       return '<div class="run' + (r.skipped ? ' skip' : '') + '"><header><time>' + esc(when({ date: (function (d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })(new Date(r.t * 1000)) + ' ' + hhmm(r.t), kind: 'meetings' })) + '</time><b>' + esc(r.name) + '</b>' +
         (r.file ? '<button type="button" class="link" data-open="' + esc(r.file) + '">Open summary</button>' : '') + '</header>' +
@@ -674,6 +682,7 @@ var VIEWS = {
         (makeError ? '<p class="make-note err">' + esc(makeError) + '</p>' : '<p class="make-note">Say when it should run and what I should do. You’ll see it before it’s saved.</p>') + '</div>' +
       (draft ? draftCard() : '') +
       '<section class="group" data-in><h2>Yours</h2><div class="card">' + mine + '</div></section>' +
+      '<section class="group" data-in><h2>What I’ve suggested</h2><div class="card">' + made + '</div></section>' +
       '<section class="group" data-in><h2>Suggested for you</h2>' + suggested + '</section>' +
       '<section class="group" data-in><h2>Ideas to start with</h2><div class="ideas">' + s.ideas.filter(function (a) { return have.indexOf(a.name.toLowerCase()) < 0; }).map(function (a) { return ideaCard(a, s.ideas.indexOf(a), 'idea'); }).join('') + '</div></section>' +
       '<section class="group" data-in><h2>Recent runs</h2><div class="card">' + runs + '</div></section>';
@@ -1112,6 +1121,7 @@ document.addEventListener('click', function (e) {
   if (t.hasAttribute('data-person')) { person = t.dataset.person === '' ? null : +t.dataset.person; show('people', true); return; }
   if (t.dataset.autotoggle) { var on2 = t.getAttribute('aria-checked') !== 'true'; t.setAttribute('aria-checked', String(on2)); post({ type: 'autoToggle', id: t.dataset.autotoggle, on: on2 }); return; }
   if (t.dataset.autorun) { post({ type: 'autoRun', id: t.dataset.autorun }); return; }
+  if (t.dataset.learnyes || t.dataset.learnno) { post({ type: 'learnDecide', key: t.dataset.learnyes || t.dataset.learnno, yes: !!t.dataset.learnyes }); return; }
   if (t.dataset.autodel) { if (confirm('Delete this automation?')) post({ type: 'autoDelete', id: t.dataset.autodel }); return; }
   if (t.dataset.autoedit) { openDraft(S.automations.filter(function (a) { return a.id === t.dataset.autoedit; })[0]); return; }
   if (t.hasAttribute('data-idea')) { var idea = S.ideas[+t.dataset.idea]; openDraft({ name: idea.name, trigger: idea.trigger, time: idea.time, days: idea.days, instruction: idea.instruction }); return; }

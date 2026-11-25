@@ -566,18 +566,16 @@ var VIEWS = {
     layout: 'split',
     copy: function (s) {
       return '<h1 class="display" data-in>Choose how I look</h1>' +
-        '<p class="lead" data-in><b>Optional.</b> I can look like you instead of this character. You’ll need a photo of yourself and Google Gemini; it takes a few minutes.</p>' +
+        '<p class="lead" data-in><b>Optional.</b> I can look like you instead of this character. All you need is a clear photo of your face; it takes about a minute.</p>' +
         guideFor('avatar') + NAV +
-        note('Happy with this look? Just click Next. This step raises the third column.');
+        note('Your photo goes to Google Gemini, which draws you; Nikxel doesn’t keep it. Happy with this look? Just click Next.');
     },
     guide: function (s) {
       var a = s.avatar, items = [
-        'Click <b>Copy Gemini prompt</b> on the right.',
-        'Go to gemini.google.com, paste the prompt, and attach a clear photo of your face.',
-        'Download the image Gemini makes: a grid of small characters.',
-        'Click <b>Use my own sprite sheet…</b> and pick that file. You’ll see yourself on the right.'
+        'Click <b>Make me from a photo…</b> and pick a clear photo of your face.',
+        'Wait about a minute while I draw you. You’ll see yourself on the right.'
       ];
-      return track(items, a.custom ? 4 : (a.copied || promptCopied) ? 1 : 0);
+      return track(items, a.custom ? 2 : a.drawing ? 1 : 0);
     },
     live: function (s) {
       var a = s.avatar;
@@ -585,11 +583,16 @@ var VIEWS = {
         '<div class="well"><div class="sp">' + sprite(0) + '</div></div>' +
         '<p class="fine">' + (a.custom ? 'This is your own sprite sheet.' : 'This is the character that comes with Nikxel.') + '</p>' +
         (a.error ? '<p class="err">' + esc(a.error) + '</p>' : '') +
-        (a.importing ? '<p class="busy"><span class="spin"></span>Reading your image…</p>' : '') +
+        (a.importing ? '<p class="busy"><span class="spin"></span>' + (a.drawing ? 'Drawing you from your photo… about a minute.' : 'Reading your image…') + '</p>' : '') +
         '<div class="btns">' +
-          btn(a.copied ? 'Prompt copied' : 'Copy Gemini prompt', 'copyPrompt', '', 'soft') +
-          btn('Use my own sprite sheet…', 'chooseSheet', a.importing ? 'disabled' : '', 'soft') +
+          btn('Make me from a photo…', 'photoAvatar', a.importing ? 'disabled' : '', 'primary') +
           (a.custom ? btn('Go back to the default', 'resetSheet', '', 'ghost') : '') +
+        '</div>' +
+        // By hand, for when the server can't: the old copy-the-prompt route.
+        '<p class="fine">Or by hand: copy the prompt, use it at gemini.google.com with your photo, then pick the sheet it makes.</p>' +
+        '<div class="btns">' +
+          btn(a.copied ? 'Prompt copied' : 'Copy Gemini prompt', 'copyPrompt', '', 'ghost') +
+          btn('Use my own sprite sheet…', 'chooseSheet', a.importing ? 'disabled' : '', 'ghost') +
         '</div>' +
         '<p class="fine" style="max-width:52ch">' + esc(a.spec) + '</p></div>';
     },

@@ -81,11 +81,35 @@ enum ChatContext {
         moved < 4 && !secondClick ? .chat : .none
     }
 
+    /// How to use Nikxel, for "how do I record a meeting?" or "where are my day summaries?". The Nikxel
+    /// window comes first; folders only as a second way. Mirrors windows/src/main/system/chatContext.ts.
+    static let appHelp = """
+        - Open the Nikxel window: click the Nikxel icon in the menu bar, then Open Nikxel… (or press ⌘ ,). Everything below is in its sidebar.
+        - Record a meeting: double-click me (the avatar) to start, double-click again to stop. Or the Record button in the Nikxel window, or the menu bar icon. When it stops I write the meeting summary.
+        - Chat with me: click me once on your screen, or Chat in the Nikxel window.
+        - Meeting summaries: Library → Meetings in the Nikxel window. Open one to read, share, edit or rename it there.
+        - Daily summaries: Library → Days; weekly ones: Library → Weeks. The time your day is written up: Recording & notes.
+        - Notes (not meetings): Library → Notes. Switch between Meeting and Notes recording in Recording & notes.
+        - Action items from meetings: Tasks. People you've met with: People.
+        - Things to do every time (after a meeting, each morning): Automations. My suggestions about how you work, including any you missed on screen: Automations → What I've suggested.
+        - WhatsApp replies and settings: WhatsApp. Google, Gmail, ERP and Slack: Connections. Your name, avatar and what I know about you: You.
+        - What I did on WhatsApp today and AI cost: Activity. Folders, logs, updates, setup again and the tour again: Advanced.
+        - Move me: drag me anywhere. Hide or show me, mute, record: the menu bar icon.
+        - The files themselves, only if they ask for the folder: ~/Documents/nikxel (meetings, daily, weekly, notes), settings in ~/.nikxel. Advanced in the Nikxel window opens them.
+        """
+
     static func prompt(context: String, history: [(q: String, a: String)], question: String, today: Date) -> String {
         var p = """
         You are the user's desk avatar. Today is \(dayString(today)). Answer using only the notes below. \
         If the answer isn't in them, say so plainly; never guess. Reply in a few short lines or bullets, \
         and name the meeting, person or date you got it from.
+
+        If the question is about Nikxel itself (how to do something, where something is), answer from HOW NIKXEL WORKS: \
+        point to the place in the Nikxel window first, and give a folder only as a second way or if they ask for files. \
+        End every answer about Nikxel with one short line saying that what Nikxel records and saves stays on this computer.
+
+        HOW NIKXEL WORKS:
+        \(appHelp)
 
         NOTES:
         \(context)

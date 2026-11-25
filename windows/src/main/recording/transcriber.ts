@@ -137,20 +137,42 @@ export function modelPath(): string { return path.join(WhisperModel.directory, W
 
 /// Streams `url` into `dest` (via a temp file + rename), reporting bytes as
 /// they land. Gives up when no data arrives for a minute.
-async function downloadFile(url: string, dest: string, onProgress: (got: number, total: number) => void): Promise<void> {
+export async function downloadFile(url: string, dest: string, onProgress: (got: number, total: number) => void): Promise<void> {
   ensureDir(path.dirname(dest));
-  const tmp = `${dest}.download`;
+  const tmp = `${dest}.download`, name = path.basename(dest);
+  const mb = (n: number) => `${(n / 1_048_576).toFixed(1)} MB`;
+  // What an earlier try got is kept and resumed, not thrown away: on a slow
+  // line the speech model takes hours (a user on 23 KB/s, 2026-11-25), and a
+  // dropped connection or a closed wizard used to start it over from zero.
+  let have = 0;
+  try { have = fs.statSync(tmp).size; } catch { /* nothing yet */ }
   const ctrl = new AbortController();
   let stall: NodeJS.Timeout | undefined;
   const armStall = () => { if (stall) clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), 60_000); };
   armStall();
+  let got = have;
+  const started = Date.now();
   try {
-    const res = await fetch(url, { signal: ctrl.signal, redirect: "follow", headers: { "User-Agent": "Nikxel" } });
+    const headers: Record<string, string> = { "User-Agent": "Nikxel" };
+    if (have > 0) headers.Range = `bytes=${have}-`;
+    const res = await fetch(url, { signal: ctrl.signal, redirect: "follow", headers });
+    if (res.status === 416) {
+      // The kept part is already the whole file (or no longer matches): start clean.
+      fs.rmSync(tmp, { force: true });
+      if (stall) clearTimeout(stall);
+      return downloadFile(url, dest, onProgress);
+    }
     if (!res.ok || !res.body) throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
-    const total = Number(res.headers.get("content-length") ?? 0);
-    const out = fs.createWriteStream(tmp);
+    const resumed = res.status === 206;
+    if (!resumed) got = have = 0;
+    const length = Number(res.headers.get("content-length") ?? 0);
+    const total = length > 0 ? have + length : 0;
+    let host = "";
+    try { host = new URL(res.url).host; } catch { /* keep it blank */ }
+    diag("Download", `${name}: ${resumed ? `resuming at ${mb(have)}` : "starting"}, ${total ? mb(total) : "size unknown"} from ${host}`);
+    const out = fs.createWriteStream(tmp, { flags: resumed ? "a" : "w" });
     const closed = once(out, "close");
-    let got = 0;
+    let lastLog = Date.now(), lastGot = got;
     try {
       const reader = res.body.getReader();
       for (;;) {
@@ -160,9 +182,15 @@ async function downloadFile(url: string, dest: string, onProgress: (got: number,
         got += value.byteLength;
         if (!out.write(value)) await once(out, "drain");
         onProgress(got, total);
+        // Once a minute: how far, how fast. Slow and stuck look the same on a bar.
+        if (Date.now() - lastLog > 60_000) {
+          diag("Download", `${name}: ${mb(got)}${total ? ` of ${mb(total)}` : ""} at ${Math.round((got - lastGot) / 1024 / ((Date.now() - lastLog) / 1000))} KB/s`);
+          lastLog = Date.now(); lastGot = got;
+        }
       }
     } catch (e) {
-      out.destroy();
+      out.end();
+      await closed.catch(() => {});
       throw e;
     }
     out.end();
@@ -170,9 +198,12 @@ async function downloadFile(url: string, dest: string, onProgress: (got: number,
     if (total > 0 && got < total) throw new Error(`Download ended early (${got} of ${total} bytes).`);
     try { fs.rmSync(dest, { force: true }); } catch { /* replaced below anyway */ }
     fs.renameSync(tmp, dest);
+    diag("Download", `${name}: done, ${mb(got)} in ${Math.round((Date.now() - started) / 1000)} s`);
   } catch (e) {
-    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
-    if (ctrl.signal.aborted) throw new Error("Download stalled: no data for a minute. Check your connection and try again.");
+    // The part already here stays for the next try to resume.
+    const why = ctrl.signal.aborted ? "Download stalled: no data for a minute. Check your connection and try again; it carries on from where it stopped." : String(e instanceof Error ? e.message : e);
+    diag("Download", `${name}: failed at ${mb(got)} after ${Math.round((Date.now() - started) / 1000)} s — ${why}`);
+    if (ctrl.signal.aborted) throw new Error(why);
     throw e;
   } finally {
     if (stall) clearTimeout(stall);
@@ -310,7 +341,10 @@ export class Transcriber {
       }
       // whisper.cpp defaults to -l en, which would push Hindi and
       // Hinglish speech through English. "auto" detects per recording.
-      args = ["-m", model, "-f", input, format === "srt" ? "-osrt" : "-otxt", "-of", outStem, "-l", lang, "-np"];
+      // -mc 0: no earlier text as context for the next window. With it, one
+      // "[no audio]" fed itself through a 55-minute meeting full of speech
+      // (2026-11-25), and the notes came out empty.
+      args = ["-m", model, "-f", input, format === "srt" ? "-osrt" : "-otxt", "-of", outStem, "-l", lang, "-mc", "0", "-np"];
     }
 
     // Python whisper shells out to ffmpeg for audio decoding. Without it on
@@ -326,7 +360,16 @@ export class Transcriber {
       env[key] = path.dirname(ffmpeg) + path.delimiter + (env[key] ?? "");
     }
 
+    // What ran, on what: enough to tell a wrong model, a wrong language or an
+    // empty file apart when a transcript comes back bad.
+    let audioMB = 0;
+    try { audioMB = Math.round((await fs.promises.stat(input)).size / 1e6); } catch { /* gone */ }
+    diag("Transcriber", `${path.basename(input)} (${audioMB} MB) → ${path.basename(binary)} ${args.map(a => path.isAbsolute(a) ? path.basename(a) : a).join(" ")}`);
+    const started = Date.now();
     const r = await run(binary, args, { cwd: path.dirname(binary), env });
+    const errTail = r.stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" ⏎ ");
+    diag("Transcriber", `${path.basename(input)} finished in ${Math.round((Date.now() - started) / 1000)} s, exit ${r.code}` +
+      (r.code !== 0 || /error/i.test(errTail) ? ` — ${errTail}` : ""));
     const stdoutLog = path.join(outDir, `${stem}.whisper.stdout.log`);
     const stderrLog = path.join(outDir, `${stem}.whisper.stderr.log`);
     await fs.promises.writeFile(stdoutLog, r.stdout).catch(() => {});

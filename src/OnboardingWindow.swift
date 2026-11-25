@@ -58,6 +58,12 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
     /// Latest test result per agent; absent while that agent is still being tested.
     private var agentHealth: [CodingAgent: MOMGenerator.AgentHealth] = [:]
     private var agentTestRun = 0
+    /// Set while the Terminal window installing (or signing in to) Claude Code
+    /// is open; checks every few seconds until Claude answers.
+    private var agentInstallPoll: Timer?
+    /// The arrow at that Terminal window, saying what to do at each stage.
+    private var installPointer: CoachPointer?
+    private var installStage = ""
     private var googlePoll: Timer?
 
     /// The dashboard's paper (#f6f4ee), so nothing flashes white before the page paints.
@@ -161,6 +167,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         case "connectGoogle": connectGoogle()
         case "pickAgent": pickAgent(index)
         case "copyAgent": copyInstallCommand(index)
+        case "installAgent": installClaude()
         case "retestAgents": refreshAvailableAgents()
         case "finish": finishSetup()
         default: break
@@ -191,10 +198,18 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         let agents: [[String: Any]] = CodingAgent.allCases.map { agent in
             let health = agentHealth[agent]
             let (text, tone, hint) = Self.describe(health, agent: agent)
+            // Claude Code gets a button that does it all; the others keep a command to copy.
+            var action = ""
+            if agent == .claude {
+                if case .notInstalled = health { action = "install" }
+                if case .notLoggedIn = health { action = "login" }
+                if agentInstallPoll != nil && !(health?.isWorking ?? false) { action = action.isEmpty ? "install" : action }
+            }
             return [
                 "name": agent.displayName, "text": text, "tone": tone, "hint": hint ?? "",
                 "enabled": health != nil && health != .notInstalled,
                 "chosen": agent == chosenAgent, "copied": agentCopied == agent,
+                "action": action, "busy": agent == .claude && agentInstallPoll != nil,
             ]
         }
         return [
@@ -315,6 +330,103 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         }
     }
 
+    /// Installs Claude Code (if missing) and starts it to sign in, in a Terminal
+    /// window the user can watch, while Nikxel's bubble says what to press.
+    /// Checks in the background and turns the step green once Claude answers.
+    private func installClaude() {
+        guard agentInstallPoll == nil else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-install-claude.command")
+        let script = """
+        #!/bin/zsh
+        export PATH="$HOME/.local/bin:$PATH"
+        if ! command -v claude >/dev/null; then
+          echo 'Installing Claude Code for Nikxel. This takes a minute…'
+          echo
+          curl -fsSL https://claude.ai/install.sh | bash
+          export PATH="$HOME/.local/bin:$PATH"
+        fi
+        echo
+        echo 'Now sign in: press Return to pick a look, choose your Claude account, and finish in the browser.'
+        echo 'Nikxel notices when it works. You can close this window after that.'
+        echo
+        claude
+
+        """
+        try? script.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        NSWorkspace.shared.open(url)
+        cblog("Onboarding: opened Terminal to install/sign in to Claude Code")
+        NikxelView.tell(icon: "🧑‍💻", title: "Setting up Claude Code", lines: [
+            "In the Terminal window I opened, let it install.",
+            "When Claude starts, press Return, choose your Claude account and sign in in your browser.",
+            "I'll notice when it works.",
+        ], lifetime: 180)
+
+        let pointer = CoachPointer()
+        installPointer = pointer
+        installStage = ""
+        pointer.onNext = { [weak self] in self?.closeInstallPointer() }
+        pointer.onSkip = { [weak self] in self?.closeInstallPointer() }
+
+        // Cheap file checks until it's installed, then a real test every 20 s
+        // (it sends a tiny prompt) until it answers. Gives up after 20 minutes.
+        let started = Date()
+        var lastTest = Date.distantPast, testing = false
+        agentInstallPoll = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            if Date().timeIntervalSince(started) > 1200 {
+                t.invalidate(); self.agentInstallPoll = nil; self.closeInstallPointer(); self.push(); return
+            }
+            let installed = FileManager.default.isExecutableFile(atPath: NSHomeDirectory() + "/.local/bin/claude") || Self.onPath("claude")
+            self.guideInstall(installed ? "login" : "installing")
+            guard installed, !testing, Date().timeIntervalSince(lastTest) > 20 else { return }
+            testing = true; lastTest = Date()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let health = self.momGenerator.checkAgent(.claude)
+                DispatchQueue.main.async {
+                    testing = false
+                    self.agentHealth[.claude] = health
+                    if health.isWorking {
+                        t.invalidate(); self.agentInstallPoll = nil
+                        self.guideInstall("done")
+                        self.chosenAgent = .claude
+                        cblog("Onboarding: Claude Code installed and signed in")
+                        NikxelView.tell(icon: "✅", title: "Claude Code is ready", lines: ["You can close the Terminal window. Click Next."], kind: .success)
+                    }
+                    self.push()
+                }
+            }
+        }
+        push()
+    }
+
+    /// Points at the Terminal window with what to do now. Re-placed every tick,
+    /// so it follows the window if the user moves it.
+    private func guideInstall(_ stage: String) {
+        guard let pointer = installPointer, let target = CoachPointer.windowFrame(ofApp: "Terminal") else { return }
+        if stage != installStage { cblog("Onboarding: Claude setup stage → \(stage)") }
+        installStage = stage
+        let card: CoachPointer.Card
+        switch stage {
+        case "installing":
+            card = .init(title: "Installing Claude Code…", text: "<p>This window is installing it. Nothing to do yet; it takes a minute.</p>",
+                         step: 0, total: 3, primary: "Hide")
+        case "login":
+            card = .init(title: "Now sign in to Claude",
+                         text: "<p>In this window: press <kbd>Return</kbd> to pick a look, then choose your <b>Claude account</b>.</p><p>Your browser opens. Sign in there and click <b>Authorize</b>.</p>",
+                         step: 1, total: 3, primary: "Hide")
+        default:
+            card = .init(title: "Claude Code is ready ✓", text: "<p>You can close this window. Back in setup, click <b>Next</b>.</p>",
+                         step: 2, total: 3, primary: "Done")
+        }
+        pointer.show(at: target, card)
+    }
+
+    private func closeInstallPointer() {
+        installPointer?.close()
+        installPointer = nil
+    }
+
     private func downloadModel() {
         modelDownloading = true
         modelProgress = 0
@@ -348,6 +460,8 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         NikxelSettings.onboardingCompleted = true
         stopPolling()
         close()
+        // Then show them where everything is.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { CoachTour.startIfNew() }
     }
 
     // MARK: - Avatar actions

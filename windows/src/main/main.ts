@@ -14,6 +14,7 @@ import { createAvatarWindow } from "./avatar/avatarWindow";
 import * as AvatarChat from "./system/avatarChat";
 import { Automations } from "./system/automations";
 import * as Dashboard from "./system/dashboardWindow";
+import { CoachTour, TourHost } from "./system/coachTour";
 import * as Learning from "./system/learning";
 import { InputHandler } from "./avatar/inputHandler";
 import { GoogleCalendarWatcher } from "./google/googleCalendarWatcher";
@@ -228,6 +229,8 @@ class NikxelApp {
       // After the avatar's puff, so the bubble has somewhere to land.
       setTimeout(() => Permissions.offer(), 4000);
       this.maybeAskRole();
+      // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
+      setTimeout(() => CoachTour.startIfNew(this.tourHost), 10_000);
     }
 
     // Start at login, once: a user who restarts shouldn't have to hunt for
@@ -276,8 +279,22 @@ class NikxelApp {
     }, 6000);
   }
 
+  /// What the first-run tour points at.
+  private get tourHost(): TourHost {
+    return {
+      avatarRect: () => this.avatar.avatarRect(),
+      showAvatar: () => this.showAvatar(),
+      tray: () => this.tray ?? null,
+      openDashboard: () => Dashboard.show("home"),
+      busy: () => this.meetingDetector.isInMeeting || this.meetingCoordinator.isRecording,
+    };
+  }
+
   private showOnboarding(): void {
-    if (!this.onboarding) this.onboarding = new OnboardingWindowController(this.meetingCoordinator.momGen);
+    if (!this.onboarding) {
+      this.onboarding = new OnboardingWindowController(this.meetingCoordinator.momGen);
+      this.onboarding.onFinished = () => CoachTour.startIfNew(this.tourHost);
+    }
     this.onboarding.show();
   }
 
@@ -361,6 +378,7 @@ class NikxelApp {
       copyLogs: () => this.copyLogs(),
       checkUpdates: () => this.checkForUpdates(),
       setupWizard: () => this.showOnboarding(),
+      replayTour: () => CoachTour.replay(this.tourHost),
       toggleRecording: () => this.meetingCoordinator.toggleRecording(true),
       toggleMicMute: () => { this.meetingCoordinator.recorder.isMicMuted = !this.meetingCoordinator.recorder.isMicMuted; },
       toggleVisibility: () => this.toggleVisibility(),

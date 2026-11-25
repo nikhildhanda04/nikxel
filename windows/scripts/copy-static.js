@@ -42,3 +42,6 @@ fs.copyFileSync(path.join(repo, "vendor", "framer-motion-dom.js"), path.join(out
 const preamble = '<script src="framer-motion-dom.js"></script>' +
   "<script>document.documentElement.style.setProperty('--clouds', 'url(clouds.png)')</script>";
 fs.writeFileSync(path.join(out, "onboarding.html"), onboarding.replace(/<head>/i, "<head>" + preamble));
+
+// The first-run tour's pointer card (src/CoachPage.swift).
+fs.writeFileSync(path.join(out, "coach.html"), swiftRaw("CoachPage.swift", "static let html"));

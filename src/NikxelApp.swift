@@ -186,6 +186,8 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // After the avatar's puff, so the bubble has somewhere to land.
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Permissions.offer() }
             maybeAskRole()
+            // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { CoachTour.startIfNew() }
         }
 
         // Start at login, once: a user who restarts the Mac shouldn't have to

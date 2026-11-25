@@ -183,6 +183,7 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
     case "closeTab": closeTab(String(m.id)); push(); break;
     case "side": Settings.dashboardSideCollapsed = !!m.collapsed; layout(); break;
     case "chatStart": startChat(); break;
+    case "tourDone": Settings.dashboardTourDone = true; push(); break;
     case "chat": {
       startChat();
       const id = m.id;
@@ -548,6 +549,7 @@ function state(): Record<string, unknown> {
     templateShipped: SummaryTemplates.isShipped(Settings.summaryTemplate),
     openInApp: Settings.openSummariesInApp,
     appearance: Settings.appearance,
+    tour: !Settings.dashboardTourDone,
     editor: editing ? { title: editing.title, help: editing.help, text: readText(editing.file) ?? "" } : null,
     tasks,
     people,

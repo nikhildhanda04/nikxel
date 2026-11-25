@@ -8,7 +8,7 @@ where node >nul 2>nul
 if errorlevel 1 (
   echo Nikxel needs Node.js 20 or later. Install it from https://nodejs.org
   echo or run:  winget install OpenJS.NodeJS.LTS
-  echo then open a new terminal and run setup.cmd again.
+  echo then open a new terminal and run .\setup.cmd again.
   pause
   exit /b 1
 )
@@ -40,6 +40,11 @@ echo Building Nikxel...
 call npm run build || goto :fail
 
 echo Starting Nikxel. It adds itself to the Start menu and to startup apps.
+echo You can close this window; Nikxel keeps running.
+rem Electron attaches to the console it was started from (for its log output),
+rem and Windows ends everything attached to a console when it's closed: closing
+rem this window took Nikxel with it. Started unattached, it runs on its own.
+set ELECTRON_NO_ATTACH_CONSOLE=1
 start "" "%~dp0node_modules\electron\dist\electron.exe" "%~dp0."
 exit /b 0
 

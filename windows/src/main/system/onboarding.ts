@@ -1,7 +1,11 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
+import { spawn } from "child_process";
 import { BrowserWindow, clipboard, dialog, ipcMain, IpcMainEvent } from "electron";
-import { preloadPath, rendererPath, resourcePath, readText } from "../core/paths";
+import { HOME, preloadPath, rendererPath, resourcePath, readText } from "../core/paths";
+import { which } from "../core/proc";
+import { ui } from "../core/ui";
 import { Settings, Sprites, CODING_AGENTS, AGENT_INFO, CodingAgent } from "../core/settings";
 import { bus } from "../core/bus";
 import { diag } from "../core/diag";
@@ -9,6 +13,7 @@ import type { MOMGenerator, AgentHealth } from "../recording/momGenerator";
 import { Transcriber, ffmpegPath, hasModel, modelPath, downloadModel, installWhisper } from "../recording/transcriber";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import { GoogleAuth } from "../google/googleAuth";
+import { CoachPointer, windowRectByTitle } from "./coachTour";
 import { spriteRows } from "./spriteFrames";
 import { SpriteSheetImporter } from "./spriteSheetImporter";
 
@@ -31,7 +36,7 @@ type Tone = "muted" | "red" | "orange" | "green";
 /// What the page posts (webkit.messageHandlers.nx in OnboardingPage.swift).
 export interface OnboardingAction {
   type: "go" | "copyPrompt" | "chooseSheet" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
-    | "connectWhatsApp" | "getChrome" | "connectGoogle" | "pickAgent" | "copyAgent" | "retestAgents" | "finish";
+    | "connectWhatsApp" | "getChrome" | "connectGoogle" | "pickAgent" | "copyAgent" | "installAgent" | "retestAgents" | "finish";
   step?: string; name?: string; code?: string; index?: number;
 }
 
@@ -110,12 +115,20 @@ export class OnboardingWindowController {
   /// calendar watcher's reauthenticate() so calendar polling starts the
   /// moment consent finishes; until then it goes straight to GoogleAuth.
   onConnectGoogle: (() => void) | null = null;
+  /// Setup finished: main.ts starts the first-run tour.
+  onFinished: (() => void) | null = null;
 
   // Agent step
   private chosenAgent: CodingAgent = Settings.connectedAgent;
   /// Latest test result per agent; absent while that agent is still being tested.
   private agentHealth = new Map<CodingAgent, AgentHealth>();
   private agentTestRun = 0;
+  /// Set while the PowerShell window installing (or signing in to) Claude
+  /// Code is open; checks every few seconds until Claude answers.
+  private agentInstallPoll: NodeJS.Timeout | null = null;
+  /// The arrow at that PowerShell window, saying what to do at each stage.
+  private installPointer: CoachPointer | null = null;
+  private installStage = "";
 
   private promptCopiedTimer: NodeJS.Timeout | null = null;
   private agentCopiedTimer: NodeJS.Timeout | null = null;
@@ -231,10 +244,17 @@ export class OnboardingWindowController {
       agents: CODING_AGENTS.map(agent => {
         const health = this.agentHealth.get(agent);
         const d = OnboardingWindowController.describe(health, agent);
+        // Claude Code gets a button that does it all; the others keep a command to copy.
+        let action = "";
+        if (agent === "claude" && health && !health.working) {
+          action = health.notInstalled ? "install" : d.tone === "orange" ? "login" : "";
+        }
+        if (agent === "claude" && this.agentInstallPoll && !health?.working && !action) action = "install";
         return {
           name: AGENT_INFO[agent].displayName, text: d.text, tone: d.tone, hint: d.hint ?? "",
           enabled: health !== undefined && !(health.working === false && health.notInstalled),
           chosen: agent === this.chosenAgent, copied: this.agentCopied === agent,
+          action, busy: agent === "claude" && this.agentInstallPoll !== null,
         };
       }),
       testing: this.agentHealth.size < CODING_AGENTS.length,
@@ -287,6 +307,7 @@ export class OnboardingWindowController {
       case "connectGoogle": this.connectGoogle(); break;
       case "pickAgent": if (agent) { this.chosenAgent = agent; this.render(); } break;
       case "copyAgent": if (agent) this.copyInstallCommand(agent); break;
+      case "installAgent": this.installClaude(); break;
       case "retestAgents": this.refreshAvailableAgents(); break;
       case "finish": this.finishSetup(); break;
       // "getChrome": the Mac's WhatsApp needs Chrome; Windows' runs in Nikxel.
@@ -329,6 +350,109 @@ export class OnboardingWindowController {
     }, 2000);
   }
 
+  /// Installs Claude Code (if missing) and starts it to sign in, in a
+  /// PowerShell window the user can watch, while Nikxel's bubble says what to
+  /// press. Anthropic's installer needs no Node. Checks in the background and
+  /// turns the step green once Claude answers. Port of OnboardingWindow.installClaude.
+  private installClaude(): void {
+    if (this.agentInstallPoll) return;
+    const script = [
+      "$Host.UI.RawUI.WindowTitle = 'Setting up Claude Code for Nikxel'",
+      "$bin = Join-Path $env:USERPROFILE '.local\\bin'",
+      "$env:Path = \"$bin;$env:Path\"",
+      "if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {",
+      "  Write-Host 'Installing Claude Code for Nikxel. This takes a minute...'",
+      "  Write-Host ''",
+      "  irm https://claude.ai/install.ps1 | iex",
+      "  $env:Path = \"$bin;$env:Path\"",
+      "}",
+      "Write-Host ''",
+      "Write-Host 'Now sign in: press Enter to pick a look, choose your Claude account, and finish in the browser.'",
+      "Write-Host 'Nikxel notices when it works. You can close this window after that.'",
+      "Write-Host ''",
+      "claude",
+    ].join("\r\n");
+    const file = path.join(os.tmpdir(), "nikxel-install-claude.ps1");
+    try {
+      // BOM: Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page.
+      fs.writeFileSync(file, "\ufeff" + script, "utf8");
+      // `start` gives it a window of its own, which stays after Nikxel's side is done.
+      // Verbatim: Node's own quoting of the title becomes \" , which cmd's start misreads.
+      spawn("cmd.exe", ["/c", `start "Claude Code" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "${file}"`],
+        { detached: true, stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true }).unref();
+    } catch (e) {
+      diag("onboarding", `couldn't open the Claude install window: ${e}`);
+      return;
+    }
+    diag("onboarding", "opened PowerShell to install/sign in to Claude Code");
+    ui.tell({ icon: "🧑‍💻", title: "Setting up Claude Code", lifetime: 180, lines: [
+      "In the window I opened, let it install.",
+      "When Claude starts, press Enter, choose your Claude account and sign in in your browser.",
+      "I'll notice when it works.",
+    ] });
+
+    const pointer = new CoachPointer();
+    this.installPointer = pointer;
+    this.installStage = "";
+    pointer.onNext = pointer.onSkip = () => this.closeInstallPointer();
+
+    // Cheap file checks until it's installed, then a real test every 20 s
+    // (it sends a tiny prompt) until it answers. Gives up after 20 minutes.
+    const started = Date.now();
+    let lastTest = 0, testing = false;
+    this.agentInstallPoll = setInterval(() => {
+      if (Date.now() - started > 20 * 60_000) { this.stopInstallPoll(); this.closeInstallPointer(); this.render(); return; }
+      const installed = fs.existsSync(path.join(HOME, ".local", "bin", "claude.exe")) || which("claude") !== null;
+      void this.guideInstall(installed ? "login" : "installing");
+      if (!installed || testing || Date.now() - lastTest < 20_000) return;
+      testing = true; lastTest = Date.now();
+      void this.momGenerator.checkAgent("claude")
+        .catch((e): AgentHealth => ({ working: false, notInstalled: false, reason: e instanceof Error ? e.message : String(e) }))
+        .then(health => {
+          testing = false;
+          this.agentHealth.set("claude", health);
+          if (health.working) {
+            this.stopInstallPoll();
+            void this.guideInstall("done");
+            this.chosenAgent = "claude";
+            diag("onboarding", "Claude Code installed and signed in");
+            ui.tell({ icon: "✅", title: "Claude Code is ready", lines: ["You can close the PowerShell window. Click Next."], kind: "success" });
+          }
+          this.render();
+        });
+    }, 4000);
+    this.render();
+  }
+
+  /// Points at the PowerShell window with what to do now. Re-placed every
+  /// tick, so it follows the window if the user moves it.
+  private async guideInstall(stage: string): Promise<void> {
+    const pointer = this.installPointer;
+    if (!pointer) return;
+    const target = await windowRectByTitle("Setting up Claude Code for Nikxel");
+    if (!target || pointer !== this.installPointer) return;
+    if (stage !== this.installStage) diag("onboarding", `Claude setup stage → ${stage}`);
+    this.installStage = stage;
+    pointer.show(target, stage === "installing"
+      ? { title: "Installing Claude Code…", step: 0, total: 3, primary: "Hide",
+          text: "<p>This window is installing it. Nothing to do yet; it takes a minute.</p>" }
+      : stage === "login"
+        ? { title: "Now sign in to Claude", step: 1, total: 3, primary: "Hide",
+            text: "<p>In this window: press <kbd>Enter</kbd> to pick a look, then choose your <b>Claude account</b>.</p><p>Your browser opens. Sign in there and click <b>Authorize</b>.</p>" }
+        : { title: "Claude Code is ready ✓", step: 2, total: 3, primary: "Done",
+            text: "<p>You can close this window. Back in setup, click <b>Next</b>.</p>" });
+  }
+
+  private closeInstallPointer(): void {
+    this.installPointer?.close();
+    this.installPointer = null;
+  }
+
+  private stopInstallPoll(): void {
+    if (this.agentInstallPoll) clearInterval(this.agentInstallPoll);
+    this.agentInstallPoll = null;
+  }
+
   private async downloadModel(): Promise<void> {
     if (this.modelDownloading) return;
     this.modelDownloading = true;
@@ -356,6 +480,7 @@ export class OnboardingWindowController {
     this.stopPolling();
     bus.emit("menuChanged");
     this.win?.close();
+    setTimeout(() => this.onFinished?.(), 1200);
   }
 
   // MARK: - Avatar actions

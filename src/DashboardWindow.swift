@@ -157,6 +157,9 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             guard let key = body["key"] as? String else { return }
             set(key, body["value"])
             push()
+        case "tourDone":
+            NikxelSettings.dashboardTourDone = true
+            push()
         case "chatStart":
             startChat()
         case "chat":
@@ -440,6 +443,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             "templateShipped": SummaryTemplates.isShipped(NikxelSettings.summaryTemplate),
             "openInApp": NikxelSettings.openSummariesInApp,
             "appearance": NikxelSettings.appearance,
+            "tour": !NikxelSettings.dashboardTourDone,
             "tasks": tasks,
             "people": people,
             "today": self.today(library),
@@ -588,6 +592,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         case "deleteTemplate": app.deleteActiveTemplate()
         case "openTemplates": app.openTemplatesFolder()
         case "closeSummary": showSection(); push()
+        case "replayTour": CoachTour.replay()
         case "openInBrowser": if let url = active?.file { NSWorkspace.shared.open(url) }
         case "revealSummary": if let url = active?.file { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         default: break

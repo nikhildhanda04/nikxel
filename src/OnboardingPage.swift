@@ -512,6 +512,22 @@ function note(text) { return '<p class="note" data-in>' + text + '</p>'; }
 function track(texts, doneUpTo) {
   return texts.map(function (t, i) { return [t, i < doneUpTo ? 'done' : i === doneUpTo ? 'now' : '']; });
 }
+// "41 of 466 MB · about 1 h 20 min left": on a slow line the bar moves 1% every
+// few minutes, which read as stuck (a user on 23 KB/s, 2026-11-25). Measured
+// here from the progress the app reports, so both apps get it.
+var dl = null;
+function downloadNote(d) {
+  var total = parseFloat(d.modelSize) || 0, f = d.progress || 0, now = Date.now();
+  if (!dl || f < dl.f0) dl = { t0: now, f0: f };
+  var done = total ? Math.round(total * f) + ' of ' + esc(d.modelSize) : Math.round(f * 100) + '%';
+  var rate = (f - dl.f0) / Math.max(1, (now - dl.t0) / 1000), left = '';
+  if (now - dl.t0 > 8000 && rate > 0) {
+    var secs = (1 - f) / rate, h = Math.floor(secs / 3600), m = Math.round((secs % 3600) / 60);
+    left = ' · about ' + (h ? h + ' h ' + m + ' min' : Math.max(1, m) + ' min') + ' left';
+    if (total && rate * total * 1024 < 300) left += '. Your internet is slow, so this takes a while';
+  }
+  return 'Downloading the speech model: ' + done + left + '. You can keep going; it finishes in the background.';
+}
 function menu() { return '<b>Setup Wizard…</b> in the Nikxel ' + mac('menu bar icon', 'tray icon (by the clock)'); }
 
 var VIEWS = {
@@ -617,7 +633,7 @@ var VIEWS = {
         tools += row('speech model', d.model, 'what whisper listens with', d.model ? 'Ready' : 'Not downloaded');
         if (d.downloading) {
           tools += '<div class="bar"><i style="transform:scaleX(' + d.progress + ')"></i></div>' +
-            '<p class="fine">Downloading ' + esc(d.modelName) + '. You can keep going; it finishes in the background.</p>';
+            '<p class="fine" id="dlnote">' + downloadNote(d) + '</p>';
         } else if (!d.model) {
           tools += '<div style="margin-top:8px">' + btn('Download speech model (' + esc(d.modelSize) + ')', 'downloadModel', '', 'soft sm') + '</div>';
         }
@@ -741,15 +757,23 @@ var VIEWS = {
       var items = [
         'Wait a few seconds while I test each one with a real request.',
         working ? 'Pick one that says <b>working</b>. I’ve already picked the first that does.'
-                : 'None works yet. Under one, click <b>Copy</b>, paste the command into ' + mac('Terminal', 'PowerShell') + ' and press <kbd>' + mac('Return', 'Enter') + '</kbd>. Finish any sign-in it asks for.',
-        working ? 'Click <b>Next</b>.' : 'Come back and click <b>Test again</b>.'
+                : s.agents.some(function (a) { return a.action; })
+                  ? 'Click <b>' + (s.agents.filter(function (a) { return a.action; })[0].action === 'install' ? 'Install' : 'Log in to') + ' Claude Code</b>. A window opens and does it; sign in with your browser when it asks.'
+                  : 'None works yet. Under one, click <b>Copy</b>, paste the command into ' + mac('Terminal', 'PowerShell') + ' and press <kbd>' + mac('Return', 'Enter') + '</kbd>. Finish any sign-in it asks for.',
+        working ? 'Click <b>Next</b>.' : s.agents.some(function (a) { return a.action; })
+          ? 'I notice by myself when it works, then this turns green. Click <b>Next</b>.' : 'Come back and click <b>Test again</b>.'
       ];
       return track(items, s.testing ? 0 : chosenOk ? 2 : 1);
     },
     live: function (s) {
       var list = s.agents.map(function (a, i) {
         var status = (a.text === 'Testing…' ? '<span class="spin" style="width:12px;height:12px"></span>' : '') + '<span title="' + esc(a.text) + '">' + esc(a.text) + '</span>';
-        var hint = a.hint ? '<div class="hint"><code>' + esc(a.hint) + '</code>' +
+        // Claude Code installs and signs in from a button: a terminal opens and
+        // does it, so nobody has to know what a terminal is.
+        var act = a.action ? '<div class="hint">' + btn(a.busy ? 'Waiting for you to finish in the window I opened…'
+            : a.action === 'install' ? 'Install ' + esc(a.name) : 'Log in to ' + esc(a.name),
+          'installAgent', 'data-index="' + i + '"' + (a.busy ? ' disabled' : ''), 'primary sm') + '</div>' : '';
+        var hint = a.action ? act : a.hint ? '<div class="hint"><code>' + esc(a.hint) + '</code>' +
           btn(a.copied ? 'Copied' : 'Copy', 'copyAgent', 'data-index="' + i + '"', 'soft xs') + '</div>' : '';
         return '<div class="agent' + (a.chosen ? ' on' : '') + (a.enabled ? '' : ' off') + '" data-act="pickAgent" data-index="' + i + '"' +
           (a.enabled ? ' role="radio" aria-checked="' + a.chosen + '" tabindex="0"' : ' aria-disabled="true"') + '>' +
@@ -880,6 +904,8 @@ window.nx = {
     if (S) S.deps.progress = f;
     var bar = document.querySelector('.bar i');
     if (bar) bar.style.transform = 'scaleX(' + f + ')';
+    var note = document.getElementById('dlnote');
+    if (note && S) note.innerHTML = downloadNote(S.deps);
   }
 };
 

@@ -21,7 +21,8 @@ enum CodingAgent: String, Codable, CaseIterable, Hashable {
     /// setup wizard when it isn't found.
     var installCommand: String {
         switch self {
-        case .claude: return "npm install -g @anthropic-ai/claude-code"
+        // Anthropic's own installer: no Node needed, unlike the npm package.
+        case .claude: return "curl -fsSL https://claude.ai/install.sh | bash"
         case .opencode: return "curl -fsSL https://opencode.ai/install | bash"
         case .codex: return "npm install -g @openai/codex"
         case .antigravity: return "curl -fsSL https://antigravity.google/cli/install.sh | bash"
@@ -89,6 +90,8 @@ enum NikxelSettings {
         var googleSyncEnabled: Bool?
         var openSummariesInApp: Bool?
         var appearance: String?
+        var tourDone: Bool?
+        var dashboardTourDone: Bool?
         var summaryTemplate: String?
         var waBotMode: String?
         var waGroupReplies: Bool?
@@ -268,6 +271,16 @@ enum NikxelSettings {
     static var googleSyncEnabled: Bool {
         get { load().googleSyncEnabled ?? true }
         set { save { $0.googleSyncEnabled = newValue } }
+    }
+
+    /// The first-run tour (CoachTour) and the Nikxel window's own tour have been shown.
+    static var tourDone: Bool {
+        get { load().tourDone ?? false }
+        set { save { $0.tourDone = newValue } }
+    }
+    static var dashboardTourDone: Bool {
+        get { load().dashboardTourDone ?? false }
+        set { save { $0.dashboardTourDone = newValue } }
     }
 
     /// The Nikxel window's look: "system", "light" or "dark".

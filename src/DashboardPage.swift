@@ -325,6 +325,20 @@ main.chatting .inner>div{height:100%;display:flex;flex-direction:column}
 .run .out p{margin:0 0 6px}.run .out ul,.run .out ol{margin:4px 0;padding-left:20px}
 .run.skip .out{color:var(--color-faint)}
 .busy{display:inline-flex;align-items:center;gap:8px;color:var(--color-muted);font-size:14px}
+/* first-run tour: one place at a time, lit, with a note beside it */
+.tour-hole{position:fixed;z-index:60;border-radius:14px;pointer-events:none;box-shadow:0 0 0 9999px oklch(15% 0.01 80 / .5),0 0 0 3px var(--color-accent);
+  transition:left .5s var(--ease),top .5s var(--ease),width .5s var(--ease),height .5s var(--ease)}
+.tour-tip{position:fixed;z-index:61;width:300px;padding:16px 18px 14px;border-radius:16px;background:var(--color-card);border:1px solid var(--color-line);box-shadow:var(--shadow);
+  transition:left .5s var(--ease),top .5s var(--ease);animation:rise .6s var(--ease) backwards}
+.tour-arrow{position:absolute;left:-62px;top:calc(var(--ay,28px) - 18px);width:58px;height:44px;color:var(--color-accent);overflow:visible;pointer-events:none}
+.tour-arrow path{stroke-dasharray:120;stroke-dashoffset:120;animation:pen .6s var(--ease) .2s forwards}
+.tour-arrow path.head{animation-delay:.55s}
+@keyframes pen{to{stroke-dashoffset:0}}
+.tour-tip b{display:block;font:600 17px/1.25 var(--font-display);margin-bottom:4px}
+.tour-tip p{margin:0;font-size:14px;color:var(--color-ink-2)}
+.tour-tip .row2{display:flex;align-items:center;gap:8px;margin-top:12px}
+.tour-tip .row2 .count{margin-right:auto;font-size:12.5px;color:var(--color-muted)}
+.tour-block{position:fixed;inset:0;z-index:59}
 /* file editor */
 textarea.file{min-height:min(56vh,520px);font:14.5px/1.6 var(--font-code);background:var(--color-card);margin-top:0}
 /* tab bar: open summaries, like files in an editor */
@@ -789,10 +803,55 @@ var VIEWS = {
         row('AI usage log', 'One line per AI run, with its cost.', link('Open folder', 'openUsage')) +
         row('Logs', 'Copy them to share when something breaks.', link('Copy logs', 'copyLogs')) +
         row('Updates', 'Pull the latest Nikxel and rebuild.', link('Check for updates…', 'checkUpdates')) +
-        row('Setup wizard', 'Go through setup again.', link('Open', 'setupWizard'))) +
+        row('Setup wizard', 'Go through setup again.', link('Open', 'setupWizard')) +
+        row('Show me around', 'Arrows at the avatar, the ' + mac('menu bar icon', 'tray icon') + ' and this window again.', link('Show me around again', 'replayTour'))) +
       group('Nikxel', row('Quit Nikxel', 'Stops recording, replies and reminders until you open it again.', btn('Quit', 'quit')));
   }
 };
+
+// --- first-run tour -------------------------------------------------------------------
+var TOUR = [
+  ['[data-section="home"]', 'Home', 'Today at a glance: what’s coming up, what’s still open, and the recording timer.'],
+  ['[data-section="library"]', 'Library', 'Every meeting’s notes, your days and weeks. Open one and it opens here in a tab.'],
+  ['[data-section="chat"]', 'Chat', 'Ask me about your meetings, mail and work: “what did I promise Ali?”'],
+  ['[data-section="tasks"]', 'Tasks', 'Everything people agreed to do in your meetings. Tick them off here.'],
+  ['[data-section="automations"]', 'Automations', 'Tell me what to do after every meeting or each morning, and I’ll do it.'],
+  ['.rec', 'Record', 'Start or stop recording a meeting. You can also double-click me on your screen.'],
+  ['[data-section="you"]', 'Settings', 'Your name, how I look, WhatsApp, Google, and everything else I do.']
+];
+var tourAt = -1, tourEls = null;
+function startTour() {
+  if (tourAt >= 0) return;
+  tourEls = { block: document.createElement('div'), hole: document.createElement('div'), tip: document.createElement('div') };
+  tourEls.block.className = 'tour-block'; tourEls.hole.className = 'tour-hole'; tourEls.tip.className = 'tour-tip';
+  tourEls.tip.setAttribute('role', 'dialog');
+  document.body.append(tourEls.block, tourEls.hole, tourEls.tip);
+  tourAt = 0; showTourStep();
+}
+function showTourStep() {
+  var step = TOUR[tourAt], el = document.querySelector(step[0]);
+  if (!el) { tourAt++; return tourAt < TOUR.length ? showTourStep() : endTour(); }
+  var r = el.getBoundingClientRect(), pad = 6;
+  Object.assign(tourEls.hole.style, { left: r.left - pad + 'px', top: r.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
+  var last = tourAt === TOUR.length - 1;
+  // A pen-stroke arrow from the note back to what it's about.
+  tourEls.tip.innerHTML = '<svg class="tour-arrow" viewBox="0 0 58 44" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M56 30 C 44 40, 26 38, 14 26 S 6 14, 4 12"/><path class="head" d="M3 24 L 3 11 L 16 10"/></g></svg>' +
+    '<b>' + step[1] + '</b><p>' + step[2] + '</p><div class="row2"><span class="count">' + (tourAt + 1) + ' of ' + TOUR.length + '</span>' +
+    (last ? '' : '<button type="button" class="link" data-tour="end">Skip</button>') +
+    '<button type="button" class="btn primary" data-tour="next" style="padding:8px 14px">' + (last ? 'Got it' : 'Next') + '</button></div>';
+  var top = Math.max(12, Math.min(innerHeight - tourEls.tip.offsetHeight - 12, r.top + r.height / 2 - 34));
+  tourEls.tip.style.left = r.right + 66 + 'px';
+  tourEls.tip.style.top = top + 'px';
+  tourEls.tip.style.setProperty('--ay', Math.max(14, r.top + r.height / 2 - top - 8) + 'px');
+  tourEls.tip.querySelector('[data-tour="next"]').focus();
+}
+function endTour() {
+  if (!tourEls) return;
+  tourEls.block.remove(); tourEls.hole.remove(); tourEls.tip.remove();
+  tourEls = null; tourAt = -1;
+  post({ type: 'tourDone' });
+}
 
 // --- library and reader ------------------------------------------------------------
 var EXT = { pdf: 'PDF', md: 'Markdown', docx: 'Word' };
@@ -982,7 +1041,12 @@ window.nx = {
     var was = S;
     S = s;
     drawFoot(s);
-    if (!was) { document.body.classList.toggle('folded', !!s.sideCollapsed); return show(s.section || 'home', !reduce); }
+    if (!was) {
+      document.body.classList.toggle('folded', !!s.sideCollapsed);
+      if (s.tour) setTimeout(function () { if (!S.active && !S.editor) startTour(); }, reduce ? 200 : 1400);
+      return show(s.section || 'home', !reduce);
+    }
+    if (s.tour && !was.tour) startTour();   // replayed from Advanced
     document.body.classList.toggle('folded', !!s.sideCollapsed);
     if (was.active !== s.active || !!was.editor !== !!s.editor) return show(current, !s.active);
     patch();
@@ -1014,6 +1078,11 @@ function goTo(section) {
   show(section, true);
 }
 document.addEventListener('click', function (e) {
+  var tb = e.target.closest('[data-tour]');
+  if (tb) {
+    if (tb.dataset.tour === 'next' && tourAt < TOUR.length - 1) { tourAt++; showTourStep(); } else endTour();
+    return;
+  }
   var x = e.target.closest('[data-closetab]');
   if (x) { e.stopPropagation(); post({ type: 'closeTab', id: x.dataset.closetab }); return; }
   var t = e.target.closest('button');
@@ -1138,6 +1207,7 @@ document.addEventListener('auxclick', function (e) {
   if (t && e.button === 1) post({ type: 'closeTab', id: t.dataset.tab });
 });
 document.addEventListener('keydown', function (e) {
+  if (tourEls && e.key === 'Escape') { endTour(); return; }
   if (e.metaKey && e.key === 'w' && S && S.active) { e.preventDefault(); post({ type: 'closeTab', id: S.active }); return; }
   if (e.key === 's' && e.metaKey && S && S.editor) { e.preventDefault(); post({ type: 'saveFile', text: document.getElementById('filetext').value }); return; }
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('text')) e.target.blur();

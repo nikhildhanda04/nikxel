@@ -263,6 +263,10 @@ function Run([string]$exe, [string[]]$argv, [string]$cwd) {
   return [int]$code
 }
 function Relaunch {
+  # Electron attaches to the console it's started from, and closing that
+  # console (this window, a moment later) ends it: the update finished and
+  # Nikxel vanished. Unattached, it outlives this window.
+  $env:ELECTRON_NO_ATTACH_CONSOLE = '1'
   if ($launchArgs) { Start-Process -FilePath $launchExe -ArgumentList $launchArgs -WorkingDirectory $app }
   else { Start-Process -FilePath $launchExe -WorkingDirectory $app }
 }

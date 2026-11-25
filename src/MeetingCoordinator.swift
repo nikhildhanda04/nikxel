@@ -121,6 +121,20 @@ class MeetingCoordinator: AudioRecorderDelegate {
 
     /// Words a whisper .srt/.txt actually heard: no timestamps, cue numbers,
     /// or [BLANK_AUDIO] / (music) tags. For the logs.
+    /// A transcript too thin for the recording -- under 2 words a minute over
+    /// more than 2 minutes -- is whisper having failed, not a silent meeting.
+    /// Its audio is kept rather than deleted, so it can be transcribed again.
+    static func looksStuck(words: Int, durationSec: Int) -> Bool {
+        durationSec >= 120 && words * 30 < durationSec
+    }
+
+    /// How the transcript came out (TranscriptHealth), next to the
+    /// recorder's sound stats in chatbot.log: a loop or a silent track shows here.
+    static func logHealth(_ track: String, _ url: URL?) {
+        guard let url, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        cblog("MeetingCoordinator: \(track) transcript — \(TranscriptHealth.describe(text)) (\(url.lastPathComponent))")
+    }
+
     static func spokenWords(_ url: URL?) -> Int {
         guard let url = url, let text = try? String(contentsOf: url, encoding: .utf8) else { return 0 }
         return text.components(separatedBy: .newlines)
@@ -140,12 +154,15 @@ class MeetingCoordinator: AudioRecorderDelegate {
                 self.reportTranscribeFailure(err)
             case .success(let txtURL):
                 cblog("MeetingCoordinator: transcribed — \(Self.spokenWords(txtURL)) words")
+                Self.logHealth("notes", txtURL)
                 guard let text = try? String(contentsOf: txtURL, encoding: .utf8) else {
                     self.reportTranscribeFailure(Transcriber.TranscriberError.failed("could not read transcript at \(txtURL.path)"))
                     return
                 }
+                let stuck = Self.looksStuck(words: Self.spokenWords(txtURL), durationSec: durationSec)
+                if stuck { cblog("MeetingCoordinator: transcript nearly empty for \(durationSec / 60) min — kept \(audioURL.path)") }
                 self.generate(transcript: text, mode: .notes, startedAt: startedAt, durationSec: durationSec,
-                              cleanup: { try? FileManager.default.removeItem(at: audioURL) })
+                              cleanup: { if !stuck { try? FileManager.default.removeItem(at: audioURL) } })
             }
         }
     }
@@ -180,13 +197,22 @@ class MeetingCoordinator: AudioRecorderDelegate {
         group.notify(queue: .global(qos: .userInitiated)) { [weak self] in
             guard let self = self else { return }
             cblog("MeetingCoordinator: transcribed — call: \(sysSRT == nil ? "failed" : "\(Self.spokenWords(sysSRT)) words"), mic: \(micURL == nil ? "none" : micSRT == nil ? "failed" : "\(Self.spokenWords(micSRT)) words")")
+            Self.logHealth("call", sysSRT)
+            Self.logHealth("mic", micSRT)
             if let err = firstError, sysSRT == nil && micSRT == nil {
                 self.reportTranscribeFailure(err)
                 return
             }
             let merged = Self.meetHeader(meet, at: startedAt)
                 + TwinProfile.correct(TranscriptMerger.merge(micSRT: micSRT, sysSRT: sysSRT, speakers: meet.spans.filter { !Self.isMe($0.name) }))
+            let stuck = Self.looksStuck(words: Self.spokenWords(sysSRT) + Self.spokenWords(micSRT), durationSec: durationSec)
+            if stuck {
+                cblog("MeetingCoordinator: transcript nearly empty for \(durationSec / 60) min — kept \(sysURL.path)\(micURL.map { " and \($0.path)" } ?? ""), " +
+                      "with the .srt and .whisper.*.log files beside them; model \(WhisperModel.installedPath().map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none"), " +
+                      "language \(NikxelSettings.transcriptionLanguage)")
+            }
             self.generate(transcript: merged, mode: .meeting, startedAt: startedAt, durationSec: durationSec, cleanup: {
+                guard !stuck else { return }
                 let fm = FileManager.default
                 if let url = micURL { try? fm.removeItem(at: url) }
                 try? fm.removeItem(at: sysURL)

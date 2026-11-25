@@ -9,6 +9,7 @@ import { diag } from "../core/diag";
 import { openFile, openUrl } from "../core/open";
 import { AudioRecorder, AudioRecorderDelegate, RecorderError, RecordingArtifacts } from "./audioRecorder";
 import { Transcriber, TranscriberError } from "./transcriber";
+import * as TranscriptHealth from "./transcriptHealth";
 import { TranscriptMerger } from "./transcriptMerger";
 import { MOMGenerator } from "./momGenerator";
 import { MeetResult, MeetSpeakers } from "./meetSpeakers";
@@ -113,6 +114,23 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
 
   /// Words a whisper .srt/.txt actually heard: no timestamps, cue numbers,
   /// or [BLANK_AUDIO] / (music) tags. For the logs.
+  /// A transcript too thin for the recording -- under 2 words a minute over
+  /// more than 2 minutes -- is whisper having failed, not a silent meeting.
+  /// Its audio is kept rather than deleted, so it can be transcribed again.
+  /// Port of MeetingCoordinator.looksStuck.
+  static looksStuck(words: number, durationSec: number): boolean {
+    return durationSec >= 120 && words * 30 < durationSec;
+  }
+
+  /// How the transcript came out (TranscriptHealth), next to the recorder's
+  /// sound stats in the log: a loop or a silent track shows here.
+  static logHealth(track: string, file: string | null): void {
+    if (!file) return;
+    let text: string;
+    try { text = fs.readFileSync(file, "utf8"); } catch { return; }
+    diag("MeetingCoordinator", `${track} transcript — ${TranscriptHealth.describe(text)} (${path.basename(file)})`);
+  }
+
   static spokenWords(file: string | null): number {
     if (!file) return 0;
     let text: string;
@@ -179,18 +197,21 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
   // MARK: - Notes pipeline
 
   private async runNotesPipeline(audioPath: string, startedAt: Date, durationSec: number): Promise<void> {
-    let text: string;
+    let text: string, txtPath: string;
     try {
-      const txtPath = await this.transcriber.transcribe(audioPath, "txt");
+      txtPath = await this.transcriber.transcribe(audioPath, "txt");
       diag("MeetingCoordinator", `transcribed — ${MeetingCoordinator.spokenWords(txtPath)} words`);
+      MeetingCoordinator.logHealth("notes", txtPath);
       try { text = await fs.promises.readFile(txtPath, "utf8"); }
       catch { throw new TranscriberError("failed", `could not read transcript at ${txtPath}`); }
     } catch (e) {
       this.reportTranscribeFailure(e);
       return;
     }
+    const stuck = MeetingCoordinator.looksStuck(MeetingCoordinator.spokenWords(txtPath), durationSec);
+    if (stuck) diag("MeetingCoordinator", `transcript nearly empty for ${Math.round(durationSec / 60)} min — kept ${audioPath}`);
     await this.generate(text, "notes", startedAt, durationSec, () => {
-      fs.promises.rm(audioPath, { force: true }).catch(() => {});
+      if (!stuck) fs.promises.rm(audioPath, { force: true }).catch(() => {});
     });
   }
 
@@ -207,13 +228,21 @@ export class MeetingCoordinator implements AudioRecorderDelegate {
     const firstError = sys.status === "rejected" ? sys.reason : mic.status === "rejected" ? mic.reason : null;
     const words = (p: string | null, ok: boolean) => !ok ? "failed" : `${MeetingCoordinator.spokenWords(p)} words`;
     diag("MeetingCoordinator", `transcribed — call: ${words(sysSRT, sys.status === "fulfilled")}, mic: ${micPath ? words(micSRT, mic.status === "fulfilled") : "none"}`);
+    MeetingCoordinator.logHealth("call", sysSRT);
+    MeetingCoordinator.logHealth("mic", micSRT);
     if (firstError && !sysSRT && !micSRT) {
       this.reportTranscribeFailure(firstError);
       return;
     }
     const merged = (await MeetingCoordinator.meetHeader(meet, startedAt))
       + TwinProfile.correct(TranscriptMerger.merge(micSRT, sysSRT, meet.spans.filter(s => !MeetingCoordinator.isMe(s.name))));
+    const stuck = MeetingCoordinator.looksStuck(MeetingCoordinator.spokenWords(sysSRT) + MeetingCoordinator.spokenWords(micSRT), durationSec);
+    if (stuck) {
+      diag("MeetingCoordinator", `transcript nearly empty for ${Math.round(durationSec / 60)} min — kept ${sysPath}${micPath ? ` and ${micPath}` : ""}, ` +
+        `with the .srt and .whisper.*.log files beside them; language ${Settings.transcriptionLanguage}`);
+    }
     await this.generate(merged, "meeting", startedAt, durationSec, () => {
+      if (stuck) return;
       if (micPath) fs.promises.rm(micPath, { force: true }).catch(() => {});
       fs.promises.rm(sysPath, { force: true }).catch(() => {});
     });

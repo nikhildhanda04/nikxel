@@ -180,7 +180,7 @@ menu bar.
 ### 3. Walk through the setup wizard
 
 The wizard opens by itself on first launch. Reopen it any time from the menu
-bar → **Setup Wizard…**. Four steps:
+bar → **Open Nikxel…** → **Advanced** → **Setup wizard**. Four steps:
 
 | Step | What it does |
 |---|---|
@@ -222,7 +222,7 @@ one it used.
 
 ### Updating
 
-Menu bar → **Check for Updates…**. Nikxel fetches `origin/main` and raises a
+Menu bar → **Open Nikxel…** → **Advanced** → **Check for updates…**. Nikxel fetches `origin/main` and raises a
 bubble above the avatar: either *"Nikxel is up to date"*, or the commit
 subjects you'd be getting. **Tap the bubble** and it quits, pulls, rebuilds and
 comes back on the new version. Ignore it and it fades — there's nothing to
@@ -318,10 +318,14 @@ Open a **new** terminal after installing so `node` and `git` are on the PATH.
 ```bat
 git clone https://github.com/nikhildhanda04/nikxel.git
 cd nikxel\windows
-setup.cmd
+.\setup.cmd
 ```
 
-`setup.cmd` installs the dependencies, builds, and starts Nikxel. On first
+Type it with the `.\` in front: PowerShell (the default terminal) won't run a
+file from the current folder without it. Command Prompt takes it either way.
+
+`setup.cmd` installs the dependencies, builds, and starts Nikxel. You can close
+the terminal once Nikxel is up; it keeps running. On first
 launch it adds itself to the Start menu and to startup apps, so after a restart
 it's back on its own. The avatar appears on your desktop and a Nikxel icon in
 the system tray (click the `^` arrow if it's hidden; drag it out to pin it).
@@ -330,7 +334,7 @@ the system tray (click the `^` arrow if it's hidden; drag it out to pin it).
 
 Same steps as on the Mac: your name, avatar, transcription tools, WhatsApp,
 Google, and which coding agent writes your notes. Reopen it any time from the
-tray menu → **Setup Wizard…**.
+tray icon → **Open Nikxel…** → **Advanced** → **Setup wizard**.
 
 - **Transcription:** the wizard downloads whisper.cpp and its model into
   `~/.nikxel/`; ffmpeg ships with the app. No Homebrew needed.
@@ -350,14 +354,14 @@ tray menu → **Setup Wizard…**.
 
 ### Updating
 
-Tray menu → **Check for Updates**, or run `setup.cmd` again. It quits the
-running copy, pulls, rebuilds and restarts.
+Tray icon → **Open Nikxel…** → **Advanced** → **Check for updates…**, or run
+`.\setup.cmd` again. It quits the running copy, pulls, rebuilds and restarts.
 
 ## Make your own avatar
 
 The bundled sprite sheet works out of the box — this is entirely optional.
 
-1. Menu bar → **Setup Wizard…** → **Your avatar**.
+1. Menu bar → **Open Nikxel…** → **Advanced** → **Setup wizard** → **Your avatar**.
 2. Click **Copy Gemini prompt**. (It's the contents of `sprite_prompt.txt`.)
 3. Paste it into [Gemini](https://gemini.google.com) along with a photo of
    yourself, and follow its two steps: a 64×64 character first, then the full
@@ -839,7 +843,7 @@ something to send.
 ## Customizing
 
 ### Change your avatar
-Menu bar → **Setup Wizard…** → **Your avatar**. See
+Menu bar → **Open Nikxel…** → **Advanced** → **Setup wizard** → **Your avatar**. See
 [Make your own avatar](#make-your-own-avatar).
 
 ### Change what your summaries contain
@@ -847,7 +851,7 @@ Menu bar → **Summary Template** — Developer, Project Manager, HR, Co-founder
 or one you write yourself. See [summary templates](#summary-templates).
 
 ### Switch which coding agent writes your notes
-Menu bar → **Setup Wizard…** → **Choose your coding agent**.
+Menu bar → **Open Nikxel…** → **Advanced** → **Setup wizard** → **Choose your coding agent**.
 
 ### Add an AI agent to the "thinking" detection
 Edit `src/OpenCodeMonitor.swift`, add the process name to the watched list,

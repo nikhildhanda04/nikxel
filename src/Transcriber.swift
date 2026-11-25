@@ -124,12 +124,16 @@ class Transcriber {
             guard let model = WhisperModel.installedPath() else { throw TranscriberError.modelMissing }
             // whisper.cpp defaults to -l en, which would push Hindi and
             // Hinglish speech through English. "auto" detects per recording.
+            // -mc 0: no earlier text as context for the next window. With it,
+            // one "[no audio]" fed itself through a 55-minute meeting full of
+            // speech (2026-11-25), and the notes came out empty.
             task.arguments = [
                 "-m", model,
                 "-f", input.path,
                 format == .srt ? "-osrt" : "-otxt",
                 "-of", outStem,
                 "-l", NikxelSettings.transcriptionLanguage,
+                "-mc", "0",
                 "-np"
             ]
         }
@@ -151,11 +155,21 @@ class Transcriber {
         FileManager.default.createFile(atPath: errLog.path, contents: nil)
         task.standardOutput = try FileHandle(forWritingTo: outLog)
         task.standardError = try FileHandle(forWritingTo: errLog)
+        // What ran, on what: enough to tell a wrong model, a wrong language or
+        // an empty file apart when a transcript comes back bad.
+        let audioMB = ((try? FileManager.default.attributesOfItem(atPath: input.path)[.size] as? Int) ?? 0) / 1_000_000
+        let args = (task.arguments ?? []).map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0).lastPathComponent : $0 }
+        cblog("Transcriber: \(input.lastPathComponent) (\(audioMB) MB) → \(URL(fileURLWithPath: binary).lastPathComponent) \(args.joined(separator: " "))")
+        let started = Date()
         try task.run()
         task.waitUntilExit()
 
         let outData = (try? Data(contentsOf: outLog)) ?? Data()
         let errData = (try? Data(contentsOf: errLog)) ?? Data()
+        let errTail = String(decoding: errData.suffix(400), as: UTF8.self)
+            .split(whereSeparator: \.isNewline).suffix(3).joined(separator: " ⏎ ")
+        cblog("Transcriber: \(input.lastPathComponent) finished in \(Int(Date().timeIntervalSince(started))) s, exit \(task.terminationStatus)" +
+              (task.terminationStatus != 0 || errTail.lowercased().contains("error") ? " — \(errTail)" : ""))
 
         let fm = FileManager.default
         if fm.fileExists(atPath: txtURL.path) { return romanized(txtURL) }

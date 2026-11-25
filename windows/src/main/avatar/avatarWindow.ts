@@ -25,6 +25,7 @@ export const AVATAR_BOTTOM_INSET = 350;
 /// Avatar centre in window coordinates, y-down. The Swift view is y-up with
 /// the centre 350 pt above the bottom; 700 - 350 puts it at the same spot.
 type AvatarWindow = AvatarSurface & {
+  avatarRect(): Electron.Rectangle;
   window: BrowserWindow; recordKeystroke(): void; globalMouseDown(): void; globalMouseUp(): void;
 };
 
@@ -485,6 +486,12 @@ export function createAvatarWindow(
     window: win,
 
     isVisible: () => wantVisible && !win.isDestroyed(),
+
+    /// Where the character itself is on screen (the first-run tour points at it).
+    avatarRect() {
+      const b = win.getBounds(), a = AVATAR_CENTER, h = halfChar();
+      return { x: b.x + a.x - h, y: b.y + a.y - h, width: 2 * h, height: 2 * h };
+    },
 
     show() {
       wantVisible = true;

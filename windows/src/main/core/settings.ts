@@ -14,7 +14,8 @@ export const CODING_AGENTS: CodingAgent[] = ["claude", "opencode", "codex", "ant
 export const AGENT_INFO: Record<CodingAgent, { displayName: string; installCommand: string; processNames: string[] }> = {
   claude: {
     displayName: "Claude Code",
-    installCommand: "npm install -g @anthropic-ai/claude-code",
+    // Anthropic's own installer: no Node needed, unlike the npm package.
+    installCommand: "irm https://claude.ai/install.ps1 | iex",
     processNames: ["claude", "claude-code"],
   },
   opencode: {
@@ -94,6 +95,8 @@ interface Stored {
   openSummariesInApp?: boolean;
   dashboardSideCollapsed?: boolean;
   appearance?: string;
+  tourDone?: boolean;
+  dashboardTourDone?: boolean;
   /// Any key this version doesn't know is kept on save.
   [k: string]: unknown;
 }
@@ -291,6 +294,12 @@ export const Settings = {
   /// Summary pages open in the Nikxel window's tabs instead of the browser.
   get openSummariesInApp(): boolean { return load().openSummariesInApp ?? true; },
   set openSummariesInApp(v: boolean) { save(s => { s.openSummariesInApp = v; }); },
+
+  /// The first-run tour (coachTour.ts) and the Nikxel window's own tour have been shown.
+  get tourDone(): boolean { return load().tourDone ?? false; },
+  set tourDone(v: boolean) { save(s => { s.tourDone = v; }); },
+  get dashboardTourDone(): boolean { return load().dashboardTourDone ?? false; },
+  set dashboardTourDone(v: boolean) { save(s => { s.dashboardTourDone = v; }); },
 
   /// The Nikxel window's look: "system", "light" or "dark".
   get appearance(): "system" | "light" | "dark" {

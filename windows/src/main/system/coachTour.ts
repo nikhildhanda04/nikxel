@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, Rectangle, screen, Tray } from "electron";
+import { BrowserWindow, ipcMain, Rectangle, screen, shell, Tray } from "electron";
 import { diag } from "../core/diag";
 import { preloadPath, rendererPath } from "../core/paths";
 import { powershell } from "../core/proc";
@@ -8,7 +8,7 @@ import { Settings } from "../core/settings";
 /// transparent window beside something on screen, with an arrow at it, and
 /// the first-run tour built from it.
 
-export interface Card { title: string; text: string; step?: number; total?: number; primary?: string }
+export interface Card { title: string; text: string; step?: number; total?: number; primary?: string; secondary?: string }
 
 let ipcReady = false;
 const pointers = new Set<CoachPointer>();
@@ -17,6 +17,8 @@ const pointers = new Set<CoachPointer>();
 export class CoachPointer {
   onNext: (() => void) | null = null;
   onSkip: (() => void) | null = null;
+  /// The card's second button, when it has one.
+  onExtra: (() => void) | null = null;
   private win: BrowserWindow;
   private loaded = false;
   private pending: [Rectangle, Card] | null = null;
@@ -64,6 +66,7 @@ export class CoachPointer {
   private message(m: { type?: string; w?: number; h?: number }): void {
     if (m.type === "next") this.onNext?.();
     else if (m.type === "skip") this.onSkip?.();
+    else if (m.type === "extra") this.onExtra?.();
     else if (m.type === "size" && m.w && m.h && (Math.abs(m.h - this.size.h) > 1 || Math.abs(m.w - this.size.w) > 1)) {
       this.size = { w: Math.ceil(m.w), h: Math.ceil(m.h) };
       this.place(false);
@@ -74,11 +77,22 @@ export class CoachPointer {
   /// Screen coordinates here run down from the top, unlike the Mac's.
   private place(send: boolean): void {
     const t = this.target, v = screen.getDisplayMatching(t).workArea, gap = 4, { w, h } = this.size;
-    let dir: string, x: number, y: number;
+    let dir = "down", x = 0, y = 0;
+    const cx = t.x + t.width / 2;
+    // On the taskbar (the tray, the ^ by the clock): always above it with the
+    // arrow pointing down at it, however close to the corner. Beside it, the
+    // arrow pointed sideways and nobody could tell it meant the ^.
+    const onTaskbar = t.y >= v.y + v.height - 2 || t.y + t.height <= v.y + 2;
+    if (onTaskbar) {
+      dir = t.y >= v.y + v.height - 2 ? "down" : "up";
+      x = cx - (w - 70);
+      y = dir === "down" ? t.y - gap - h : t.y + t.height + gap;
+    }
     // Near a left or right edge the card can't sit centred under the target,
     // and the arrow would hang off its side: go beside it instead.
-    const cx = t.x + t.width / 2, nearEdge = cx - v.x < 60 || v.x + v.width - cx < w - 60;
-    if (nearEdge && v.x + v.width - (t.x + t.width) > w + 20) { dir = "left"; x = t.x + t.width + gap; y = t.y + t.height / 2 - 40; }
+    const nearEdge = cx - v.x < 60 || v.x + v.width - cx < w - 60;
+    if (onTaskbar) { /* placed above */ }
+    else if (nearEdge && v.x + v.width - (t.x + t.width) > w + 20) { dir = "left"; x = t.x + t.width + gap; y = t.y + t.height / 2 - 40; }
     else if (nearEdge && t.x - v.x > w + 20 && t.y + t.height <= v.y + v.height) { dir = "right"; x = t.x - gap - w; y = t.y + t.height / 2 - 40; }
     else if (v.y + v.height - (t.y + t.height) > h + 40) { dir = "up"; x = t.x + t.width / 2 - 40; y = t.y + t.height + gap; }
     else if (t.y - v.y > h + 40) { dir = "down"; x = t.x + t.width / 2 - 40; y = t.y - gap - h; }
@@ -92,7 +106,9 @@ export class CoachPointer {
     const at = Math.min(Math.max(horizontal ? t.x + t.width / 2 - x : t.y + t.height / 2 - y, 48), (horizontal ? w : h) - 48);
     this.win.setBounds({ x: Math.round(x), y: Math.round(y), width: w, height: h });
     if (!send) return;
-    const s = { dir, at, title: this.card.title, text: this.card.text, step: this.card.step ?? 0, total: this.card.total ?? 1, primary: this.card.primary ?? "Next" };
+    diag("CoachTour", `"${this.card.title}" → ${dir} at ${JSON.stringify(t)}, card ${Math.round(x)},${Math.round(y)} ${w}x${h}`);
+    const s = { dir, at, title: this.card.title, text: this.card.text, step: this.card.step ?? 0, total: this.card.total ?? 1,
+      primary: this.card.primary ?? "Next", secondary: this.card.secondary ?? "" };
     void this.win.webContents.executeJavaScript(`nx.show(${JSON.stringify(s)})`).catch(() => {});
   }
 }
@@ -104,6 +120,7 @@ export function trayTarget(tray: Tray | null): { rect: Rectangle; hidden: boolea
   const d = screen.getPrimaryDisplay(), b = d.bounds, wa = d.workArea;
   try {
     const r = tray?.getBounds();
+    diag("CoachTour", `tray bounds ${JSON.stringify(r)}, work area ${JSON.stringify(wa)}, screen ${JSON.stringify(b)}`);
     // On the taskbar: inside the screen but outside the work area.
     if (r && r.width > 0 && r.x >= b.x && r.x < b.x + b.width && (r.y >= wa.y + wa.height || r.y + r.height <= wa.y || r.x >= wa.x + wa.width)) {
       return { rect: r, hidden: false };
@@ -150,34 +167,55 @@ export const CoachTour = {
   /// Not in the middle of a call or a recording: it waits until both are over.
   startIfNew(host: TourHost): void {
     if (Settings.tourDone) return;
-    if (host.busy()) { setTimeout(() => CoachTour.startIfNew(host), 60_000); return; }
+    if (host.busy()) {
+      diag("CoachTour", "waiting: a call or recording is on");
+      setTimeout(() => CoachTour.startIfNew(host), 60_000);
+      return;
+    }
     CoachTour.start(host);
   },
 
   start(host: TourHost): void {
     if (tour) return;
+    diag("CoachTour", "start");
     host.showAvatar();
     const p = new CoachPointer();
     tour = p;
-    let step = 0;
+    let step = 0, pinWatch: NodeJS.Timeout | null = null, pinned = false;
     const total = 3;
+    const stopWatch = () => { if (pinWatch) clearInterval(pinWatch); pinWatch = null; };
     const finish = () => {
+      stopWatch();
       Settings.tourDone = true;
       p.close(); tour = null;
-      diag("CoachTour", `finished at step ${step + 1} of ${total}`);
+      diag("CoachTour", `ended at step ${Math.min(step + 1, total)} of ${total}`);
     };
     const render = () => {
       const t = trayTarget(host.tray());
       if (step === 0) {
         p.show(host.avatarRect(), { title: "This is me, Nikxel", step, total,
           text: "<p><b>Click</b> me to chat. <b>Double-click</b> me to record a meeting.</p><p><b>Drag</b> me anywhere you like.</p>" });
+      } else if (step === 1 && t.hidden) {
+        // Windows tucks new tray icons under the ^. Walk them through pinning
+        // it, and notice the moment the icon shows on the taskbar.
+        p.show(t.rect, { title: "Pin me to the taskbar", step, total, secondary: "Open taskbar settings",
+          text: "<ol><li>Click the <b>^</b> arrow down here, next to the Wi-Fi and clock.</li>" +
+                "<li>Drag my icon (the little head) out onto the taskbar beside it.</li></ol>" +
+                "<p>Or click <b>Open taskbar settings</b> → <b>Other system tray icons</b> → turn <b>Nikxel</b> on.</p>" });
+        if (!pinWatch) pinWatch = setInterval(() => {
+          if (step !== 1 || trayTarget(host.tray()).hidden) return;
+          stopWatch(); pinned = true;
+          diag("CoachTour", "tray icon pinned");
+          render();
+        }, 1500);
       } else if (step === 1) {
-        p.show(t.rect, { title: "Find me by the clock", step, total, text: t.hidden
-          ? "<p>My icon is in the tray. If you can’t see it, click the <b>^</b> arrow here.</p><p>Then drag my icon onto the taskbar so it’s always there.</p>"
-          : "<p>My icon in the tray. Click it to record, mute, or open everything else.</p>" });
+        p.show(t.rect, pinned
+          ? { title: "Pinned ✓", step, total, text: "<p>That’s my icon. <b>Click it</b> any time to open Nikxel, record or mute.</p>" }
+          : { title: "This is my icon", step, total, text: "<p>Down here by the clock. <b>Click it</b> to open Nikxel, record or mute.</p>" });
       } else {
-        p.show(t.rect, { title: "Everything else is in the Nikxel window", step, total, primary: "Open it",
-          text: "<p>Your meeting notes, chat, tasks and settings. Click my tray icon, then <b>Open Nikxel…</b>. Let me show you around it.</p>" });
+        stopWatch();
+        p.show(t.rect, { title: "Open Nikxel from here", step, total, primary: "Open it",
+          text: "<p>Click my icon, then <b>Open Nikxel…</b> for your meeting notes, chat, tasks and settings. Let me show you around it now.</p>" });
       }
     };
     p.onNext = () => {
@@ -187,6 +225,7 @@ export const CoachTour = {
       host.openDashboard();
     };
     p.onSkip = finish;
+    p.onExtra = () => { void shell.openExternal("ms-settings:taskbar"); };
     render();
   },
 

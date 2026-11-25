@@ -5,8 +5,9 @@
 ///
 /// Native → page: nx.show({dir, at, title, text, step, total, primary, platform}).
 /// `dir` is where the target is ("up", "down", "left", "right"), `at` how far
-/// along that edge the arrow points, in px. Page → native: {type:"next"},
-/// {type:"skip"}, {type:"size", w, h} so the window fits the card.
+/// along that edge the arrow points, in px; `secondary` adds a second button.
+/// Page → native: {type:"next"}, {type:"skip"}, {type:"extra"} (the second
+/// button), {type:"size", w, h} so the window fits the card.
 enum CoachPage {
     static let html = #"""
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Nikxel tour</title>
@@ -47,6 +48,8 @@ html,body{margin:0;background:transparent;overflow:hidden;-webkit-user-select:no
 .dots i.on{background:var(--accent)}
 button{font:600 13.5px 'Public Sans',sans-serif;border-radius:999px;padding:8px 14px;cursor:pointer;border:1px solid transparent}
 .next{background:var(--ink);color:#fff}
+.extra{background:transparent;border-color:var(--line);color:var(--ink)}
+.card ol{margin:0;padding-left:20px;color:var(--ink-2)}.card li{margin:3px 0}
 .skip{background:transparent;color:var(--muted);padding:8px 6px}
 .skip:hover{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.arrow svg{animation:none!important}.arrow path{animation:none;stroke-dashoffset:0}#wrap{transition:none}}
@@ -59,7 +62,7 @@ button{font:600 13.5px 'Public Sans',sans-serif;border-radius:999px;padding:8px 
 <path class="head" d="M30 13 L 42 4 L 51 16" stroke-width="4.2"/>
 </g></svg></div>
 <div class="card" role="dialog" aria-live="polite"><b class="t" id="title"></b><div id="text"></div>
-<div class="row"><span class="dots" id="dots"></span><button type="button" class="skip" id="skip">Skip tour</button><button type="button" class="next" id="next">Next</button></div></div></div>
+<div class="row"><span class="dots" id="dots"></span><button type="button" class="skip" id="skip">Skip tour</button><button type="button" class="extra" id="extra" hidden></button><button type="button" class="next" id="next">Next</button></div></div></div>
 <script>
 (function () {
 var wrap = document.getElementById('wrap'), arrow = document.getElementById('arrow'), shown = '';
@@ -73,6 +76,9 @@ window.nx = {
     document.getElementById('title').textContent = s.title;
     document.getElementById('text').innerHTML = s.text;   // the tour's own copy, with <b> and <kbd>
     document.getElementById('next').textContent = s.primary || 'Next';
+    var extra = document.getElementById('extra');
+    extra.hidden = !s.secondary;
+    extra.textContent = s.secondary || '';
     document.getElementById('skip').style.display = s.step + 1 >= s.total ? 'none' : '';
     var dots = '';
     for (var i = 0; i < s.total; i++) dots += '<i' + (i === s.step ? ' class="on"' : '') + '></i>';
@@ -93,6 +99,7 @@ window.nx = {
 };
 document.getElementById('next').onclick = function () { post({ type: 'next' }); };
 document.getElementById('skip').onclick = function () { post({ type: 'skip' }); };
+document.getElementById('extra').onclick = function () { post({ type: 'extra' }); };
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') post({ type: 'skip' });
   if (e.key === 'Enter') post({ type: 'next' });

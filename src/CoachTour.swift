@@ -161,7 +161,7 @@ enum CoachTour {
         func finish() {
             NikxelSettings.tourDone = true
             p.close(); pointer = nil
-            cblog("CoachTour: finished at step \(step + 1) of \(total)")
+            cblog("CoachTour: ended at step \(min(step + 1, total)) of \(total)")
         }
         func render() {
             switch step {

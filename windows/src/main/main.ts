@@ -7,6 +7,7 @@ import { cblog } from "./core/diag";
 import { openFile, openFolder, openUrl } from "./core/open";
 import { documentsDir, nikxelPath, resourcePath } from "./core/paths";
 import { promptText } from "./core/prompt";
+import { powershell } from "./core/proc";
 import { CAPTURE_MODE_NAMES, Settings } from "./core/settings";
 import { StateMachine } from "./core/stateMachine";
 import { CardKind, ui } from "./core/ui";
@@ -245,6 +246,9 @@ class NikxelApp {
     }
 
     ensureStartMenuShortcut();
+    ensureDesktopShortcut();
+    // Once Explorer has seen the tray icon (it files it a few seconds after it appears).
+    setTimeout(() => void promoteTrayIcon(), 8000);
 
     // A summary interrupted by a quit or crash leaves its marker behind.
     const unfinished = this.meetingCoordinator.momGen.unfinishedJobs();
@@ -755,10 +759,8 @@ class NikxelApp {
 /// and is what Windows needs before it shows toast notifications: the
 /// shortcut carries the AppUserModelID they're attributed to. Refreshed every
 /// launch in case the clone moved. The installer build makes its own.
-function ensureStartMenuShortcut(): void {
-  if (process.platform !== "win32" || app.isPackaged) return;
-  const lnk = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "Nikxel.lnk");
-  const ok = shell.writeShortcutLink(lnk, fs.existsSync(lnk) ? "replace" : "create", {
+function shortcutTo(lnk: string): boolean {
+  return shell.writeShortcutLink(lnk, fs.existsSync(lnk) ? "replace" : "create", {
     target: process.execPath,
     args: `"${app.getAppPath()}"`,
     cwd: app.getAppPath(),
@@ -767,6 +769,43 @@ function ensureStartMenuShortcut(): void {
     appUserModelId: "com.nikxel.Nikxel",
     description: "Nikxel — your pixel desktop companion",
   });
-  if (!ok) cblog("NikxelApp: couldn't write the Start menu shortcut");
+}
+
+function ensureStartMenuShortcut(): void {
+  if (process.platform !== "win32" || app.isPackaged) return;
+  const lnk = path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "Nikxel.lnk");
+  if (!shortcutTo(lnk)) cblog("NikxelApp: couldn't write the Start menu shortcut");
+}
+
+/// "Nikxel" on the desktop, made at first launch for people who look there
+/// first. Kept pointing at this copy while it exists; once deleted, not made again.
+function ensureDesktopShortcut(): void {
+  if (process.platform !== "win32" || app.isPackaged) return;
+  const lnk = path.join(app.getPath("desktop"), "Nikxel.lnk");
+  if (Settings.desktopShortcutMade && !fs.existsSync(lnk)) return;
+  if (shortcutTo(lnk)) Settings.desktopShortcutMade = true;
+  else cblog("NikxelApp: couldn't write the desktop shortcut");
+}
+
+/// Windows tucks a new tray icon under the ^ by the clock, where nobody finds
+/// it. Windows 11 keeps a per-icon "show on the taskbar" switch in the user's
+/// own registry (NotifyIconSettings\…\IsPromoted, what Settings → Taskbar →
+/// Other system tray icons flips); turn Nikxel's on, once. No such key on
+/// Windows 10, where the tour walks the user through pinning it instead.
+/// Apps can't pin themselves to the taskbar itself: Windows doesn't allow it.
+async function promoteTrayIcon(tries = 3): Promise<void> {
+  if (process.platform !== "win32" || Settings.trayPromoted) return;
+  const exe = process.execPath.replace(/'/g, "''");
+  const r = await powershell(`
+$hit = $false
+foreach ($k in Get-ChildItem 'HKCU:\\Control Panel\\NotifyIconSettings' -ErrorAction SilentlyContinue) {
+  $p = Get-ItemProperty $k.PSPath
+  if ($p.ExecutablePath -and $p.ExecutablePath -ieq '${exe}') { Set-ItemProperty $k.PSPath -Name IsPromoted -Value 1 -Type DWord; $hit = $true }
+}
+if ($hit) { 'promoted' } elseif (Test-Path 'HKCU:\\Control Panel\\NotifyIconSettings') { 'not yet' } else { 'no key' }`, { timeoutMs: 15_000 }).catch(() => null);
+  const out = (r?.stdout ?? "").trim();
+  cblog(`NikxelApp: tray icon on the taskbar → ${out || "failed"}`);
+  if (out === "promoted" || out === "no key") Settings.trayPromoted = true;
+  else if (tries > 1) setTimeout(() => void promoteTrayIcon(tries - 1), 60_000);
 }
 

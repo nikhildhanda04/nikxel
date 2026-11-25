@@ -97,6 +97,8 @@ interface Stored {
   appearance?: string;
   tourDone?: boolean;
   dashboardTourDone?: boolean;
+  desktopShortcutMade?: boolean;
+  trayPromoted?: boolean;
   /// Any key this version doesn't know is kept on save.
   [k: string]: unknown;
 }
@@ -300,6 +302,13 @@ export const Settings = {
   set tourDone(v: boolean) { save(s => { s.tourDone = v; }); },
   get dashboardTourDone(): boolean { return load().dashboardTourDone ?? false; },
   set dashboardTourDone(v: boolean) { save(s => { s.dashboardTourDone = v; }); },
+
+  /// Done once at first launch, so undoing either (deleting the shortcut,
+  /// hiding the icon again) sticks.
+  get desktopShortcutMade(): boolean { return load().desktopShortcutMade ?? false; },
+  set desktopShortcutMade(v: boolean) { save(s => { s.desktopShortcutMade = v; }); },
+  get trayPromoted(): boolean { return load().trayPromoted ?? false; },
+  set trayPromoted(v: boolean) { save(s => { s.trayPromoted = v; }); },
 
   /// The Nikxel window's look: "system", "light" or "dark".
   get appearance(): "system" | "light" | "dark" {

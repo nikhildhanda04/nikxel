@@ -2,8 +2,9 @@ import AVFoundation
 import AppKit
 
 /// One conversation with Nikxel: what the avatar's floating chat and the Nikxel
-/// window's Chat section both run. It reads WhatsApp, the inbox and the project
-/// feed once as it starts (every question reuses them), then answers from those,
+/// window's Chat section both run. It reads the inbox and the project feed once
+/// as it starts, WhatsApp again for each question (and opens any chat the
+/// question names, WAChatMatch), then answers from those,
 /// what Nikxel knows about the user, what's happening right now, and the last
 /// two weeks of summaries (ChatContext). Mail commands and "make a task to …"
 /// are handled here, never by the model.
@@ -14,7 +15,7 @@ final class ChatSession {
     let agent: MOMGenerator
     private(set) var history: [(q: String, a: String)] = []
     private var feed: (feed: [[String: Any]], offline: Bool) = ([], true)
-    private var waSnapshot = ""   // a read of WhatsApp at open time (unread, recent chats, open thread)
+    private var waSnapshot = ""   // the latest read of WhatsApp (unread, recent chats, open thread)
     private var mailSnapshot = "" // the inbox at open time, when Gmail is connected
     private var knownMailIds: Set<String> = []  // ids the chat has shown the model; labels only touch these
     private var lastDraftId: String?            // what "send it" sends
@@ -70,6 +71,10 @@ final class ChatSession {
         DispatchQueue.global(qos: .userInitiated).async {
             self.feedReady.wait()
             let (feed, offline) = self.feed
+            // WhatsApp as it is now, not as it was when the chat opened, plus
+            // any chat the question names, opened and read in full.
+            if ChromeBot.isPortOpen() { self.waSnapshot = ChatSession.waContextBlock() ?? "" }
+            let named = ChatSession.waNamedThreads(text) ?? ""
             func finish(_ reply: String, answered: Bool) {
                 DispatchQueue.main.async {
                     if answered { self.history.append((q: text, a: reply)) }
@@ -80,7 +85,7 @@ final class ChatSession {
             // What Nikxel is doing right now and has done today (apps, code, agent asks),
             // then the WhatsApp read, then the written summaries/notes/projects.
             let live = (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting)).map { "### right now\n\($0)" } ?? ""
-            var context = [NikxelSettings.userContextBlock, attach, live, self.waSnapshot, self.mailSnapshot,
+            var context = [NikxelSettings.userContextBlock, attach, live, named, self.waSnapshot, self.mailSnapshot,
                            ChatContext.build(ChatContext.localBlocks(root: Self.root, today: today) + ChatContext.projectBlocks(feed),
                                              cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
             // Mail: "send it", drafts and labels answer here; a search adds to the context.
@@ -233,10 +238,38 @@ final class ChatSession {
         let thread = ChromeWhatsApp.readThread()
         if !thread.isEmpty {
             let who = ChromeWhatsApp.conversationHeader() ?? "them"
-            let lines = thread.suffix(14).map { "\($0.outgoing ? "You" : who): \($0.text)" }
+            let lines = thread.suffix(14).map { "\($0.outgoing ? "You" : $0.sender.isEmpty ? who : $0.sender): \($0.text)" }
             parts.append("Open thread with \(who) (each line is labelled with who sent it):\n" + lines.joined(separator: "\n"))
         }
         guard !parts.isEmpty else { return nil }
         return "### whatsapp\n" + parts.joined(separator: "\n\n")
+    }
+
+    /// The chats a question names, opened and read now: "what did Piyush say
+    /// in the Nikxel group" reads the chats whose names share a word with it.
+    /// Opening a chat marks it read in WhatsApp, as it would on the phone.
+    /// Afterwards the chat that was open before is opened again.
+    private static func waNamedThreads(_ question: String) -> String? {
+        guard ChromeBot.isPortOpen(), ChromeWhatsApp.isLoggedIn() else { return nil }
+        let names = WAChatMatch.named(in: question, chats: ChromeWhatsApp.allChatsPreview(limit: 60).map(\.name))
+        guard !names.isEmpty else { return nil }
+        let when = DateFormatter()
+        when.dateFormat = "d MMM h:mm a"
+        var parts: [String] = []
+        ChatbotEngine.shared.withPollingHeld {
+            let back = ChromeWhatsApp.conversationHeader()
+            for name in names {
+                guard ChromeWhatsApp.clickChat(name: name), ChromeWhatsApp.waitForMessages() else { continue }
+                let thread = ChromeWhatsApp.readThread().suffix(40)
+                guard !thread.isEmpty else { continue }
+                parts.append("\(name), read just now (each line: when, who, what):\n" + thread.map {
+                    "\($0.at.map { when.string(from: $0) + " " } ?? "")\($0.outgoing ? "You" : $0.sender.isEmpty ? name : $0.sender): \($0.text.prefix(500))"
+                }.joined(separator: "\n"))
+            }
+            if let back, !names.contains(back) { _ = ChromeWhatsApp.clickChat(name: back) }
+            return true
+        }
+        cblog("ChatSession: read \(parts.count) of \(names.count) WhatsApp chats the question named")
+        return parts.isEmpty ? nil : "### whatsapp chats you asked about\n" + parts.joined(separator: "\n\n")
     }
 }

@@ -298,9 +298,17 @@ enum PageShare {
     private static func allowedFile(_ path: String?) -> URL? {
         guard let path = path else { return nil }
         let root = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/nikxel").resolvingSymlinksInPath().path + "/"
-        let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
-        guard url.path.hasPrefix(root), url.pathExtension == "html",
-              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        var url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.path.hasPrefix(root), url.pathExtension == "html" else { return nil }
+        // A page still open under its date name after it was renamed: its
+        // buttons carry the old path, so follow it to "<name> <stamp>.html".
+        if !FileManager.default.fileExists(atPath: url.path) {
+            let stem = url.deletingPathExtension().lastPathComponent, dir = url.deletingLastPathComponent()
+            guard NoteName.isUnnamed(stem),
+                  let renamed = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.first(where: { $0.hasSuffix(" \(stem).html") })
+            else { return nil }
+            url = dir.appendingPathComponent(renamed)
+        }
         return url
     }
 

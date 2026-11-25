@@ -8,6 +8,8 @@ import { CAP, build, localBlocks, projectBlocks, prompt } from "./chatContext";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
 import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
+import { ChatbotEngine } from "../whatsapp/chatbotEngine";
+import * as WAChatMatch from "../whatsapp/waChatMatch";
 import { DayLogger } from "./dayLogger";
 import { MeetingDetector } from "../whatsapp/meetingDetector";
 import { GoogleAuth } from "../google/googleAuth";
@@ -15,8 +17,9 @@ import * as Gmail from "../google/gmail";
 import * as MailIntent from "../google/mailIntent";
 
 /// One conversation with Nikxel: what the avatar's floating chat runs (and, on
-/// the Mac, the Nikxel window's Chat section). It reads WhatsApp, the inbox and
-/// the project feed once as it starts (every question reuses them), then answers
+/// the Mac, the Nikxel window's Chat section). It reads the inbox and the project
+/// feed once as it starts, WhatsApp again for each question (and opens any chat
+/// the question names, waChatMatch.ts), then answers
 /// from those, what Nikxel knows about the user, what's happening right now, and
 /// the last two weeks of summaries (ChatContext). Mail commands and "make a task
 /// to …" are handled here, never by the model. Port of src/ChatSession.swift;
@@ -28,7 +31,7 @@ type MailOutcome = { kind: "none" } | { kind: "reply"; text: string } | { kind: 
 
 export class ChatSession {
   history: { q: string; a: string }[] = [];
-  private waSnapshot = "";   // a read of WhatsApp at open time (unread, recent chats, open thread)
+  private waSnapshot = "";   // the latest read of WhatsApp (unread, recent chats, open thread)
   private mailSnapshot = ""; // the inbox at open time, when Gmail is connected
   private knownMailIds = new Set<string>(); // ids the chat has shown the model; labels only touch these
   private lastDraftId: string | null = null; // what "send it" sends
@@ -75,6 +78,10 @@ export class ChatSession {
     const history = [...this.history], today = new Date();
     await this.ready;
     const { feed, offline } = this.feed;
+    // WhatsApp as it is now, not as it was when the chat opened, plus
+    // any chat the question names, opened and read in full.
+    this.waSnapshot = (await ChatSession.waContextBlock()) ?? "";
+    const named = (await ChatSession.waNamedThreads(text)) ?? "";
     const finish = (reply: string, answered: boolean) => {
       if (answered) this.history.push({ q: text, a: reply });
       return { text: reply, offline, error: !answered };
@@ -83,7 +90,7 @@ export class ChatSession {
     // What Nikxel is doing right now and has done today (apps, code, agent asks),
     // then the WhatsApp read, then the written summaries/notes/projects.
     const live = DayLogger.current ? "### right now\n" + (await DayLogger.current.liveContextAsync(MeetingDetector.shared.isInMeeting)) : "";
-    let context = [Settings.userContextBlock, attach, live, this.waSnapshot, this.mailSnapshot,
+    let context = [Settings.userContextBlock, attach, live, named, this.waSnapshot, this.mailSnapshot,
       build([...localBlocks(root(), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
     // Mail: "send it", drafts and labels answer here; a search adds to the context.
     const m = await this.handleMail(text, context, history, today);
@@ -201,11 +208,39 @@ export class ChatSession {
       const thread = await ChromeWhatsApp.readThread();
       if (thread.length) {
         const who = (await ChromeWhatsApp.conversationHeader()) ?? "them";
-        const lines = thread.slice(-14).map(m => `${m.outgoing ? "You" : who}: ${m.text}`);
+        const lines = thread.slice(-14).map(m => `${m.outgoing ? "You" : m.sender || who}: ${m.text}`);
         parts.push(`Open thread with ${who} (each line is labelled with who sent it):\n` + lines.join("\n"));
       }
       if (!parts.length) return null;
       return "### whatsapp\n" + parts.join("\n\n");
+    } catch { return null; }
+  }
+
+  /// The chats a question names, opened and read now: "what did Piyush say
+  /// in the Nikxel group" reads the chats whose names share a word with it.
+  /// Opening a chat marks it read in WhatsApp, as it would on the phone.
+  /// Afterwards the chat that was open before is opened again.
+  private static async waNamedThreads(question: string): Promise<string | null> {
+    try {
+      if (!(await ChromeWhatsApp.isLoggedIn())) return null;
+      const names = WAChatMatch.named(question, (await ChromeWhatsApp.allChatsPreview(60)).map(c => c.name));
+      if (!names.length) return null;
+      const when = (d: Date) => d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " ";
+      const parts: string[] = [];
+      await ChatbotEngine.shared.withPollingHeld(async () => {
+        const back = await ChromeWhatsApp.conversationHeader();
+        for (const name of names) {
+          if (!(await ChromeWhatsApp.clickChat(name)) || !(await ChromeWhatsApp.waitForMessages())) continue;
+          const thread = (await ChromeWhatsApp.readThread()).slice(-40);
+          if (!thread.length) continue;
+          parts.push(`${name}, read just now (each line: when, who, what):\n` + thread.map(m =>
+            `${m.at ? when(m.at) : ""}${m.outgoing ? "You" : m.sender || name}: ${m.text.slice(0, 500)}`).join("\n"));
+        }
+        if (back && !names.includes(back)) await ChromeWhatsApp.clickChat(back);
+        return true;
+      });
+      cblog(`ChatSession: read ${parts.length} of ${names.length} WhatsApp chats the question named`);
+      return parts.length ? "### whatsapp chats you asked about\n" + parts.join("\n\n") : null;
     } catch { return null; }
   }
 }

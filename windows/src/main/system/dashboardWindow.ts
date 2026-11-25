@@ -108,8 +108,12 @@ export function init(h: DashboardHost): void {
 
 /// A summary page the reader can show: an .html or .pdf under Documents/nikxel.
 export function canRead(file: string): boolean {
-  const root = path.resolve(SummaryLibrary.libraryRoot()) + path.sep;
-  return /\.(html|pdf)$/i.test(file) && path.resolve(file).toLowerCase().startsWith(root.toLowerCase());
+  // Either spelling of the root: a redirected Documents (OneDrive) resolves
+  // elsewhere, and a renamed page comes back by its real path.
+  const lib = path.resolve(SummaryLibrary.libraryRoot());
+  let real = lib; try { real = fs.realpathSync(lib); } catch { /* not made yet */ }
+  const f = path.resolve(file).toLowerCase();
+  return /\.(html|pdf)$/i.test(file) && [lib, real].some(r => f.startsWith((r + path.sep).toLowerCase()));
 }
 
 /// Shows the window, on `section` when given.

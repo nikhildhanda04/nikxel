@@ -260,7 +260,16 @@ function allowedFile(p: string | null): string | null {
   if (!p) return null;
   try {
     const root = fs.realpathSync(path.join(documentsRoot(), "nikxel")) + path.sep;
-    const file = fs.realpathSync(path.resolve(p));
+    let file = path.resolve(p);
+    // A page still open under its date name after it was renamed: its
+    // buttons carry the old path, so follow it to "<name> <stamp>.html".
+    if (!fs.existsSync(file)) {
+      const stem = path.basename(file, ".html"), dir = path.dirname(file);
+      const renamed = NoteName.isUnnamed(stem) ? fs.readdirSync(dir).find(f => f.endsWith(` ${stem}.html`)) : undefined;
+      if (!renamed) return null;
+      file = path.join(dir, renamed);
+    }
+    file = fs.realpathSync(file);
     return file.toLowerCase().startsWith(root.toLowerCase()) && file.toLowerCase().endsWith(".html") ? file : null;
   } catch { return null; }
 }

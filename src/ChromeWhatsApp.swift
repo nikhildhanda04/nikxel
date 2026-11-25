@@ -29,6 +29,8 @@ struct WAMessage: Equatable {
     let outgoing: Bool
     let at: Date?
     let text: String
+    /// Who wrote it, as WhatsApp names them; "" when unknown. Tells a group's members apart.
+    var sender = ""
 }
 
 struct WAChatPreview: Codable {
@@ -695,6 +697,7 @@ enum ChromeWhatsApp {
             var rows = main.querySelectorAll('[role="row"]');
             var out = [];
             var carried = null;   // direction of the last row we could place
+            var from = '';        // sender of the last row that named one
             for (var i = 0; i < rows.length; i++) {
                 var row = rows[i];
                 var rowText = row.textContent || '';
@@ -709,6 +712,7 @@ enum ChromeWhatsApp {
                         ts = m[1];
                         var sender = m[2].trim();
                         dir = (sender === SELF || sender.indexOf(SELF) === 0) ? 'out' : 'in';
+                        from = sender;
                     }
                 }
                 if (dir === null) {
@@ -724,7 +728,7 @@ enum ChromeWhatsApp {
                 var txt = (sel.textContent || '')
                     .replace(/\\s*\\d{1,2}:\\d{2}\\s*[ap]m\\s*$/i, '')
                     .trim();
-                if (txt) out.push([dir, ts, txt]);
+                if (txt) out.push([dir, ts, txt, from]);
             }
             return JSON.stringify(out);
         })()
@@ -733,7 +737,7 @@ enum ChromeWhatsApp {
               let data = json.data(using: .utf8),
               let rows = try? JSONDecoder().decode([[String]].self, from: data) else { return [] }
         return rows.compactMap { r in
-            r.count == 3 ? WAMessage(outgoing: r[0] == "out", at: parseStamp(r[1]), text: r[2]) : nil
+            r.count >= 3 ? WAMessage(outgoing: r[0] == "out", at: parseStamp(r[1]), text: r[2], sender: r.count > 3 ? r[3] : "") : nil
         }
     }
 

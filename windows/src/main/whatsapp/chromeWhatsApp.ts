@@ -34,6 +34,8 @@ export interface WAMessage {
   outgoing: boolean;
   at: Date | null;
   text: string;
+  /// Who wrote it, as WhatsApp names them; "" when unknown. Tells a group's members apart.
+  sender?: string;
 }
 
 /// A lightweight snapshot of a chat row's preview text (any chat, not just unread).
@@ -701,6 +703,7 @@ export const ChromeWhatsApp = {
         var rows = main.querySelectorAll('[role="row"]');
         var out = [];
         var carried = null;   // direction of the last row we could place
+        var from = '';        // sender of the last row that named one
         for (var i = 0; i < rows.length; i++) {
             var row = rows[i];
             var rowText = row.textContent || '';
@@ -715,6 +718,7 @@ export const ChromeWhatsApp = {
                     ts = m[1];
                     var sender = m[2].trim();
                     dir = (sender === SELF || sender.indexOf(SELF) === 0) ? 'out' : 'in';
+                    from = sender;
                 }
             }
             if (dir === null) {
@@ -730,7 +734,7 @@ export const ChromeWhatsApp = {
             var txt = (sel.textContent || '')
                 .replace(/\\s*\\d{1,2}:\\d{2}\\s*[ap]m\\s*$/i, '')
                 .trim();
-            if (txt) out.push([dir, ts, txt]);
+            if (txt) out.push([dir, ts, txt, from]);
         }
         return JSON.stringify(out);
     })()
@@ -739,8 +743,8 @@ export const ChromeWhatsApp = {
     if (!Array.isArray(rows)) return [];
     const out: WAMessage[] = [];
     for (const r of rows) {
-      if (!Array.isArray(r) || r.length !== 3) continue;
-      out.push({ outgoing: r[0] === "out", at: ChromeWhatsApp.parseStamp(String(r[1])), text: String(r[2]) });
+      if (!Array.isArray(r) || r.length < 3) continue;
+      out.push({ outgoing: r[0] === "out", at: ChromeWhatsApp.parseStamp(String(r[1])), text: String(r[2]), sender: String(r[3] ?? "") });
     }
     return out;
   },

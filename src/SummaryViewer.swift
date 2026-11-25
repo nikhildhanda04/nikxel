@@ -27,8 +27,13 @@ final class SummaryViewer: WKWebView, WKUIDelegate, WKNavigationDelegate, WKDown
 
     deinit { removeObserver(self, forKeyPath: #keyPath(title)) }
 
+    private var asked = ""   // the file show() asked for, let through decidePolicyFor
+
     func show(_ file: URL) {
-        loadFileURL(file, allowingReadAccessTo: SummaryLibrary.root)
+        asked = file.resolvingSymlinksInPath().path
+        // Both resolved: a symlinked or iCloud ~/Documents puts the real files
+        // elsewhere, and WebKit only lets the page read under the path it got.
+        loadFileURL(file.resolvingSymlinksInPath(), allowingReadAccessTo: SummaryLibrary.root.resolvingSymlinksInPath())
     }
 
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
@@ -41,10 +46,15 @@ final class SummaryViewer: WKWebView, WKUIDelegate, WKNavigationDelegate, WKDown
         guard let url = action.request.url else { return decisionHandler(.cancel) }
         if action.shouldPerformDownload || url.scheme == "data" { return decisionHandler(.download) }
         if url.isFileURL {
-            // Same page, or location.replace after a rename: stays here.
-            if action.targetFrame?.isMainFrame == true, url.path.hasPrefix(SummaryLibrary.root.path) {
-                if url.path != self.url?.path { onOpen?(url) }
-                return decisionHandler(.allow)
+            // Same page: reload. location.replace after a rename: stays here,
+            // loaded afresh (a plain navigation can miss WebKit's read access,
+            // leaving the page on "Renaming…" with its file already moved).
+            if action.targetFrame?.isMainFrame == true, DashboardWindowController.canRead(url) {
+                let path = url.resolvingSymlinksInPath().path
+                if path == asked || path == self.url?.resolvingSymlinksInPath().path { return decisionHandler(.allow) }
+                decisionHandler(.cancel)
+                onOpen?(url); show(url)
+                return
             }
             NSWorkspace.shared.open(url)
             return decisionHandler(.cancel)
@@ -65,7 +75,7 @@ final class SummaryViewer: WKWebView, WKUIDelegate, WKNavigationDelegate, WKDown
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url {
-            if url.isFileURL, url.path.hasPrefix(SummaryLibrary.root.path) { show(url) }
+            if url.isFileURL, DashboardWindowController.canRead(url) { show(url) }
             else { NSWorkspace.shared.open(url) }
         }
         return nil

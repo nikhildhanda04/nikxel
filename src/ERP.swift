@@ -229,6 +229,14 @@ enum ERP {
         }
     }
 
+    /// Names of the projects where the user has a task assigned to them, or assigned one (created it). nil when not connected or on failure.
+    static func myProjectNames() -> [String]? {
+        guard isConnected, let uid = sessionUID(), uid > 0,
+              let rows = callKw("project.task", "search_read",
+                                args: [["|", ["user_ids", "in", [uid]], ["create_uid", "=", uid]], ["project_id"]]) as? [[String: Any]] else { return nil }
+        return Array(Set(rows.compactMap { ($0["project_id"] as? [Any])?.last as? String })).sorted()
+    }
+
     struct TouchedTask { let name, project, stage, deadline: String }
 
     /// The user's tasks written on `day` (local), for the 10pm summary. [] when not connected or on any failure.

@@ -71,6 +71,10 @@ enum SpriteSheetImporter {
         guard rowBands.count == rows, colBands.count == cols else {
             throw ImportError.wrongGrid(rowsFound: rowBands.count, colsFound: colBands.count)
         }
+        // Column bands span the whole sheet, so 6 figures a row can overlap across
+        // rows and still split into 4. Count figures inside each row as well.
+        let most = rowBands.map { figures(in: src, band: $0) }.max() ?? 0
+        if most > cols { throw ImportError.wrongGrid(rowsFound: rows, colsFound: most) }
 
         // One scale for the whole sheet, sized so the tallest row band and the
         // widest column band both fit with room for the outline. Scaling each
@@ -98,6 +102,21 @@ enum SpriteSheetImporter {
         hardenEdges(&out)
         addOutline(&out)
         return try png(from: out)
+    }
+
+    /// Figures side by side in one row band: runs of occupied columns at least a
+    /// third of a cell wide, so sparkles, hearts and speed lines don't count.
+    private static func figures(in bmp: Bitmap, band: (start: Int, end: Int)) -> Int {
+        let minWidth = bmp.w / cols / 3
+        var n = 0, run = 0
+        for x in 0...bmp.w {
+            var occupied = false
+            if x < bmp.w { for y in band.start...band.end where bmp.alpha(x, y) > 30 { occupied = true; break } }
+            if occupied { run += 1; continue }
+            if run >= minWidth { n += 1 }
+            run = 0
+        }
+        return n
     }
 
     /// The sheet's real row (or column) boundaries: runs of lines holding

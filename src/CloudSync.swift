@@ -39,6 +39,35 @@ enum CloudSync {
         return out
     }
 
+    /// The Nikxel window's Organization side: one call to the org API as this device, any method.
+    /// Only these routes; the page can't reach anything else with the token. (0, nil) when unreachable.
+    static let orgRoutes = #"^/api/(org(/leave|/owner)?|members(/[\w-]+)?|invites|projects(/[\w-]+(/members/[\w-]+|/meetings/[^/?#]+)?)?|shared/mine|summaries/mine/\d{4}-\d\d-\d\d)$"#
+    static func orgRequest(method: String, path: String, body: Any?) -> (status: Int, data: Any?) {
+        guard ["GET", "POST", "PATCH", "PUT", "DELETE"].contains(method),
+              path.range(of: orgRoutes, options: .regularExpression) != nil,
+              let tok = token, let url = URL(string: backendBase + path) else { return (0, nil) }
+        var req = URLRequest(url: url, timeoutInterval: 20)
+        req.httpMethod = method
+        req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+        if let body, !(body is NSNull), let data = try? JSONSerialization.data(withJSONObject: body) {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = data
+        }
+        var out: (status: Int, data: Any?) = (0, nil)
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { d, r, _ in
+            if let h = r as? HTTPURLResponse { out = (h.statusCode, d.flatMap { try? JSONSerialization.jsonObject(with: $0, options: .fragmentsAllowed) }) }
+            sem.signal()
+        }.resume()
+        sem.wait()
+        return out
+    }
+
+    /// Forgets this computer's pairing and the team's names cached for tags.
+    static func unpair() {
+        for f in [tokenFile, projectsFile, projectFeedFile] { try? FileManager.default.removeItem(atPath: f) }
+    }
+
     static let httpPost: Poster = { path, body, bearer in
         httpSend(path, body, bearer).flatMap { (200..<300).contains($0.status) ? $0.data : nil }
     }
@@ -47,7 +76,28 @@ enum CloudSync {
         let c = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !c.isEmpty, let data = post("/api/pair", ["code": c], nil),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tok = obj["deviceToken"] as? String, !tok.isEmpty else { return false }
+              let tok = obj["deviceToken"] as? String else { return false }
+        return save(token: tok)
+    }
+
+    /// "Sign in with Google" in the Organization side: Google's ID token (who the user is) for a
+    /// device token, in place of a pairing code. The ID token is all that's sent; the Gmail and
+    /// Calendar tokens it came with stay in ~/.nikxel. nil when connected, else what to tell them.
+    /// `extra` starts an organization ({org_name}) or joins one ({invite}) when the account isn't in one yet.
+    static func signIn(idToken: String, extra: [String: String] = [:], send: StatusPoster = httpSend) -> String? {
+        guard let r = send("/api/auth/app", extra.merging(["id_token": idToken]) { $1 }, nil) else { return "Couldn’t reach your organization’s server. Check your internet, then try again." }
+        let obj = r.data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        if r.status == 403 { return "Your Google account isn’t in an organization yet. Start one below, or paste an invite link from your admin." }
+        if r.status == 404 { return "That invite link doesn’t work any more. Ask your admin for a new one." }
+        if r.status == 503 { return "Your organization’s server isn’t set up for Google sign-in yet. Use a pairing code for now." }
+        guard (200..<300).contains(r.status), let tok = obj?["deviceToken"] as? String, save(token: tok) else {
+            return "Sign-in didn’t work" + ((obj?["error"] as? String).map { " (\($0))" } ?? "") + ". Try again."
+        }
+        return nil
+    }
+
+    private static func save(token tok: String) -> Bool {
+        guard !tok.isEmpty else { return false }
         try? FileManager.default.createDirectory(atPath: (tokenFile as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)
         guard FileManager.default.createFile(atPath: tokenFile, contents: Data(tok.utf8),

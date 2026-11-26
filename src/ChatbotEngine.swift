@@ -252,7 +252,8 @@ class ChatbotEngine {
 
     // User toggle (persisted). When false, the bot never auto-replies, even in a meeting.
     var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "nikxel.botEnabled") as? Bool ?? true }
+        // Off until the user turns it on. Anyone set up before off became the default keeps it on (NikxelApp, at launch).
+        get { UserDefaults.standard.object(forKey: "nikxel.botEnabled") as? Bool ?? false }
         set {
             UserDefaults.standard.set(newValue, forKey: "nikxel.botEnabled")
             if newValue {

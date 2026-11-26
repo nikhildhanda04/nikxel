@@ -15,7 +15,7 @@ import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import { GoogleAuth } from "../google/googleAuth";
 import { CoachPointer, windowRectByTitle } from "./coachTour";
 import { spriteRows } from "./spriteFrames";
-import { SpriteSheetImporter } from "./spriteSheetImporter";
+import { SpriteImportError, SpriteSheetImporter } from "./spriteSheetImporter";
 import { CloudSync } from "./cloudSync";
 
 /// First-run (and reopenable-anytime, via the tray) setup wizard: say hello,
@@ -36,7 +36,7 @@ type Tone = "muted" | "red" | "orange" | "green";
 
 /// What the page posts (webkit.messageHandlers.nx in OnboardingPage.swift).
 export interface OnboardingAction {
-  type: "go" | "copyPrompt" | "chooseSheet" | "photoAvatar" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
+  type: "go" | "copyPrompt" | "chooseSheet" | "photoAvatar" | "photoAgain" | "resetSheet" | "downloadModel" | "installDeps" | "recheckDeps" | "language"
     | "connectWhatsApp" | "getChrome" | "connectGoogle" | "pickAgent" | "copyAgent" | "installAgent" | "retestAgents" | "finish";
   step?: string; name?: string; code?: string; index?: number;
 }
@@ -85,6 +85,11 @@ export class OnboardingWindowController {
   private promptCopied = false;
   private importing = false;
   private drawing = false;
+  private drawPhase = 0;    // 1 drawing you, 2 animating, 3 checking the frames; 0 when not drawing
+  private drawTry = 1;      // which sheet try step 2 is on
+  private drawSince = 0;    // when this step started (ms), for the page's seconds counter
+  private drawPreview = ""; // the character Gemini drew, as a data URL
+  private lastPhoto: string | null = null; // for "Not quite me? Draw again"
 
   // Dependency step
   private whisperFound = false;
@@ -231,6 +236,7 @@ export class OnboardingWindowController {
       name: Settings.hasUserName ? Settings.userName : (accountName() ?? ""),
       avatar: {
         custom: this.usingCustomSheet, error: this.sheetError ?? "", copied: this.promptCopied, importing: this.importing, drawing: this.drawing,
+        drawPhase: this.drawPhase, drawTry: this.drawTry, drawSince: this.drawSince, drawPreview: this.drawPreview, redraw: this.lastPhoto !== null && this.usingCustomSheet,
         spec: `PNG, ${cols} columns × ${rows} rows of ${f}px frames (${cols * f}×${rows * f}). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.`,
       },
       deps: {
@@ -305,6 +311,7 @@ export class OnboardingWindowController {
       case "copyPrompt": this.copyPrompt(); break;
       case "chooseSheet": void this.chooseSheet(); break;
       case "photoAvatar": void this.makeFromPhoto(); break;
+      case "photoAgain": if (this.lastPhoto) void this.makeFromPhoto(this.lastPhoto); break;
       case "resetSheet": this.resetSheet(); break;
       case "installDeps": void this.installDeps(); break;
       case "recheckDeps": void this.refreshDeps(); break;
@@ -525,43 +532,70 @@ export class OnboardingWindowController {
     await this.importSheet(async () => file);
   }
 
-  /// Setup's "Make me from a photo": nikxel-api has Gemini draw the sheet
-  /// (its key, its prompts; the photo isn't kept), then the usual import.
-  private async makeFromPhoto(): Promise<void> {
+  /// Setup's "Make me from a photo": nikxel-api has Gemini draw you as a
+  /// character, then animate that character into the sheet (its key, its
+  /// prompts; the photo isn't kept), then the usual import. Step by step, so
+  /// the page can show each one. Gemini draws something different every
+  /// time and sometimes loses the grid, so a sheet the importer refuses is
+  /// redrawn from the same character, up to 3 tries.
+  private async makeFromPhoto(photo?: string): Promise<void> {
     if (this.importing || !this.win) return;
-    const r = await dialog.showOpenDialog(this.win, {
-      title: "Pick a clear photo of your face",
-      filters: [{ name: "Photo", extensions: ["jpg", "jpeg", "png"] }],
-      properties: ["openFile"],
-    });
-    const file = r.filePaths[0];
-    if (r.canceled || !file) return;
+    let file = photo;
+    if (!file) {
+      const r = await dialog.showOpenDialog(this.win, {
+        title: "Pick a clear photo of your face",
+        filters: [{ name: "Photo", extensions: ["jpg", "jpeg", "png"] }],
+        properties: ["openFile"],
+      });
+      file = r.filePaths[0];
+      if (r.canceled || !file) return;
+    }
+    const chosen = file;
+    this.lastPhoto = chosen;
     this.drawing = true;
+    this.drawPreview = "";
+    const phase = (p: number, tryN = 1, preview?: string) => {
+      this.drawPhase = p; this.drawTry = tryN; this.drawSince = Date.now();
+      if (preview !== undefined) this.drawPreview = preview;
+      this.render();
+    };
     await this.importSheet(async () => {
-      try { return await OnboardingWindowController.drawSheet(file); } finally { this.drawing = false; }
+      try {
+        let img = nativeImage.createFromPath(chosen);
+        if (img.isEmpty()) throw new Error("Couldn’t open that photo. Try a JPEG or PNG.");
+        const { width, height } = img.getSize();
+        if (Math.max(width, height) > 1024) img = img.resize(width >= height ? { width: 1024 } : { height: 1024 });
+        phase(1);
+        const character = await OnboardingWindowController.avatar({ photo: img.toJPEG(85).toString("base64"), mime: "image/jpeg", only: "character" });
+        const small = nativeImage.createFromBuffer(Buffer.from(character.image, "base64")).resize({ width: 240 });
+        phase(2, 1, small.isEmpty() ? "" : small.toDataURL());
+        for (let n = 1; ; n++) {
+          const sheet = await OnboardingWindowController.avatar({ character: character.image, mime: character.mime });
+          phase(3, n);
+          const out = path.join(os.tmpdir(), "nikxel-avatar-sheet.png");
+          await fs.promises.writeFile(out, Buffer.from(sheet.image, "base64"));
+          try { await SpriteSheetImporter.process(out); return out; } catch (e) {
+            if (!(e instanceof SpriteImportError) || n === 3) throw e;
+            phase(2, n + 1);
+          }
+        }
+      } finally { this.drawing = false; this.drawPhase = 0; this.drawPreview = ""; }
     });
   }
 
-  /// The photo, at most 1024px and as JPEG, to /api/avatar; the sheet it returns, as a temp file.
-  private static async drawSheet(file: string): Promise<string> {
-    let img = nativeImage.createFromPath(file);
-    if (img.isEmpty()) throw new Error("Couldn’t open that photo. Try a JPEG or PNG.");
-    const { width, height } = img.getSize();
-    if (Math.max(width, height) > 1024) img = img.resize(width >= height ? { width: 1024 } : { height: 1024 });
+  /// One /api/avatar call; the image it returns (base64).
+  private static async avatar(body: Record<string, string>): Promise<{ mime: string; image: string }> {
     let res: Response;
     try {
       res = await fetch(CloudSync.backendBase() + "/api/avatar", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photo: img.toJPEG(85).toString("base64"), mime: "image/jpeg" }),
-        signal: AbortSignal.timeout(240_000),
+        body: JSON.stringify(body), signal: AbortSignal.timeout(240_000),
       });
     } catch { throw new Error("Couldn’t reach Nikxel’s server. Check your internet and try again."); }
-    let obj: { image?: string; error?: string };
+    let obj: { image?: string; mime?: string; error?: string };
     try { obj = await res.json() as typeof obj; } catch { throw new Error("Nikxel’s server didn’t answer properly. Try again."); }
     if (!obj.image) throw new Error(obj.error || "Couldn’t draw you just now. Try again.");
-    const out = path.join(os.tmpdir(), "nikxel-avatar-sheet.png");
-    await fs.promises.writeFile(out, Buffer.from(obj.image, "base64"));
-    return out;
+    return { mime: obj.mime || "image/png", image: obj.image };
   }
 
   /// Imports the sheet `source` gives (it may take a while).

@@ -286,8 +286,10 @@ export const Settings = {
   set captureMode(v: CaptureMode) { save(s => { s.captureMode = v; }); },
 
   /// WhatsApp auto-replies master switch (ChatbotEngine.isEnabled).
-  get botEnabled(): boolean { return load().botEnabled ?? true; },
+  /// Off until the user turns it on. Anyone set up before off became the default keeps it on (main.ts, at launch).
+  get botEnabled(): boolean { return load().botEnabled ?? false; },
   set botEnabled(v: boolean) { save(s => { s.botEnabled = v; }); },
+  get botEnabledUnset(): boolean { return load().botEnabled === undefined; },
 
   /// Mic mute (AudioRecorder.isMicMuted): recording continues, the mic track is silent.
   get micMuted(): boolean { return load().micMuted ?? false; },

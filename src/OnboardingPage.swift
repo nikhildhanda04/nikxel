@@ -155,6 +155,13 @@ kbd{font:600 12px/1 var(--font-body);padding:4px 8px;border:1px solid var(--colo
 .busy{display:flex;align-items:center;gap:8px;color:var(--color-muted);font-size:14px;margin:0}
 .spin{width:14px;height:14px;flex:none;border-radius:50%;border:2px solid var(--color-line);border-top-color:var(--color-ink);animation:spin 1.1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.drawing{display:flex;gap:16px;align-items:center;margin:0}
+.drawing img{width:96px;height:96px;flex:none;border-radius:12px;image-rendering:pixelated;background:var(--color-line)}
+.drawsteps{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:14px;color:var(--color-muted)}
+.drawsteps li{display:flex;align-items:center;gap:8px}
+.drawsteps li.now{color:var(--color-ink);font-weight:500}
+.drawsteps .tick{width:14px;flex:none;text-align:center}
+.drawsteps .secs{font-variant-numeric:tabular-nums;font-weight:400;color:var(--color-muted)}
 .bar{height:8px;border-radius:99px;background:var(--color-paper-2);overflow:hidden;margin:8px 0 8px}
 .bar i{display:block;height:100%;width:100%;border-radius:inherit;background:var(--color-stem);transform-origin:left;transform:scaleX(0);transition:transform .8s var(--ease)}
 
@@ -509,6 +516,26 @@ function guideFor(step) { return '<ol class="guide" id="guide" data-in>' + guide
 function note(text) { return '<p class="note" data-in>' + text + '</p>'; }
 // Walk a list of conditions: everything before the first unmet one is done,
 // that one is now, the rest wait.
+// Make me from a photo, step by step, with a seconds counter on the step
+// that's running, so a long Gemini wait never looks stuck.
+function drawSteps(a) {
+  var steps = ['Drawing you as a character',
+    a.drawTry > 1 ? 'That one came out jumbled, animating you again (try ' + a.drawTry + ' of 3)' : 'Animating you: 40 poses',
+    'Checking every frame fits'];
+  return '<div class="drawing">' + (a.drawPreview ? '<img src="' + a.drawPreview + '" alt="You, as Gemini drew you">' : '') +
+    '<ol class="drawsteps">' + steps.map(function (t, i) {
+      var n = i + 1, now = n === a.drawPhase, done = n < a.drawPhase;
+      return '<li class="' + (now ? 'now' : done ? 'done' : '') + '">' +
+        (now ? '<span class="spin"></span>' : '<span class="tick">' + (done ? '✓' : '·') + '</span>') + esc(t) +
+        (now ? ' <span class="secs" data-since="' + a.drawSince + '"></span>' : '') + '</li>';
+    }).join('') + '</ol></div>' +
+    '<p class="fine">Each step usually takes 20 to 40 seconds.</p>';
+}
+setInterval(function () {
+  document.querySelectorAll('.secs[data-since]').forEach(function (el) {
+    el.textContent = Math.max(0, Math.round((Date.now() - +el.dataset.since) / 1000)) + ' s';
+  });
+}, 1000);
 function track(texts, doneUpTo) {
   return texts.map(function (t, i) { return [t, i < doneUpTo ? 'done' : i === doneUpTo ? 'now' : '']; });
 }
@@ -583,9 +610,10 @@ var VIEWS = {
         '<div class="well"><div class="sp">' + sprite(0) + '</div></div>' +
         '<p class="fine">' + (a.custom ? 'This is your own sprite sheet.' : 'This is the character that comes with Nikxel.') + '</p>' +
         (a.error ? '<p class="err">' + esc(a.error) + '</p>' : '') +
-        (a.importing ? '<p class="busy"><span class="spin"></span>' + (a.drawing ? 'Drawing you from your photo… about a minute.' : 'Reading your image…') + '</p>' : '') +
+        (a.drawing ? drawSteps(a) : a.importing ? '<p class="busy"><span class="spin"></span>Reading your image…</p>' : '') +
         '<div class="btns">' +
           btn('Make me from a photo…', 'photoAvatar', a.importing ? 'disabled' : '', 'primary') +
+          (a.redraw ? btn('Not quite me? Draw again', 'photoAgain', a.importing ? 'disabled' : '', 'ghost') : '') +
           (a.custom ? btn('Go back to the default', 'resetSheet', '', 'ghost') : '') +
         '</div>' +
         // By hand, for when the server can't: the old copy-the-prompt route.
@@ -676,7 +704,7 @@ var VIEWS = {
       return '<h1 class="display" data-in>Let me reply on WhatsApp</h1>' +
         '<p class="lead" data-in><b>Optional.</b> I can answer your WhatsApp messages the way you would while you’re in a meeting, or all day.</p>' +
         guideFor('whatsapp') + NAV +
-        note('Skip it and connect later from ' + menu() + '.');
+        note('Connecting doesn’t start any replies: turn them on when you’re ready, in the Nikxel window under <b>WhatsApp</b>. Skip it and connect later from ' + menu() + '.');
     },
     guide: function (s) {
       var w = s.wa, items = [

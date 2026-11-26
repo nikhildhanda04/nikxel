@@ -67,6 +67,10 @@ export async function processBitmap(src: Bitmap): Promise<Bitmap> {
   if (rowBands.length !== rows || colBands.length !== cols) {
     throw ImportErrors.wrongGrid(rowBands.length, colBands.length);
   }
+  // Column bands span the whole sheet, so 6 figures a row can overlap across
+  // rows and still split into 4. Count figures inside each row as well.
+  const most = Math.max(...rowBands.map(b => figuresIn(src, b)));
+  if (most > cols) throw ImportErrors.wrongGrid(rows, most);
 
   // One scale for the whole sheet, sized so the tallest row band and the
   // widest column band both fit with room for the outline. Scaling each
@@ -93,6 +97,21 @@ export async function processBitmap(src: Bitmap): Promise<Bitmap> {
   hardenEdges(out);
   addOutline(out);
   return out;
+}
+
+/// Figures side by side in one row band: runs of occupied columns at least a
+/// third of a cell wide, so sparkles, hearts and speed lines don't count.
+function figuresIn(bmp: Bitmap, band: Band): number {
+  const minWidth = Math.floor(bmp.w / cols / 3);
+  let n = 0, run = 0;
+  for (let x = 0; x <= bmp.w; x++) {
+    let occupied = false;
+    for (let y = band.start; x < bmp.w && y <= band.end && !occupied; y++) occupied = bmp.alpha(x, y) > 30;
+    if (occupied) { run++; continue; }
+    if (run >= minWidth) n++;
+    run = 0;
+  }
+  return n;
 }
 
 /// The sheet's real row (or column) boundaries: runs of lines holding

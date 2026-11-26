@@ -120,6 +120,16 @@ export async function projects(): Promise<{ id: number; name: string }[]> {
     .map(r => ({ id: r.id as number, name: r.name as string }));
 }
 
+/** Names of the projects where the user has a task assigned to them, or assigned one (created it). null when not connected or on failure. */
+export async function myProjectNames(): Promise<string[] | null> {
+  if (!isConnected()) return null;
+  const uid = await sessionUID();
+  if (!uid) return null;
+  const rows = await callKw("project.task", "search_read", [["|", ["user_ids", "in", [uid]], ["create_uid", "=", uid]], ["project_id"]]);
+  if (!Array.isArray(rows)) return null;
+  return [...new Set(rows.map(r => (r as any)?.project_id).filter(v => Array.isArray(v) && typeof v[1] === "string").map(v => v[1] as string))].sort();
+}
+
 export interface TouchedTask { name: string; project: string; stage: string; deadline: string }
 
 /// The user's tasks written on `day` (local), for the 10pm summary. [] when not connected or on any failure.

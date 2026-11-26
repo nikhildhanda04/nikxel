@@ -58,13 +58,15 @@ enum PageShare {
     /// Re-inject the current widget into pages Nikxel already wrote, so old
     /// summaries gain new buttons (Assign) without being regenerated. Keeps
     /// each page's existing Edit affordance, and skips pages already upgraded.
+    /// The widget carries a version marker (<!--nxw:N-->): bump N whenever its
+    /// JS changes, or pages written before the change keep the old code.
     static func migrateWidgets() {
         let root = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/nikxel")
         guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
               let re = try? NSRegularExpression(pattern: "<!--nikxel-share-->[\\s\\S]*?<!--/nikxel-share-->") else { return }
         for case let url as URL in en where url.pathExtension == "html" {
             guard let html = try? String(contentsOf: url, encoding: .utf8),
-                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxwa-->") else { continue }
+                  html.contains("<!--nikxel-share-->"), !html.contains("<!--nxw:2-->") else { continue }
             let block = widget(editable: html.contains("nx-edit") || html.contains("nx-chat"))
             let out = re.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html),
                                                   withTemplate: NSRegularExpression.escapedTemplate(for: block))
@@ -316,7 +318,7 @@ enum PageShare {
 
     /// Same markup in windows/src/main/system/pageShare.ts.
     private static let widgetTemplate = #"""
-<!--nikxel-share--><!--nxwa--><div id="nx-share"><button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
+<!--nikxel-share--><!--nxw:2--><div id="nx-share"><button class="nx-btn nx-sharebtn" type="button">Share</button><div class="nx-pop" hidden>
 <button class="nx-copy" type="button">Copy file</button><div class="nx-or">or send on WhatsApp to</div>
 <input class="nx-q" placeholder="Search a chat or contact"><div class="nx-list"></div><div class="nx-msg"></div></div></div>
 __NIKXEL_CHAT__
@@ -371,11 +373,10 @@ body.nx-has-chat{padding-bottom:104px}
 #nx-name .nxn-in{flex:1;min-width:180px;padding:8px 10px;border:1px solid #d2d2d7;border-radius:9px;font:inherit;background:#fff;color:#1d1d1f}
 #nx-name button{border:0;border-radius:999px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
 #nx-name .nxn-ok{background:#1d1d1f;color:#fff}
-#nx-name .nxn-no{background:transparent;color:#6e6e73}
 #nx-name button:disabled{opacity:.5;cursor:default}
 #nx-name .nxn-msg{width:100%;font-size:12px;color:#6e6e73}
 #nx-name .nxn-msg:empty{display:none}
-@media (prefers-color-scheme:dark){#nx-name .nxn-in{background:#1c1c1e;color:#f5f5f7;border-color:#3a3a3c}#nx-name .nxn-ok{background:#f5f5f7;color:#1d1d1f}#nx-name .nxn-no{color:#a0a0a8}}
+@media (prefers-color-scheme:dark){#nx-name .nxn-in{background:#1c1c1e;color:#f5f5f7;border-color:#3a3a3c}#nx-name .nxn-ok{background:#f5f5f7;color:#1d1d1f}}
 @media print{#nx-name{display:none}}
 li.task .nx-assign{margin-left:8px;vertical-align:middle;background:#1d1d1f;color:#fff;border:0;border-radius:999px;padding:3px 11px;font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;opacity:.85}
 li.task .nx-assign:hover{opacity:1}
@@ -545,13 +546,13 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
   if (named) document.title = named[1];
 
   // --- A summary still named by its timestamp: Nikxel suggests a title on
-  // the page; the user saves it as is, edits it first, or keeps the date name.
+  // the page; the user saves it as is or edits it first.
   var NK = "nx-named:" + path, kept = false;
   try { kept = !!localStorage.getItem(NK); } catch (e) {}
   if (/^\d{4}-\d\d-\d\d-\d{6}\.html$/.test(path.split(/[\\/]/).pop()) && !kept) {
     var nb = document.createElement("div"); nb.id = "nx-name";
     nb.innerHTML = '<span class="nxn-l">Name this file</span><input class="nxn-in" placeholder="Nikxel is thinking of a name…" disabled>'
-      + '<button type="button" class="nxn-ok" disabled>Save name</button><button type="button" class="nxn-no">Keep date name</button><span class="nxn-msg"></span>';
+      + '<button type="button" class="nxn-ok" disabled>Save name</button><span class="nxn-msg"></span>';
     var nmain = document.querySelector("main") || document.body; nmain.insertBefore(nb, nmain.firstChild);
     var nin = nb.querySelector(".nxn-in"), nok = nb.querySelector(".nxn-ok"), nmsg = nb.querySelector(".nxn-msg");
     call("name").then(function (r) {
@@ -565,7 +566,7 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
         if (r.url) {
           location.replace(r.url);
           // Renamed on disk either way; if this page wasn't swapped for the new one, say so instead of hanging.
-          setTimeout(function () { nin.disabled = true; nb.querySelector(".nxn-no").remove(); nok.remove(); nmsg.textContent = "Renamed to \u201c" + v + "\u201d. It shows under that name in Library."; }, 2000);
+          setTimeout(function () { nin.disabled = true; nok.remove(); nmsg.textContent = "Renamed to \u201c" + v + "\u201d. It shows under that name in Library."; }, 2000);
           return;
         }
         nok.disabled = false; nmsg.textContent = r.error || "Couldn't rename.";
@@ -573,7 +574,6 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     };
     nok.onclick = nsave;
     nin.onkeydown = function (e) { if (e.key === "Enter") nsave(); };
-    nb.querySelector(".nxn-no").onclick = function () { try { localStorage.setItem(NK, "1"); } catch (e) {} nb.remove(); };
   }
 
   // --- "Share to project": pick one of your dashboard projects, see exactly

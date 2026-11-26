@@ -26,6 +26,11 @@ final class GoogleAuth {
         "https://www.googleapis.com/auth/gmail.modify",
     ]
 
+    /// Who the user is, asked for with the rest so one consent also signs them in to their
+    /// organization (identityToken). Google reports these as granted "openid" plus two userinfo
+    /// URLs, so they're kept out of `scopes`, which the declined-permission check reads.
+    static let identity = ["openid", "email", "profile"]
+
     private let credsPath: URL
     private let tokenPath: URL
     private var listener: NWListener?
@@ -35,6 +40,10 @@ final class GoogleAuth {
     private var accessToken: String?
     private var refreshToken: String?
     private var accessTokenExpiry: Date?
+    /// The latest ID token from Google, in memory only; identityToken hands it to the org server.
+    private var idToken: String?
+    private var pendingIdentity: ((String?) -> Void)?
+    private var identityAttempt = 0
     /// Scopes the stored refresh token was actually granted. Empty for tokens
     /// written by a build that predates write access -- those only ever had
     /// calendar.readonly, so a write has to send the user back through consent.
@@ -101,6 +110,7 @@ final class GoogleAuth {
                 body(nil); return
             }
             self.accessToken = at
+            self.idToken = obj["id_token"] as? String ?? self.idToken
             if let expIn = obj["expires_in"] as? Double {
                 self.accessTokenExpiry = Date().addingTimeInterval(expIn - 60)
             }
@@ -112,6 +122,32 @@ final class GoogleAuth {
             self.saveTokens()
             body(at)
         }.resume()
+    }
+
+    /// Google's signed statement of who the user is, for "Sign in with Google" to the organization
+    /// (CloudSync.signIn). From a refresh when the grant already includes it, else through the
+    /// consent screen, which also connects Gmail and Calendar. Only this ID token ever leaves
+    /// the computer; the access and refresh tokens don't. `done` runs on the main thread.
+    func identityToken(_ done: @escaping (String?) -> Void) {
+        let main: (String?) -> Void = { t in DispatchQueue.main.async { done(t) } }
+        if loadCreds(), loadTokens(), grantedScopes.contains("openid") {
+            invalidateAccessToken()
+            withAccessToken { [weak self] at in main(at == nil ? nil : self?.idToken) }
+            return
+        }
+        pendingIdentity?(nil)
+        var answered = false
+        let once: (String?) -> Void = { t in if !answered { answered = true; main(t) } }
+        pendingIdentity = once
+        reauthenticate()
+        if !loadCreds() { pendingIdentity = nil; once(nil); return }   // no Google client: setup's alert said so
+        // ponytail: a sign-in abandoned in the browser never answers; give up after 5 minutes.
+        identityAttempt += 1
+        let attempt = identityAttempt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+            if self?.identityAttempt == attempt { self?.pendingIdentity = nil }
+            once(nil)
+        }
     }
 
     /// Forces the next `withAccessToken` to refresh -- call after a 401.
@@ -273,7 +309,7 @@ final class GoogleAuth {
             URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: Self.scopes.joined(separator: " ")),
+            URLQueryItem(name: "scope", value: (Self.identity + Self.scopes).joined(separator: " ")),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
             URLQueryItem(name: "state", value: state),
@@ -360,6 +396,7 @@ final class GoogleAuth {
             guard let self = self else { return }
             guard let data = data,
                   let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                self.pendingIdentity?(nil); self.pendingIdentity = nil
                 DispatchQueue.main.async { self.showAlert("Token exchange failed: \(err?.localizedDescription ?? "no response")") }
                 return
             }
@@ -369,13 +406,18 @@ final class GoogleAuth {
                     self.accessTokenExpiry = Date().addingTimeInterval(expIn - 60)
                 }
                 if let rt = obj["refresh_token"] as? String { self.refreshToken = rt }
+                self.idToken = obj["id_token"] as? String
                 if let s = obj["scope"] as? String {
                     self.grantedScopes = Set(s.split(separator: " ").map(String.init))
                 }
                 self.saveTokens()
                 let missing = Self.scopes.filter { !self.grantedScopes.contains($0) }
+                let pending = self.pendingIdentity
+                self.pendingIdentity = nil
                 DispatchQueue.main.async {
                     self.onAuthorized?()
+                    // Signing in to the organization: its page says how that went.
+                    if let pending { pending(self.idToken); if missing.isEmpty { return } }
                     if missing.isEmpty {
                         self.showAlert("Google account connected \u{2713}\n\nCalendar reminders, Google Tasks and follow-up meetings are all available.")
                     } else {
@@ -386,6 +428,7 @@ final class GoogleAuth {
                     }
                 }
             } else {
+                self.pendingIdentity?(nil); self.pendingIdentity = nil
                 let desc = (obj["error_description"] as? String) ?? (obj["error"] as? String) ?? "unknown error"
                 DispatchQueue.main.async { self.showAlert("Token exchange failed: \(desc)") }
             }

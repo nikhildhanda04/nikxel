@@ -29,6 +29,11 @@ export class GoogleAuth {
     "https://www.googleapis.com/auth/gmail.modify",
   ];
 
+  /// Who the user is, asked for with the rest so one consent also signs them in to their
+  /// organization (identityToken). Google reports these as granted "openid" plus two userinfo
+  /// URLs, so they're kept out of `scopes`, which the declined-permission check reads.
+  static readonly identity = ["openid", "email", "profile"];
+
   private readonly credsPath: string;
   private readonly tokenPath: string;
   private server: http.Server | null = null;
@@ -39,6 +44,9 @@ export class GoogleAuth {
   private refreshToken: string | null = null;
   /// ms since epoch.
   private accessTokenExpiry: number | null = null;
+  /// The latest ID token from Google, in memory only; identityToken hands it to the org server.
+  private idToken: string | null = null;
+  private pendingIdentity: ((t: string | null) => void) | null = null;
   /// Scopes the stored refresh token was actually granted. Empty for tokens
   /// written by a build that predates write access -- those only ever had
   /// calendar.readonly, so a write has to send the user back through consent.
@@ -132,6 +140,7 @@ export class GoogleAuth {
           throw new Error(`Couldn't refresh the Google login: ${why}`);
         }
         this.accessToken = token;
+        if (typeof obj!.id_token === "string") this.idToken = obj!.id_token;
         if (typeof obj!.expires_in === "number") {
           this.accessTokenExpiry = Date.now() + (obj!.expires_in - 60) * 1000;
         }
@@ -147,6 +156,30 @@ export class GoogleAuth {
       }
     })();
     return this.refreshing;
+  }
+
+  /// Google's signed statement of who the user is, for "Sign in with Google" to the organization
+  /// (CloudSync.signIn). From a refresh when the grant already includes it, else through the
+  /// consent screen, which also connects Gmail and Calendar. Only this ID token ever leaves
+  /// the computer; the access and refresh tokens don't. Port of GoogleAuth.identityToken.
+  identityToken(): Promise<string | null> {
+    if (this.loadCreds() && this.loadTokens() && this.grantedScopes.has("openid")) {
+      this.invalidateAccessToken();
+      return this.getAccessToken().then(() => this.idToken, () => null);
+    }
+    return new Promise(resolve => {
+      this.pendingIdentity?.(null);
+      this.pendingIdentity = resolve;
+      this.reauthenticate();
+      // ponytail: a sign-in abandoned in the browser never answers; give up after 5 minutes.
+      setTimeout(() => { if (this.pendingIdentity === resolve) { this.pendingIdentity = null; resolve(null); } }, 5 * 60_000);
+    });
+  }
+  private settleIdentity(t: string | null): boolean {
+    const p = this.pendingIdentity;
+    this.pendingIdentity = null;
+    p?.(t);
+    return !!p;
   }
 
   /// Forces the next `getAccessToken` to refresh -- call after a 401.
@@ -169,7 +202,7 @@ export class GoogleAuth {
       // A client JSON already on the clipboard (the last step of the manual
       // path) is taken as-is, so the user never has to find the file.
       if (!this.loadCreds()) await this.importCredsFromClipboard(true);
-      if (!this.loadCreds()) { await this.showSetupAlert(); return; }
+      if (!this.loadCreds()) { this.settleIdentity(null); await this.showSetupAlert(); return; }
       await this.startOAuthFlow();
     })();
   }
@@ -344,7 +377,7 @@ export class GoogleAuth {
       client_id: clientId,
       redirect_uri: redirectURI,
       response_type: "code",
-      scope: GoogleAuth.scopes.join(" "),
+      scope: [...GoogleAuth.identity, ...GoogleAuth.scopes].join(" "),
       access_type: "offline",
       prompt: "consent",
       state,
@@ -401,8 +434,9 @@ export class GoogleAuth {
         }).toString(),
       });
       obj = await res.json().catch(() => null) as Record<string, unknown> | null;
-      if (!obj) { this.showAlert(`Token exchange failed: no response`); return; }
+      if (!obj) { this.settleIdentity(null); this.showAlert(`Token exchange failed: no response`); return; }
     } catch (e) {
+      this.settleIdentity(null);
       this.showAlert(`Token exchange failed: ${(e as Error).message ?? "no response"}`);
       return;
     }
@@ -412,12 +446,15 @@ export class GoogleAuth {
         this.accessTokenExpiry = Date.now() + (obj.expires_in - 60) * 1000;
       }
       if (typeof obj.refresh_token === "string") this.refreshToken = obj.refresh_token;
+      this.idToken = typeof obj.id_token === "string" ? obj.id_token : null;
       if (typeof obj.scope === "string") {
         this.grantedScopes = new Set(obj.scope.split(" ").filter(Boolean));
       }
       this.saveTokens();
       const missing = GoogleAuth.scopes.filter(s => !this.grantedScopes.has(s));
       this.fireAuthorized();
+      // Signing in to the organization: its page says how that went.
+      if (this.settleIdentity(this.idToken) && missing.length === 0) return;
       if (missing.length === 0) {
         this.showAlert("Google account connected ✓\n\nCalendar reminders, Google Tasks and follow-up meetings are all available.");
       } else {
@@ -428,6 +465,7 @@ export class GoogleAuth {
       }
     } else {
       const desc = (obj.error_description as string | undefined) ?? (obj.error as string | undefined) ?? "unknown error";
+      this.settleIdentity(null);
       this.showAlert(`Token exchange failed: ${desc}`);
     }
   }

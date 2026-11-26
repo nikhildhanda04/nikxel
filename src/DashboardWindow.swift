@@ -222,6 +222,37 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         case "autoDelete":
             Automation.save(Automation.load().filter { $0.id != body["id"] as? String })
             push()
+        case "org":
+            let id = body["id"] as? Int ?? 0, method = body["method"] as? String ?? "GET", path = body["path"] as? String ?? "", payload = body["body"]
+            DispatchQueue.global(qos: .userInitiated).async {
+                let r = CloudSync.orgRequest(method: method, path: path, body: payload)
+                DispatchQueue.main.async { self.reply(id, ["status": r.status, "data": r.data ?? NSNull()]) }
+            }
+        case "orgSignIn":
+            // One Google sign-in: Gmail and Calendar for this computer, and who you are for your organization.
+            let id = body["id"] as? Int ?? 0
+            GoogleAuth.shared.identityToken { [weak self] idToken in
+                guard let idToken else { self?.reply(id, ["error": "Google sign-in didn’t finish. Try again."]); return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let extra = ["org_name": body["orgName"], "invite": body["invite"]].compactMapValues { ($0 as? String).flatMap { $0.isEmpty ? nil : $0 } }
+                    let error = CloudSync.signIn(idToken: idToken, extra: extra)
+                    cblog("Dashboard: organization sign-in with Google \(error == nil ? "connected" : "failed")")
+                    DispatchQueue.main.async { self?.reply(id, ["error": (error as Any?) ?? NSNull()]); self?.push() }
+                }
+            }
+        case "erpMyProjects":
+            let id = body["id"] as? Int ?? 0
+            DispatchQueue.global(qos: .userInitiated).async {
+                let names = ERP.myProjectNames()
+                DispatchQueue.main.async { self.reply(id, names.map { ["names": $0] } ?? ["error": "Couldn’t read your ERP. Connect it under Connections, then try again."]) }
+            }
+        case "orgDisconnect":
+            CloudSync.unpair()
+            cblog("Dashboard: this computer disconnected from its organization")
+            push()
+        case "copyText":
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(body["text"] as? String ?? "", forType: .string)
         case "learnDecide":
             if let key = body["key"] as? String {
                 let yes = body["yes"] as? Bool ?? false

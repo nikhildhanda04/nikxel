@@ -138,6 +138,8 @@ class NikxelApp {
 
 
   launch(): void {
+    // Auto-replies became off by default; someone already set up had them on, so pin that.
+    if (Settings.onboardingCompleted && Settings.botEnabledUnset) Settings.botEnabled = true;
     const sm = this.stateMachine;
     this.agentMonitor = new AgentMonitor(sm);
 

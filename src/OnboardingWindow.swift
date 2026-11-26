@@ -29,6 +29,11 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
     private var promptCopied = false
     private var importing = false
     private var drawing = false
+    private var drawPhase = 0      // 1 drawing you, 2 animating, 3 checking the frames; 0 when not drawing
+    private var drawTry = 1        // which sheet try step 2 is on
+    private var drawSince = 0.0    // when this step started (ms), for the page's seconds counter
+    private var drawPreview = ""   // the character Gemini drew, as a data URL
+    private var lastPhoto: URL?    // for "Not quite me? Draw again"
 
     // Dependency step
     private var whisperFound = false
@@ -164,6 +169,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         case "copyPrompt": copyPrompt()
         case "chooseSheet": chooseSheet()
         case "photoAvatar": makeFromPhoto()
+        case "photoAgain": if let p = lastPhoto { makeFromPhoto(p) }
         case "resetSheet": resetSheet()
         case "downloadModel": downloadModel()
         case "installDeps": installDeps()
@@ -227,6 +233,7 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
             "name": NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""),
             "avatar": [
                 "custom": usingCustomSheet, "error": sheetError ?? "", "copied": promptCopied, "importing": importing, "drawing": drawing,
+                "drawPhase": drawPhase, "drawTry": drawTry, "drawSince": drawSince, "drawPreview": drawPreview, "redraw": lastPhoto != nil && usingCustomSheet,
                 "spec": "PNG, \(NikxelSprites.cols) columns × \(NikxelSprites.rows) rows of \(NikxelSprites.frameSize)px frames (\(NikxelSprites.cols * NikxelSprites.frameSize)×\(NikxelSprites.rows * NikxelSprites.frameSize)). One row per state: idle, typing, thinking, done, dragging, pounce, petted, alert, recording, MOM ready.",
             ],
             "deps": [
@@ -505,35 +512,82 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         importSheet { url }
     }
 
-    /// Setup's "Make me from a photo": nikxel-api has Gemini draw the sheet
-    /// (its key, its prompts; the photo isn't kept), then the usual import.
-    private func makeFromPhoto() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.message = "Pick a clear photo of your face"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+    /// Setup's "Make me from a photo": nikxel-api has Gemini draw you as a
+    /// character, then animate that character into the sheet (its key, its
+    /// prompts; the photo isn't kept), then the usual import. Step by step, so
+    /// the page can show each one. Gemini draws something different every
+    /// time and sometimes loses the grid, so a sheet the importer refuses is
+    /// redrawn from the same character, up to 3 tries.
+    private func makeFromPhoto(_ photo: URL? = nil) {
+        var url = photo
+        if url == nil {
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [.image]
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.message = "Pick a clear photo of your face"
+            guard panel.runModal() == .OK else { return }
+            url = panel.url
+        }
+        guard let url else { return }
+        lastPhoto = url
         drawing = true
+        drawPreview = ""
         importSheet { [weak self] in
-            defer { DispatchQueue.main.async { self?.drawing = false } }
-            return try Self.drawSheet(fromPhoto: url)
+            defer { DispatchQueue.main.async { self?.drawing = false; self?.drawPhase = 0; self?.drawPreview = "" } }
+            func phase(_ p: Int, try t: Int = 1, preview: String? = nil) {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    (self.drawPhase, self.drawTry, self.drawSince) = (p, t, Date().timeIntervalSince1970 * 1000)
+                    if let preview { self.drawPreview = preview }
+                    self.push()
+                }
+            }
+            phase(1)
+            let character = try Self.avatar(["photo": try Self.photoJPEG(url), "mime": "image/jpeg", "only": "character"])
+            phase(2, preview: Self.preview(character.data))
+            var n = 1
+            while true {
+                let sheet = try Self.avatar(["character": character.data.base64EncodedString(), "mime": character.mime])
+                phase(3, try: n)
+                let file = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-avatar-sheet.png")
+                try sheet.data.write(to: file)
+                do { _ = try SpriteSheetImporter.process(url: file); return file } catch let e as SpriteSheetImporter.ImportError {
+                    if n == 3 { throw e }
+                    n += 1
+                    phase(2, try: n)
+                }
+            }
         }
     }
 
-    /// The photo, at most 1024px and as JPEG (HEIC and rotation handled by
-    /// ImageIO), to /api/avatar; the sheet it returns, as a temp file.
-    private static func drawSheet(fromPhoto url: URL) throws -> URL {
-        func fail(_ m: String) -> NSError { NSError(domain: "Nikxel", code: 1, userInfo: [NSLocalizedDescriptionKey: m]) }
+    private static func fail(_ m: String) -> NSError { NSError(domain: "Nikxel", code: 1, userInfo: [NSLocalizedDescriptionKey: m]) }
+
+    /// The photo, at most 1024px and as JPEG (HEIC and rotation handled by ImageIO), base64.
+    private static func photoJPEG(_ url: URL) throws -> String {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
                   kCGImageSourceThumbnailMaxPixelSize: 1024, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
               let jpeg = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
         else { throw fail("Couldn’t open that photo. Try a JPEG or PNG.") }
+        return jpeg.base64EncodedString()
+    }
+
+    /// The character, small, as a data URL for the page to show while the sheet is drawn.
+    private static func preview(_ image: Data) -> String {
+        guard let src = CGImageSourceCreateWithData(image as CFData, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 240] as CFDictionary),
+              let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { return "" }
+        return "data:image/png;base64," + png.base64EncodedString()
+    }
+
+    /// One /api/avatar call; the image it returns.
+    private static func avatar(_ body: [String: String]) throws -> (mime: String, data: Data) {
         var req = URLRequest(url: URL(string: CloudSync.backendBase + "/api/avatar")!, timeoutInterval: 240)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["photo": jpeg.base64EncodedString(), "mime": "image/jpeg"])
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         var out: (Data?, Error?)
         let done = DispatchSemaphore(value: 0)
         URLSession.shared.dataTask(with: req) { d, _, e in out = (d, e); done.signal() }.resume()
@@ -541,12 +595,10 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         guard let d = out.0, let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
             throw fail(out.1 == nil ? "Nikxel’s server didn’t answer properly. Try again." : "Couldn’t reach Nikxel’s server. Check your internet and try again.")
         }
-        guard let b64 = obj["image"] as? String, let png = Data(base64Encoded: b64) else {
+        guard let b64 = obj["image"] as? String, let image = Data(base64Encoded: b64) else {
             throw fail(obj["error"] as? String ?? "Couldn’t draw you just now. Try again.")
         }
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("nikxel-avatar-sheet.png")
-        try png.write(to: file)
-        return file
+        return (obj["mime"] as? String ?? "image/png", image)
     }
 
     /// Imports the sheet `source` gives (it may take a while: it runs off the main thread).

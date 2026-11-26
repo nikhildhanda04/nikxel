@@ -39,6 +39,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var templateMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Auto-replies became off by default; someone already set up had them on, so pin that.
+        if UserDefaults.standard.object(forKey: "nikxel.botEnabled") == nil, NikxelSettings.onboardingCompleted {
+            UserDefaults.standard.set(true, forKey: "nikxel.botEnabled")
+        }
         stateMachine = StateMachine()
         agentMonitor = AgentMonitor(stateMachine: stateMachine)
         inputHandler = InputHandler(stateMachine: stateMachine)
@@ -712,7 +716,7 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 switch result {
                 case .success(let url):
                     self.stateMachine.triggerMomReady()
-                    NSWorkspace.shared.open(url)
+                    NSWorkspace.shared.openFile(url)   // the Nikxel window, unless the user chose the browser
                     if job.mode == .meeting { GoogleSync.offer(noteURL: url) }
                 case .failure(let error):
                     NikxelView.tell(icon: "⚠️", title: "Regeneration failed",

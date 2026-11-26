@@ -98,7 +98,16 @@ final class ChatSession {
             // What Nikxel is doing right now and has done today (apps, code, agent asks),
             // then the WhatsApp read, then the written summaries/notes/projects.
             let live = (DayLogger.current?.liveContext(inMeeting: MeetingDetector.shared.isInMeeting)).map { "### right now\n\($0)" } ?? ""
-            var context = [NikxelSettings.userContextBlock, attach, live, named, self.waSnapshot, self.mailSnapshot,
+            // Live connection state, so "is my Gmail connected?" isn't answered from old notes.
+            let g = GoogleAuth.shared, yn = { (b: Bool) in b ? "connected" : "not connected" }
+            let status = """
+                ### connected right now (live; trust this over anything in older notes)
+                Google: \(yn(g.isAuthorized)); Gmail: \(yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/gmail.modify"))); \
+                Calendar: \(yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/calendar.readonly"))); \
+                WhatsApp: \(yn(NikxelSettings.whatsappConnected)); WhatsApp auto-reply: \(ChatbotEngine.shared.isEnabled ? "on" : "off"); \
+                Slack: \(yn(Slack.isConnected)); ERP: \(yn(ERP.isConnected)); Organization: \(yn(CloudSync.token != nil))
+                """
+            var context = [NikxelSettings.userContextBlock, attach, live, status, named, self.waSnapshot, self.mailSnapshot,
                            ChatContext.build(ChatContext.localBlocks(root: Self.root, today: today) + ChatContext.projectBlocks(feed),
                                              cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
             // Mail: "send it", drafts and labels answer here; a search adds to the context.

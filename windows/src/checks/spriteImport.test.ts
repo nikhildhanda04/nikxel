@@ -51,6 +51,14 @@ test("a sheet with the wrong number of rows is refused", async () => {
   await assert.rejects(processBitmap(sheet(512, 900, 9, 4)), /reads as 9 rows x 4 poses, but Nikxel needs 10 x 4/);
 });
 
+test("a row with too many poses is refused, even when the columns line up overall", async () => {
+  // Gemini's flash-lite drew 6 poses a row; across the sheet the columns merged
+  // and split back into 4, so only a per-row count catches it.
+  const b = sheet(600, 1000, 10, 4), six = sheet(600, 100, 1, 6);
+  b.px.set(six.px.subarray(0, 600 * 100 * 4), 0);
+  await assert.rejects(processBitmap(b), /10 rows x 6 poses/);
+});
+
 test("a tiny image is refused", async () => {
   await assert.rejects(processBitmap(new Bitmap(3, 3)), /too small/);
 });

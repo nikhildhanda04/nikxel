@@ -8,6 +8,7 @@ import { CAP, build, localBlocks, openTarget, projectBlocks, prompt } from "./ch
 import * as SummaryLibrary from "./summaryLibrary";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
+import * as Slack from "./slack";
 import { ChromeWhatsApp, WAMessage } from "../whatsapp/chromeWhatsApp";
 import { ChatbotEngine } from "../whatsapp/chatbotEngine";
 import * as WAChatMatch from "../whatsapp/waChatMatch";
@@ -102,7 +103,14 @@ export class ChatSession {
     // What Nikxel is doing right now and has done today (apps, code, agent asks),
     // then the WhatsApp read, then the written summaries/notes/projects.
     const live = DayLogger.current ? "### right now\n" + (await DayLogger.current.liveContextAsync(MeetingDetector.shared.isInMeeting)) : "";
-    let context = [Settings.userContextBlock, attach, live, named, this.waSnapshot, this.mailSnapshot,
+    // Live connection state, so "is my Gmail connected?" isn't answered from old notes.
+    const g = GoogleAuth.shared, yn = (b: boolean) => b ? "connected" : "not connected";
+    const status = "### connected right now (live; trust this over anything in older notes)\n" +
+      `Google: ${yn(g.isAuthorized)}; Gmail: ${yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/gmail.modify"))}; ` +
+      `Calendar: ${yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/calendar.readonly"))}; ` +
+      `WhatsApp: ${yn(Settings.whatsappConnected)}; WhatsApp auto-reply: ${Settings.botEnabled ? "on" : "off"}; ` +
+      `Slack: ${yn(Slack.isConnected())}; ERP: ${yn(ERP.isConnected())}; Organization: ${yn(CloudSync.token() !== null)}`;
+    let context = [Settings.userContextBlock, attach, live, status, named, this.waSnapshot, this.mailSnapshot,
       build([...localBlocks(root(), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
     // Mail: "send it", drafts and labels answer here; a search adds to the context.
     const m = await this.handleMail(text, context, history, today);

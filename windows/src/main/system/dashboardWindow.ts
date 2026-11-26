@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, session, shell, WebContentsView } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, WebContentsView } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { cblog } from "../core/diag";
@@ -244,6 +244,29 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
       break;
     }
     case "autoDelete": Automation.save(Automation.load().filter(a => a.id !== m.id)); push(); break;
+    case "org": {
+      const id = m.id;
+      void CloudSync.orgRequest(String(m.method ?? "GET"), String(m.path ?? ""), m.body ?? null).then(r => reply(id, r));
+      break;
+    }
+    case "orgSignIn": {
+      // One Google sign-in: Gmail and Calendar for this computer, and who you are for your organization.
+      const id = m.id;
+      void GoogleAuth.shared.identityToken().then(async t => {
+        const extra = Object.fromEntries(([["org_name", m.orgName], ["invite", m.invite]] as const).filter(([, v]) => typeof v === "string" && v)) as Record<string, string>;
+        const error = t ? await CloudSync.signIn(t, extra) : "Google sign-in didn’t finish. Try again.";
+        cblog(`Dashboard: organization sign-in with Google ${error ? "failed" : "connected"}`);
+        reply(id, { error }); push();
+      });
+      break;
+    }
+    case "erpMyProjects": {
+      const id = m.id;
+      void ERP.myProjectNames().then(names => reply(id, names ? { names } : { error: "Couldn’t read your ERP. Connect it under Connections, then try again." }));
+      break;
+    }
+    case "orgDisconnect": CloudSync.unpair(); cblog("Dashboard: this computer disconnected from its organization"); push(); break;
+    case "copyText": clipboard.writeText(String(m.text ?? "")); break;
     case "learnDecide": if (typeof m.key === "string") { Learning.decide(m.key, m.yes === true); push(); } break;
     case "autoRun": { const a = Automation.load().find(x => x.id === m.id); if (a) Automations.runNow(a); break; }
     case "autoMake": {

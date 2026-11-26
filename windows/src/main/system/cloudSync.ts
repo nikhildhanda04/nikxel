@@ -52,13 +52,37 @@ export class CloudSync {
     if (!c) return false;
     const r = await post("/api/pair", { code: c }, null);
     if (!r || typeof r.deviceToken !== "string" || !r.deviceToken) return false;
+    return CloudSync.save(r.deviceToken);
+  }
+
+  /// "Sign in with Google" in the Organization side: Google's ID token (who the user is) for a
+  /// device token, in place of a pairing code. The ID token is all that's sent; the Gmail and
+  /// Calendar tokens it came with stay in ~/.nikxel. null when connected, else what to tell them.
+  /// Port of CloudSync.signIn. `extra` starts an organization ({org_name}) or joins one ({invite}).
+  static async signIn(idToken: string, extra: Record<string, string> = {}): Promise<string | null> {
+    let status = 0, obj: Record<string, unknown> | null = null;
     try {
-      writeAtomic(CloudSync.tokenFile(), r.deviceToken);
+      const res = await fetch(CloudSync.backendBase() + "/api/auth/app", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...extra, id_token: idToken }), signal: AbortSignal.timeout(20_000),
+      });
+      status = res.status; obj = await res.json().catch(() => null) as Record<string, unknown> | null;
+    } catch { return "Couldn’t reach your organization’s server. Check your internet, then try again."; }
+    if (status === 403) return "Your Google account isn’t in an organization yet. Start one below, or paste an invite link from your admin.";
+    if (status === 404) return "That invite link doesn’t work any more. Ask your admin for a new one.";
+    if (status === 503) return "Your organization’s server isn’t set up for Google sign-in yet. Use a pairing code for now.";
+    if (status >= 200 && status < 300 && typeof obj?.deviceToken === "string" && CloudSync.save(obj.deviceToken)) return null;
+    return "Sign-in didn’t work" + (typeof obj?.error === "string" ? ` (${obj.error})` : "") + ". Try again.";
+  }
+
+  private static save(token: string): boolean {
+    if (!token) return false;
+    try {
+      writeAtomic(CloudSync.tokenFile(), token);
       fs.chmodSync(CloudSync.tokenFile(), 0o600); // best-effort on Windows
     } catch { /* chmod unsupported */ }
     try { fs.rmSync(CloudSync.projectsFile(), { force: true }); } catch { /* best-effort */ } // the last user's project names
     try { fs.rmSync(CloudSync.projectFeedFile(), { force: true }); } catch { /* best-effort */ }
-    return CloudSync.token() === r.deviceToken;
+    return CloudSync.token() === token;
   }
 
   static readonly types = new Set(["coding", "shipped", "meeting", "research", "learning", "writing", "review", "planning", "comms", "other"]);
@@ -113,6 +137,27 @@ export class CloudSync {
   }
 
   static httpGet: Getter = CloudSync.getter(20000);
+
+  /// The Nikxel window's Organization side: one call to the org API as this device, any method.
+  /// Only these routes; the page can't reach anything else with the token. Status 0 when unreachable.
+  static readonly orgRoutes = /^\/api\/(org(\/leave|\/owner)?|members(\/[\w-]+)?|invites|projects(\/[\w-]+(\/members\/[\w-]+|\/meetings\/[^/?#]+)?)?|shared\/mine|summaries\/mine\/\d{4}-\d\d-\d\d)$/;
+  static async orgRequest(method: string, path: string, body: unknown): Promise<{ status: number; data: unknown }> {
+    const tok = CloudSync.token();
+    if (!tok || !["GET", "POST", "PATCH", "PUT", "DELETE"].includes(method) || !CloudSync.orgRoutes.test(path)) return { status: 0, data: null };
+    try {
+      const res = await fetch(CloudSync.backendBase() + path, {
+        method, signal: AbortSignal.timeout(20_000),
+        headers: { Authorization: `Bearer ${tok}`, ...(body != null ? { "Content-Type": "application/json" } : {}) },
+        body: body != null ? JSON.stringify(body) : undefined,
+      });
+      return { status: res.status, data: await res.json().catch(() => null) };
+    } catch { return { status: 0, data: null }; }
+  }
+
+  /// Forgets this computer's pairing and the team's names cached for tags.
+  static unpair(): void {
+    for (const f of [CloudSync.tokenFile(), CloudSync.projectsFile(), CloudSync.projectFeedFile()]) try { fs.rmSync(f, { force: true }); } catch { /* already gone */ }
+  }
 
   static projectsFile(): string { return nikxelPath("projects.json"); }
 

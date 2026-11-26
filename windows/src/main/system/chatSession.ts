@@ -8,6 +8,9 @@ import { CAP, build, localBlocks, openTarget, projectBlocks, prompt } from "./ch
 import * as SummaryLibrary from "./summaryLibrary";
 import { CloudSync } from "./cloudSync";
 import * as ERP from "./erp";
+import { looksLikeReminder } from "./automation";
+import { Automations } from "./automations";
+import * as Attachments from "./attachments";
 import * as Slack from "./slack";
 import { ChromeWhatsApp, WAMessage } from "../whatsapp/chromeWhatsApp";
 import { ChatbotEngine } from "../whatsapp/chatbotEngine";
@@ -37,6 +40,7 @@ export class ChatSession {
   private mailSnapshot = ""; // the inbox at open time, when Gmail is connected
   private knownMailIds = new Set<string>(); // ids the chat has shown the model; labels only touch these
   private lastDraftId: string | null = null; // what "send it" sends
+  private files: string[] = [];              // what the user attached in this chat (attachments ids); in every answer's context
   private feed: { feed: any[]; offline: boolean } = { feed: [], offline: true };
   private readonly ready: Promise<void>;
 
@@ -69,16 +73,20 @@ export class ChatSession {
       { name: "Projects", detail: this.feed.offline ? "Team dashboard not reachable." : `${new Set(projects.map(p => p.name)).size} projects on your team dashboard.`, on: !this.feed.offline && projects.length > 0 },
       { name: "WhatsApp", detail: this.waSnapshot ? "Unread, recent chats and the open thread." : "Not open or not logged in.", on: !!this.waSnapshot },
       { name: "Gmail", detail: this.mailSnapshot ? "Your inbox: search, draft, label, send." : (GoogleAuth.shared.isAuthorized ? "Reconnect Google to give me your mail." : "Connect Google to search, draft and tidy mail."), on: !!this.mailSnapshot },
-      { name: "Forklyft ERP", detail: ERP.isConnected() ? "Say “make a task to …” to create one." : "Not connected.", on: ERP.isConnected() },
+      { name: "ERP", detail: ERP.isConnected() ? "I read its open tasks live; say “make a task to …” to create one." : "Not connected.", on: ERP.isConnected() },
     ];
   }
 
   /// Answers `text` with {text, offline, error}. `attach` goes into the context
   /// only (an automation's meeting summary), so what it says can't be taken as a
-  /// mail or ERP command.
-  async send(text: string, attach = ""): Promise<{ text: string; offline: boolean; error: boolean }> {
+  /// mail or ERP command. `automation`: an automation running, whose "remind me…"
+  /// mustn't make another automation.
+  /// `files`: newly attached ones (attachments ids), kept for the rest of this chat.
+  async send(text: string, attach = "", automation = false, files: string[] = []): Promise<{ text: string; offline: boolean; error: boolean }> {
+    for (const f of files) if (!this.files.includes(f)) this.files.push(f);
+    const attached = [...this.files];
     // "open my latest meeting summary": opened here, never left to the model, which can only answer in words.
-    const library = SummaryLibrary.scan(), i = attach ? null : openTarget(text, library);
+    const library = SummaryLibrary.scan(), i = attach || files.length ? null : openTarget(text, library);
     if (i !== null) {
       const e = library[i];
       // Required here: dashboardWindow imports this file.
@@ -109,18 +117,26 @@ export class ChatSession {
       `Google: ${yn(g.isAuthorized)}; Gmail: ${yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/gmail.modify"))}; ` +
       `Calendar: ${yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/calendar.readonly"))}; ` +
       `WhatsApp: ${yn(Settings.whatsappConnected)}; WhatsApp auto-reply: ${Settings.botEnabled ? "on" : "off"}; ` +
-      `Slack: ${yn(Slack.isConnected())}; ERP: ${yn(ERP.isConnected())}; Organization: ${yn(CloudSync.token() !== null)}`;
-    let context = [Settings.userContextBlock, attach, live, status, named, this.waSnapshot, this.mailSnapshot,
+      `Slack: ${yn(Slack.isConnected())}; ERP: ${yn(ERP.isConnected())}; Organization: ${yn(CloudSync.token() !== null)}` +
+      (ERP.isConnected() ? "\nWith ERP connected, I read its open tasks live (below, when the question is about tasks) and I create a task when asked to make or draft one. Never say I can't reach the ERP." : "");
+    // ERP tasks as they are now, when the question (or automation) is about them.
+    const erp = ERP.asksAboutTasks(text) ? await ERP.openTasksBlock() : "";
+    // What they attached comes first after who they are: it's what the question is usually about.
+    const fileBlocks = attached.map(f => Attachments.block(f)).filter((b): b is string => !!b).join("\n\n");
+    let context = [Settings.userContextBlock, fileBlocks, attach, live, status, erp, named, this.waSnapshot, this.mailSnapshot,
       build([...localBlocks(root(), today), ...projectBlocks(feed)], CAP)].filter(x => x).join("\n\n");
     // Mail: "send it", drafts and labels answer here; a search adds to the context.
     const m = await this.handleMail(text, context, history, today);
     if (m.kind === "reply") return finish(m.text, true);
     if (m.kind === "context") context += "\n\n" + m.text;
+    // "remind me tomorrow to …" becomes a one-time automation, so it really happens.
+    if (!automation && looksLikeReminder(text)) return finish(await Automations.remind(text, this.agent, attached), true);
     // "make a task to …" creates one in ERP, drafted from the same
     // meeting/WhatsApp/project context, then opens it to review.
     if (ERP.looksLikeTaskRequest(text)) return finish(await ChatSession.makeERPTask(text, context, today, this.agent), true);
     try {
-      const a = (await this.agent.runPrompt(prompt(context, history, text, today), "chat", "haiku", 30)).trim();
+      // An automation writes more (an SOP, a follow-up email) and nobody's waiting on it.
+      const a = (await this.agent.runPrompt(prompt(context, history, text, today), "chat", automation ? "sonnet" : "haiku", automation ? 180 : 30)).trim();
       cblog(`ChatSession: ${context.length} chars of context, answered`);
       return finish(a, true);
     } catch (e) {
@@ -133,8 +149,8 @@ export class ChatSession {
   /// Draft an ERP task from the chat request plus context, create it, and open
   /// the record to review — the chat-side twin of the summary's Assign button.
   private static async makeERPTask(request: string, context: string, today: Date, agent: MOMGenerator): Promise<string> {
-    if (!ERP.isConnected()) return "Connect Forklyft ERP in Nikxel first, then ask again.";
-    if (!(await ERP.hasLiveSession())) return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again.";
+    if (!ERP.isConnected()) return "Connect your ERP under Connections in Nikxel first, then ask again.";
+    if (!(await ERP.hasLiveSession())) return "Your ERP session has ended — reconnect it under Connections in Nikxel, then try again.";
     let draftReply: string; // context already carries the live activity + WhatsApp read
     try {
       draftReply = await agent.runPrompt(ERP.taskDraftPrompt(request, context, today), "erp-task", "haiku", 30);
@@ -148,6 +164,7 @@ export class ChatSession {
     void shell.openExternal(r.url);
     let line = `Created “${draft.title}” in ERP`;
     if (draft.assignee) line += ` · for ${draft.assignee}`;
+    if (draft.reviewer) line += ` · reviewer ${draft.reviewer}`;
     if (draft.project) line += ` · ${draft.project}`;
     if (draft.due) line += ` · due ${draft.due}`;
     return line + ". Opening it so you can review and edit.";

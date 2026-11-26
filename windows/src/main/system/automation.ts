@@ -20,6 +20,11 @@ export interface Automation {
   enabled: boolean;
   /// "yyyy-MM-dd HH:mm" of the last scheduled run, so a minute is never run twice.
   lastRun: string;
+  /// A temporary one ("remind me tomorrow…"): "yyyy-MM-dd". It runs once, that day at `time` (or as soon
+  /// as Nikxel is next awake after it), then switches itself off. null: it repeats on `days`.
+  date: string | null;
+  /// Files it follows every run (attachments ids), e.g. the user's SOP format. null: none.
+  files: string[] | null;
 }
 
 export const TRIGGERS = ["meeting", "day", "week", "schedule"];
@@ -28,13 +33,19 @@ const DAY_NAMES: Record<string, string> = { sun: "Sunday", mon: "Monday", tue: "
 
 /// An automation with the Swift struct's defaults filled in.
 export function make(p: Partial<Automation> & { instruction: string }): Automation {
-  return { id: "", name: "", trigger: "schedule", time: "09:00", days: "daily", enabled: true, lastRun: "", ...p };
+  return { id: "", name: "", trigger: "schedule", time: "09:00", days: "daily", enabled: true, lastRun: "", date: null, files: null, ...p };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /// "After every meeting", "Weekdays at 09:00"…
-export function when(a: Automation): string {
+export function when(a: Automation, now = new Date()): string {
+  if (a.date && a.trigger === "schedule") {
+    const d = dayDate(a.date), key = (x: Date) => x.toDateString(), tmr = new Date(now); tmr.setDate(now.getDate() + 1);
+    const day = !d ? a.date : key(d) === key(now) ? "today" : key(d) === key(tmr) ? "tomorrow"
+      : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
+    return `Once, ${day} at ${a.time}`;
+  }
   switch (a.trigger) {
     case "meeting": return "After every meeting summary";
     case "day": return "After your day summary";
@@ -50,11 +61,25 @@ export function when(a: Automation): string {
 /// `utc` reads the clock in UTC instead of local time (the Swift's calendar argument, for checks).
 export function due(a: Automation, now: Date, utc = false): boolean {
   if (!a.enabled || a.trigger !== "schedule") return false;
+  if (a.date) {
+    // Late is fine (the computer was asleep at 9): it still runs, once.
+    const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(a.date), hm = a.time.split(":").map(Number);
+    if (a.lastRun || !m || hm.length !== 2) return false;
+    const at = utc ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], hm[0], hm[1])) : new Date(+m[1], +m[2] - 1, +m[3], hm[0], hm[1]);
+    return now >= at;
+  }
   const h = utc ? now.getUTCHours() : now.getHours(), m = utc ? now.getUTCMinutes() : now.getMinutes();
   if (`${pad(h)}:${pad(m)}` !== a.time) return false;
   const wd = WEEKDAYS[utc ? now.getUTCDay() : now.getDay()];
   const dayOK = a.days === "daily" || (a.days === "weekdays" && !["sat", "sun"].includes(wd)) || a.days === wd;
   return dayOK && a.lastRun !== minuteKey(now, utc);
+}
+
+/// A "yyyy-MM-dd" as a local date, or null.
+export function dayDate(s: string | null): Date | null {
+  const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(s ?? "");
+  const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  return d && d.getMonth() === +m![2] - 1 ? d : null;
 }
 
 export function minuteKey(d: Date, utc = false): string {
@@ -78,6 +103,7 @@ export function clean(src: Automation): Automation | null {
   if (!["daily", "weekdays", ...WEEKDAYS].includes(a.days)) a.days = "daily";
   if (typeof a.enabled !== "boolean") a.enabled = true;
   if (typeof a.lastRun !== "string") a.lastRun = "";
+  if (a.trigger !== "schedule" || !dayDate(a.date)) a.date = null;
   if (!a.id) a.id = crypto.randomUUID().toUpperCase();
   return a;
 }
@@ -106,20 +132,33 @@ export const IDEAS: Automation[] = [
 
 // MARK: - Asking the agent
 
-export const SHAPE = `{"name": "short name", "trigger": "meeting|day|week|schedule", "time": "HH:mm", "days": "daily|weekdays|mon|tue|wed|thu|fri|sat|sun", "instruction": "what Nikxel should do, written to Nikxel, ending with: If there's nothing to do, reply SKIP."}`;
+export const SHAPE = `{"name": "short name", "trigger": "meeting|day|week|schedule", "time": "HH:mm", "days": "daily|weekdays|mon|tue|wed|thu|fri|sat|sun", "date": "yyyy-MM-dd, only for a one-time one (a reminder or a task for a given day); leave it out for a repeating one", "instruction": "what Nikxel should do, written to Nikxel, ending with: If there's nothing to do, reply SKIP."}`;
 
 export const CAN =
   "What an automation can do when it runs (it is carried out by Nikxel's chat, which can see the user's " +
   "meeting minutes, day and week summaries and notes from the last 14 days, their team projects, WhatsApp " +
-  "chats when WhatsApp is open, their Gmail inbox when Google is connected, and Forklyft ERP when connected): " +
-  "answer or summarise something and show it to the user; draft an email in Gmail (never send it); make a " +
-  "task in ERP. It cannot send WhatsApp messages or emails by itself.\n" +
+  "chats when WhatsApp is open, their Gmail inbox when Google is connected, and their ERP when connected): " +
+  "answer or summarise something and show it to the user; read the open tasks in ERP (who they're for, " +
+  "stage, deadline); draft an email in Gmail (never send it); make a task in ERP. It cannot send WhatsApp messages or emails by itself.\n" +
   "Triggers: \"meeting\" runs after every meeting summary (the summary is given to it), \"day\" after the " +
-  "end-of-day summary, \"week\" after the weekly summary, \"schedule\" at a time on given days.";
+  "end-of-day summary, \"week\" after the weekly summary, \"schedule\" at a time on given days, or once on a " +
+  "\"date\" (then it switches itself off). It can be given files the user attached (a template or format to " +
+  "follow, a price list), which it gets every time it runs. An automation can be for only some " +
+  "meetings (client calls, ones where an SOP is needed): it decides from each meeting's summary.";
 
 /// Turn the user's request into one automation.
-export function makePrompt(request: string): string {
+export function makePrompt(request: string, now = new Date(), files: string[] = []): string {
+  const stamp = `${now.toLocaleDateString("en-US", { weekday: "long" })} ${minuteKey(now)}`;
   return `The user wants Nikxel to set up an automation. ${CAN}
+It's ${stamp} now. Something for one day ("remind me tomorrow morning to…", "on Friday ` +
+    `check…", "at 5 to…") is a one-time "schedule" with a "date"; "every…", "each…" or "after meetings" repeats. ` +
+    `Morning is 09:00, afternoon 14:00, evening 18:00, unless they say a time. For a reminder the ` +
+    `instruction is "Remind me to <what they said>, in one or two short lines, adding anything useful you ` +
+    `can see about it." and never ends with SKIP. Name it after the task, e.g. "Remind: call Vikas". ` +
+    `If they want it only for some meetings or days (e.g. "only client calls", "when an SOP is needed"), ` +
+    `start the instruction with that test spelled out, e.g. "If this was a call with a client or someone ` +
+    `outside my company where a process was agreed, …; otherwise reply SKIP."` +
+    (files.length ? ` The user attached ${files.map(f => `“${f}”`).join(", ")} for it; it gets the file every run, so the instruction says to follow it by name, e.g. "write an SOP in the exact format of “${files[0]}”".` : "") + `
 
 Reply with only one JSON object, no prose, in this shape:
 ${SHAPE}
@@ -158,7 +197,8 @@ export function parse(reply: string): { a: Automation; why: string }[] {
   const out: { a: Automation; why: string }[] = [];
   for (const d of list) {
     const a = clean(make({ name: str(d.name, ""), trigger: str(d.trigger, ""), time: str(d.time, "09:00"),
-      days: str(d.days, "daily").toLowerCase(), instruction: str(d.instruction, "") }));
+      days: str(d.days, "daily").toLowerCase(), instruction: str(d.instruction, ""), date: typeof d.date === "string" ? d.date : null,
+      files: Array.isArray(d.files) && d.files.length ? d.files.map(String) : null }));
     if (a) out.push({ a, why: str(d.why, "") });
   }
   return out;
@@ -174,18 +214,26 @@ export function load(): Automation[] {
   if (!text) return [];
   try {
     const list = JSON.parse(text);
-    return Array.isArray(list) ? list.map(d => make({ ...d, instruction: String(d.instruction ?? "") })) : [];
+    return Array.isArray(list) ? list.map(d => make({ ...d, instruction: String(d.instruction ?? ""), date: typeof d.date === "string" ? d.date : null,
+      files: Array.isArray(d.files) && d.files.length ? d.files.map(String) : null })) : [];
   } catch { return []; }
 }
 
 /// Pretty-printed with sorted keys, like the Mac's JSONEncoder, so both read the same file.
 export function save(list: Automation[]): void {
   ensureDir(path.dirname(store.file));
-  const sorted = list.map(a => ({ days: a.days, enabled: a.enabled, id: a.id, instruction: a.instruction,
+  // date and files only when set, as Swift's encoder leaves out a nil.
+  const sorted = list.map(a => ({ ...(a.date ? { date: a.date } : {}), days: a.days, enabled: a.enabled, ...(a.files?.length ? { files: a.files } : {}), id: a.id, instruction: a.instruction,
     lastRun: a.lastRun, name: a.name, time: a.time, trigger: a.trigger }));
   writeAtomic(store.file, JSON.stringify(sorted, null, 2));
 }
 
 export function dict(a: Automation): Record<string, unknown> {
-  return { id: a.id, name: a.name, trigger: a.trigger, time: a.time, days: a.days, instruction: a.instruction, enabled: a.enabled, when: when(a) };
+  return { id: a.id, name: a.name, trigger: a.trigger, time: a.time, days: a.days, instruction: a.instruction, enabled: a.enabled, when: when(a),
+    date: a.date, done: !!a.date && !!a.lastRun, files: a.files ?? [] };
+}
+
+/// "Remind me…", "set a reminder…": the chat makes an automation for it instead of only saying it will.
+export function looksLikeReminder(text: string): boolean {
+  return /\b(remind me|(set|add|make|create) (me )?(an? )?reminder|nudge me|ping me|don'?t let me forget|(set up|add|make|create) (an? )?automation)\b/i.test(text);
 }

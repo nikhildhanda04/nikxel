@@ -9,7 +9,36 @@ import AppKit
 /// The session lasts months; only when Odoo finally expires it, or the user
 /// disconnects, do they sign in again.
 enum ERP {
-    static let base = "https://erp.forklyft.in"
+    /// The connected ERP's origin ("https://erp.example.com"). Forklyft's was the
+    /// only one before the address became a setting, so it stays the fallback.
+    static var base: String { NikxelSettings.erpURL.flatMap(origin) ?? "https://erp.forklyft.in" }
+    static var host: String { URL(string: base)?.host ?? "" }
+    /// Why the last sign-in didn't connect, for the Connections page.
+    static var signInProblem = ""
+
+    /// "erp.example.com" or "https://erp.example.com/odoo/" → "https://erp.example.com";
+    /// nil when it isn't a web address.
+    static func origin(_ input: String) -> String? {
+        guard let u = address(input), let h = u.host, let scheme = u.scheme else { return nil }
+        return "\(scheme)://\(h)" + (u.port.map { ":\($0)" } ?? "")
+    }
+
+    /// What the user typed, as a URL to open: https:// added when there's no scheme.
+    static func address(_ input: String) -> URL? {
+        var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty || s.contains(" ") { return nil }
+        if !s.contains("://") { s = "https://" + s }
+        guard let u = URL(string: s), let h = u.host?.lowercased(), ["http", "https"].contains(u.scheme?.lowercased() ?? ""),
+              h.contains(".") || h == "localhost" else { return nil }
+        return u
+    }
+
+    /// Forgets the session (the address stays, for reconnecting).
+    static func disconnect() {
+        storedSession = nil
+        NikxelSettings.erpConnected = false
+        DispatchQueue.global(qos: .utility).async { quit() }
+    }
     static let port = 9223
     static var profileDir: String { NSHomeDirectory() + "/.nikxel/erp-profile" }
 
@@ -41,7 +70,7 @@ enum ERP {
             "--disable-background-networking", "--disable-component-update",
             "--disable-sync", "--disable-default-apps", "--no-pings", "--remote-allow-origins=*",
             "--disable-features=Translate,MediaRouter,OptimizationHints,OptimizationGuideModelDownloading,SpareRendererForSitePerProcess",
-            "--app=\(base)/odoo/",
+            "--app=\(NikxelSettings.erpURL ?? base + "/odoo/")",
         ]
         task.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         task.standardError = FileHandle(forWritingAtPath: "/dev/null")
@@ -70,11 +99,11 @@ enum ERP {
         guard isPortOpen() else { return nil }
         let c = CDPClient(); c.port = port
         // Any erp tab; the headless launch opened one on the ERP origin.
-        guard c.connect(urlContains: "erp.forklyft.in") else {
+        guard c.connect(urlContains: host) else {
             // No tab yet (freshly launched): make one and retry.
             _ = newTab("\(base)/web/session/get_session_info")
             Thread.sleep(forTimeInterval: 0.6)
-            guard c.connect(urlContains: "erp.forklyft.in") else { return nil }
+            guard c.connect(urlContains: host) else { return nil }
             cdp = c; return c
         }
         cdp = c; return c
@@ -257,15 +286,49 @@ enum ERP {
         }
     }
 
+    /// "what's pending in ERP?", "Aarib's open tasks": a question or automation that's about ERP work.
+    static func asksAboutTasks(_ text: String) -> Bool {
+        text.range(of: #"\b(erp|forklyft|tasks?|pending|assigned|deadlines?|overdue)\b"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// The open (not closed) tasks the signed-in user can see, newest first, as a
+    /// context block for chat and automations. "" when not connected or on any failure.
+    static func openTasksBlock(limit: Int = 150) -> String {
+        guard isConnected,
+              let rows = callKw("project.task", "search_read",
+                                args: [[["is_closed", "=", false]],
+                                       ["name", "user_ids", "reviewer_ids", "project_id", "stage_id", "date_deadline", "create_date"]],
+                                kwargs: ["limit": limit, "order": "create_date desc"]) as? [[String: Any]] else { return "" }
+        let names = Dictionary(assignableUsers().map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        func m2o(_ v: Any?) -> String { (v as? [Any])?.last as? String ?? "" }
+        func day(_ v: Any?) -> String { (v as? String).map { String($0.prefix(10)) } ?? "" }
+        let lines = rows.compactMap { r -> String? in
+            guard let name = r["name"] as? String, !name.isEmpty else { return nil }
+            let who = ((r["user_ids"] as? [Int]) ?? []).compactMap { names[$0] }.joined(separator: ", ")
+            var parts = [name, "for: " + (who.isEmpty ? "nobody" : who)]
+            // reviewer_ids is a many2one here despite the name: [id, "Name"] or false.
+            for (label, value) in [("reviewer: ", m2o(r["reviewer_ids"])), ("project: ", m2o(r["project_id"])),
+                                   ("stage: ", m2o(r["stage_id"])), ("due ", day(r["date_deadline"]))] where !value.isEmpty {
+                parts.append(label + value)
+            }
+            parts.append("created " + day(r["create_date"]))
+            return "- " + parts.joined(separator: " · ")
+        }
+        guard !lines.isEmpty else { return "" }
+        return "### ERP: open tasks (live, read just now; the \(lines.count) newest)\n" + lines.joined(separator: "\n")
+    }
+
     // MARK: - Tasks
 
     /// Create a project.task and return its id (nil on failure). The page's
     /// Assign button then opens `taskURL(id)` in the user's own browser, where
     /// the summary is, so they review and keep editing the real record.
     static func createTask(title: String, descriptionHTML: String,
-                           assigneeUserID: Int?, projectID: Int?, deadline: String?) -> Int? {
+                           assigneeUserID: Int?, projectID: Int?, deadline: String?, reviewerUserID: Int? = nil) -> Int? {
         var vals: [String: Any] = ["name": title, "description": descriptionHTML]
         if let u = assigneeUserID { vals["user_ids"] = [[6, 0, [u]]] }   // many2many replace
+        if let r = reviewerUserID { vals["reviewer_ids"] = r }           // Forklyft's own field: one user
         if let p = projectID { vals["project_id"] = p }
         if let d = deadline, !d.isEmpty { vals["date_deadline"] = d }    // "YYYY-MM-DD HH:MM:SS"
         guard let id = callKw("project.task", "create", args: [vals]) as? Int else { return nil }
@@ -347,12 +410,13 @@ enum ERP {
     // the same ERP.createTask path the meeting summary's "Assign" button uses.
 
     /// Does this chat message ask to create a task? A creation verb within a few
-    /// words of "task" — "make a task", "create an ERP task", "add a new task".
+    /// words of "task" — "make a task", "create an ERP task", "add a new task" —
+    /// or "draft a task" / "assign an ERP task" said outright ("draft a nudge for each task" isn't one).
     /// Questions about existing tasks ("what tasks did I create") don't match:
     /// the verb has to come before "task".
     static func looksLikeTaskRequest(_ text: String) -> Bool {
         let re = try! NSRegularExpression(
-            pattern: #"\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b"#,
+            pattern: #"\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b|\b(draft|assign)\s+(a|an|the|this)\s+((new|erp|forklyft)\s+)*task\b"#,
             options: .caseInsensitive)
         return re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
@@ -364,6 +428,7 @@ enum ERP {
         var assignee: String?       // person's name, matched to a user on create
         var project: String?        // project name, matched on create
         var due: String?            // "YYYY-MM-DD"
+        var reviewer: String? = nil // person's name, matched to a user on create
     }
 
     /// The prompt that turns a chat request + context into one TaskDraft as JSON.
@@ -372,10 +437,11 @@ enum ERP {
         df.dateFormat = "yyyy-MM-dd"; df.timeZone = .current
         return """
         You turn a request into one ERP task. Reply with ONLY a JSON object — no prose, no code fences:
-        {"title": string, "body": string, "assignee": string|null, "project": string|null, "due": string|null}
+        {"title": string, "body": string, "assignee": string|null, "reviewer": string|null, "project": string|null, "due": string|null}
         - title: under 70 chars, imperative.
         - body: markdown. Pull the concrete details — what to do, who, which project, any deadline — from the recent meetings, WhatsApp and project notes below when they relate to the request. If nothing relates, write a plain description from the request alone.
         - assignee: a person's name if the request or context names who it's for, else null.
+        - reviewer: the person's name if the request says who reviews it ("keep me i.e. Shreya as the reviewer" → "Shreya"), else null.
         - project: a project name if clear from the context, else null.
         - due: "YYYY-MM-DD" if a date or relative day is given ("tomorrow", "Friday"), else null. Today is \(df.string(from: today)).
 
@@ -399,7 +465,7 @@ enum ERP {
         }
         guard let title = s("title") else { return nil }
         return TaskDraft(title: shortTitle(title), body: s("body") ?? title,
-                         assignee: s("assignee"), project: s("project"), due: s("due"))
+                         assignee: s("assignee"), project: s("project"), due: s("due"), reviewer: s("reviewer"))
     }
 
     /// Create a task from a drafted TaskDraft: match the assignee and project
@@ -407,14 +473,16 @@ enum ERP {
     /// new task's web URL on success, or an error message. Call only with a live
     /// session (hits the network).
     static func createTask(draft: TaskDraft) -> (url: String?, error: String?) {
-        let uid = draft.assignee.flatMap { matchUser($0, in: assignableUsers())?.id }
+        let users = assignableUsers()
+        let uid = draft.assignee.flatMap { matchUser($0, in: users)?.id }
+        let rid = draft.reviewer.flatMap { matchUser($0, in: users)?.id }
         let pid = draft.project.flatMap { name in
             projects().first { $0.name.range(of: name, options: .caseInsensitive) != nil }?.id
         }
         let deadline = draft.due.flatMap { $0.isEmpty ? nil : $0 + " 17:00:00" }
         let descHTML = NoteExporter.richHTML(from: TwinProfile.correct(draft.body))
         guard let id = createTask(title: draft.title, descriptionHTML: descHTML,
-                                  assigneeUserID: uid, projectID: pid, deadline: deadline) else {
+                                  assigneeUserID: uid, projectID: pid, deadline: deadline, reviewerUserID: rid) else {
             return (nil, "ERP didn't create the task.")
         }
         cblog("ERP: chat created task \(id) — \(draft.title.prefix(60))")
@@ -465,7 +533,13 @@ extension ERP {
     /// thread.
     static func signIn(done: @escaping (Bool) -> Void) {
         quit()  // clear any prior instance (blocks until gone)
-        guard launch() else { done(false); return }
+        signInProblem = ""
+        guard launch() else {
+            signInProblem = ChromeBot.availableBrowser() == nil
+                ? "I need Chrome, Edge or Brave to open the sign-in. Install one, then try again."
+                : "The sign-in window didn’t open. Try again."
+            done(false); return
+        }
         // Poll for a login for up to 3 minutes while the user signs in.
         // Give the window a moment to come up, then poll. Closing the window
         // (port drops) means "cancel" -- never reopen it behind the user.
@@ -473,7 +547,9 @@ extension ERP {
         let deadline = Date().addingTimeInterval(180)
         while Date() < deadline {
             guard isPortOpen() else {
-                cblog("ERP: sign-in window closed — cancelled"); storedSession = nil; done(false); return
+                cblog("ERP: sign-in window closed — cancelled"); storedSession = nil
+                signInProblem = "The window closed before you signed in."
+                done(false); return
             }
             // captureSession stores whatever cookie the browser currently holds
             // (anonymous at first); sessionUID over HTTP confirms it's logged in.
@@ -486,6 +562,7 @@ extension ERP {
             Thread.sleep(forTimeInterval: 2)
         }
         cblog("ERP: sign-in timed out")
+        signInProblem = "No sign-in after 3 minutes. Check it’s your ERP’s address, then try again."
         storedSession = nil
         quit()
         done(false)
@@ -499,10 +576,16 @@ extension ERP {
               let cookies = r["cookies"] as? [[String: Any]],
               let sid = cookies.first(where: {
                   ($0["name"] as? String) == "session_id" &&
-                  (($0["domain"] as? String) ?? "").contains("forklyft")
+                  cookieIsOurs(($0["domain"] as? String) ?? "")
               })?["value"] as? String, !sid.isEmpty else { return false }
         storedSession = sid
         return true
+    }
+
+    /// A cookie set for the ERP's host or a parent of it (".example.com").
+    static func cookieIsOurs(_ domain: String) -> Bool {
+        let d = domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        return !d.isEmpty && (host == d || host.hasSuffix("." + d))
     }
 
     /// Nothing to start — reads and writes are plain HTTPS with the stored

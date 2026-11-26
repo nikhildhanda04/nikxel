@@ -41,7 +41,7 @@ enum CloudSync {
 
     /// The Nikxel window's Organization side: one call to the org API as this device, any method.
     /// Only these routes; the page can't reach anything else with the token. (0, nil) when unreachable.
-    static let orgRoutes = #"^/api/(org(/leave|/owner)?|members(/[\w-]+)?|invites|projects(/[\w-]+(/members/[\w-]+|/meetings/[^/?#]+)?)?|shared/mine|summaries/mine/\d{4}-\d\d-\d\d)$"#
+    static let orgRoutes = #"^/api/(org(/leave|/owner)?|me/orgs|roles(/[\w-]+)?|members(/[\w-]+)?|invites|projects(/[\w-]+(/members/[\w-]+|/meetings/[^/?#]+)?)?|shared/mine|summaries/mine/\d{4}-\d\d-\d\d)$"#
     static func orgRequest(method: String, path: String, body: Any?) -> (status: Int, data: Any?) {
         guard ["GET", "POST", "PATCH", "PUT", "DELETE"].contains(method),
               path.range(of: orgRoutes, options: .regularExpression) != nil,
@@ -92,6 +92,20 @@ enum CloudSync {
         if r.status == 503 { return "Your organization’s server isn’t set up for Google sign-in yet. Use a pairing code for now." }
         guard (200..<300).contains(r.status), let tok = obj?["deviceToken"] as? String, save(token: tok) else {
             return "Sign-in didn’t work" + ((obj?["error"] as? String).map { " (\($0))" } ?? "") + ". Try again."
+        }
+        return nil
+    }
+
+    /// Switches this computer to another of the user's organizations ({org}: its id), or starts ({org_name})
+    /// or joins ({invite}) one, without signing in again: the server swaps this device's token for one there.
+    /// nil when done, else what to tell them.
+    static func switchOrg(_ body: [String: String], send: StatusPoster = httpSend) -> String? {
+        guard let tok = token else { return "Connect this computer to your organization first." }
+        guard let r = send("/api/me/switch", body, tok) else { return "Couldn’t reach your organization’s server. Check your internet, then try again." }
+        let obj = r.data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        if r.status == 404 { return body["invite"] != nil ? "That invite link doesn’t work any more. Ask your admin for a new one." : "You’re not in that organization any more." }
+        guard (200..<300).contains(r.status), let new = obj?["deviceToken"] as? String, save(token: new) else {
+            return "That didn’t work" + ((obj?["error"] as? String).map { " (\($0))" } ?? "") + ". Try again."
         }
         return nil
     }

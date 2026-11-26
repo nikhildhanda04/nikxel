@@ -152,7 +152,7 @@ enum NotePage {
     /// one of the user's projects on the org dashboard. Wired by the PageShare
     /// widget (/projects, /share-project), like the client button above.
     private static let projectCTA = """
-    <div class="client-cta"><button type="button" class="nx-project">Share to project →</button>
+    <div class="client-cta"><button type="button" class="nx-project">Push to dashboard</button>
     <p>Send these minutes to a project on your org dashboard — without the client summary or the transcript.</p></div>
     """
 

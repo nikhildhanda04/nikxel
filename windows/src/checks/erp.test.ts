@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { shortTitle, matchUser, briefFromAgentPrompts, taskDescription } from "../main/system/erp";
+import * as ERP from "../main/system/erp";
 import { richHtml } from "../main/recording/markdown";
 
 test("shortTitle takes the first clause and caps the length", () => {
@@ -81,4 +82,28 @@ test("briefFromAgentPrompts returns the matching fenced brief", () => {
   // An unrelated item shouldn't match.
   assert.equal(briefFromAgentPrompts("Buy snacks for the office party", p), null);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("looksLikeTaskRequest takes “draft a task” outright, not a nudge about tasks", () => {
+  assert.equal(ERP.looksLikeTaskRequest("Draft a task for the following in forklyft erp, keep me i.e Shreya as the reviewer"), true);
+  assert.equal(ERP.looksLikeTaskRequest("assign an ERP task to Mei"), true);
+  assert.equal(ERP.looksLikeTaskRequest("make a task to send the invoice"), true);
+  assert.equal(ERP.looksLikeTaskRequest("Check Forklyft ERP for open and pending tasks assigned to each developer and draft a nudge for each task"), false);
+  assert.equal(ERP.looksLikeTaskRequest("what tasks are pending for Aarib?"), false);
+});
+
+test("parseTaskDraft reads the reviewer", () => {
+  const d = ERP.parseTaskDraft('{"title":"Update","body":"x","assignee":"Nikhil","reviewer":"Shreya","project":"V Care","due":null}');
+  assert.equal(d?.reviewer, "Shreya");
+  assert.equal(d?.assignee, "Nikhil");
+});
+
+test("an ERP address typed any way becomes its https origin", () => {
+  assert.equal(ERP.origin("erp.example.com"), "https://erp.example.com");
+  assert.equal(ERP.origin(" https://erp.example.com/odoo/ "), "https://erp.example.com");
+  assert.equal(ERP.origin("http://localhost:8069/web"), "http://localhost:8069");
+  assert.equal(ERP.address("erp.example.com/odoo")?.href, "https://erp.example.com/odoo");
+  assert.equal(ERP.origin("my erp"), null);
+  assert.equal(ERP.origin("forklyft"), null);
+  assert.equal(ERP.origin("ftp://erp.example.com"), null);
 });

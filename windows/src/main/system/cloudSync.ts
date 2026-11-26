@@ -74,6 +74,24 @@ export class CloudSync {
     return "Sign-in didn’t work" + (typeof obj?.error === "string" ? ` (${obj.error})` : "") + ". Try again.";
   }
 
+  /// Switches this computer to another of the user's organizations ({org}: its id), or starts ({org_name})
+  /// or joins ({invite}) one, without signing in again: the server swaps this device's token for one there.
+  /// null when done, else what to tell them.
+  static async switchOrg(body: Record<string, string>): Promise<string | null> {
+    const tok = CloudSync.token();
+    if (!tok) return "Connect this computer to your organization first.";
+    let status = 0, obj: Record<string, unknown> | null = null;
+    try {
+      const res = await fetch(CloudSync.backendBase() + "/api/me/switch", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000),
+      });
+      status = res.status; obj = await res.json().catch(() => null) as Record<string, unknown> | null;
+    } catch { return "Couldn’t reach your organization’s server. Check your internet, then try again."; }
+    if (status === 404) return body.invite ? "That invite link doesn’t work any more. Ask your admin for a new one." : "You’re not in that organization any more.";
+    if (status >= 200 && status < 300 && typeof obj?.deviceToken === "string" && CloudSync.save(obj.deviceToken)) return null;
+    return "That didn’t work" + (typeof obj?.error === "string" ? ` (${obj.error})` : "") + ". Try again.";
+  }
+
   private static save(token: string): boolean {
     if (!token) return false;
     try {
@@ -140,7 +158,7 @@ export class CloudSync {
 
   /// The Nikxel window's Organization side: one call to the org API as this device, any method.
   /// Only these routes; the page can't reach anything else with the token. Status 0 when unreachable.
-  static readonly orgRoutes = /^\/api\/(org(\/leave|\/owner)?|members(\/[\w-]+)?|invites|projects(\/[\w-]+(\/members\/[\w-]+|\/meetings\/[^/?#]+)?)?|shared\/mine|summaries\/mine\/\d{4}-\d\d-\d\d)$/;
+  static readonly orgRoutes = /^\/api\/(org(\/leave|\/owner)?|me\/orgs|roles(\/[\w-]+)?|members(\/[\w-]+)?|invites|projects(\/[\w-]+(\/members\/[\w-]+|\/meetings\/[^/?#]+)?)?|shared\/mine|summaries\/mine\/\d{4}-\d\d-\d\d)$/;
   static async orgRequest(method: string, path: string, body: unknown): Promise<{ status: number; data: unknown }> {
     const tok = CloudSync.token();
     if (!tok || !["GET", "POST", "PATCH", "PUT", "DELETE"].includes(method) || !CloudSync.orgRoutes.test(path)) return { status: 0, data: null };

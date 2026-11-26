@@ -14,6 +14,9 @@ for (const f of fs.readdirSync(src)) {
 const client = path.join(__dirname, "..", "..", "google_client.json");
 if (fs.existsSync(client)) fs.copyFileSync(client, path.join(__dirname, "..", "resources", "google_client.json"));
 
+// What each update added: the Nikxel window's What's new and its tour (system/whatsNew.ts).
+fs.copyFileSync(path.join(__dirname, "..", "..", "WHATSNEW.md"), path.join(__dirname, "..", "resources", "whatsnew.md"));
+
 // The Nikxel window's page is the Mac's, as is: it lives in a Swift raw string
 // (src/DashboardPage.swift), with the chat's markdown helper spliced in from
 // src/AvatarChat.swift. Taken from there at build time, so the two apps can't

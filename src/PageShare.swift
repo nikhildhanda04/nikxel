@@ -208,6 +208,18 @@ enum PageShare {
                 return ["error": "Couldn't build the client summary."]
             }
             return ["url": clientFile.absoluteString]
+        case "/coach":
+            // A What's new tour step for this page (the meeting the window just opened for it), once.
+            let mine = file.resolvingSymlinksInPath().path
+            let step: [String: Any]? = DispatchQueue.main.sync {
+                guard let c = DashboardWindowController.coach, c.file.resolvingSymlinksInPath().path == mine else { return nil }
+                DashboardWindowController.coach = nil
+                return c.step
+            }
+            return ["step": step ?? NSNull()]
+        case "/coach-done":
+            DashboardWindowController.tourResume(skip: q("skip") == "1")
+            return ["ok": true]
         case "/projects", "/share-project":
             // A meeting page's Share to project dialog (list + exact body), then its Send.
             ProjectShare.handle(project: route == "/projects" ? nil : q("project") ?? "", file: file, later: later)
@@ -251,9 +263,9 @@ enum PageShare {
             // server-side on /assign, so the page needs no roster.
             return ["connected": ERP.isConnected]
         case "/assign":
-            guard ERP.isConnected else { return ["error": "Connect Forklyft ERP in Nikxel first."] }
+            guard ERP.isConnected else { return ["error": "Connect your ERP under Connections in Nikxel first."] }
             guard ERP.hasLiveSession() else {
-                return ["error": "Your ERP session has ended. Reconnect Forklyft ERP from the Nikxel menu, then try again."]
+                return ["error": "Your ERP session has ended. Reconnect it under Connections in Nikxel, then try again."]
             }
             // The page sends the full action-item text; we make a short title
             // and a context-rich description, since the assignee may not have
@@ -483,6 +495,7 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     // On open: a quick hand-drawn arrow from the title down to the chat bar, so
     // people notice they can edit. Draws in, holds, fades out (~2.5s total).
     function cHint() {
+      if (window.__nxCoach) return;   // a tour step is showing on this page
       try {
         var titleEl = document.querySelector(".date") || document.querySelector("h1") || document.querySelector("main");
         if (!titleEl) return;
@@ -576,53 +589,94 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     nin.onkeydown = function (e) { if (e.key === "Enter") nsave(); };
   }
 
-  // --- "Share to project": pick one of your dashboard projects, see exactly
-  // what goes (the minutes minus the client summary), then Send.
+  // --- "Push to dashboard": one click. Nikxel picks the project it thinks these minutes are
+  // from (already pushed: where they went); the dropdown changes it. See what's sent shows exactly
+  // what goes (the minutes minus the client summary).
   var projBtn = document.querySelector(".nx-project");
-  if (projBtn) projBtn.onclick = function () {
-    var dlg = document.createElement("dialog");
-    dlg.style.cssText = "width:min(560px,calc(100vw - 32px));box-sizing:border-box;border:0;border-radius:16px;padding:20px;font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#1d1d1f;background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.3)";
-    var btnCss = "border:0;border-radius:10px;padding:9px 16px;font:600 14px/1 system-ui,-apple-system,'Segoe UI',sans-serif;cursor:pointer;";
-    dlg.onclose = function () { dlg.remove(); };
-    document.body.appendChild(dlg); dlg.textContent = "Loading your projects…"; dlg.showModal();
+  if (projBtn) (function () {
+    var box = projBtn.parentNode, note = box.querySelector("p");
     function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
-    function button(text, primary, onclick) {
-      var b = el("button", btnCss + (primary ? "background:#1d1d1f;color:#fff" : "background:#f0f0f3;color:#1d1d1f"), text);
-      b.type = "button"; b.onclick = onclick; return b;
-    }
-    function done(text) {
-      dlg.textContent = ""; dlg.appendChild(el("p", "margin:0 0 16px", text));
-      var row = el("div", "display:flex;justify-content:flex-end"); row.appendChild(button("Close", true, function () { dlg.close(); }));
-      dlg.appendChild(row);
-    }
+    var hhmm = function (s) { var d = new Date(s * 1000); return d.toLocaleDateString(undefined, { day: "numeric", month: "short" }) + ", " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); };
+    projBtn.textContent = "Push to dashboard"; projBtn.disabled = true;
+    if (note) note.textContent = "Finding the project…";
     call("projects").then(function (r) {
-      if (!r || r.error) return done((r && r.error) || "Couldn't reach Nikxel.");
-      if (!r.paired) return done("Connect Nikxel to the dashboard first");
-      if (!r.projects || !r.projects.length) return done("You're not on any project yet. Create one on the dashboard.");
-      dlg.textContent = "";
-      dlg.appendChild(el("h3", "margin:0 0 10px;font-size:16px", "Share to project"));
-      r.projects.forEach(function (p, i) {
-        var lab = el("label", "display:flex;gap:8px;align-items:center;padding:5px 2px;cursor:pointer"), radio = el("input");
-        radio.type = "radio"; radio.name = "nx-proj"; radio.value = p.id; radio.checked = i === 0; radio._name = p.name;
-        lab.appendChild(radio); lab.appendChild(el("span", "", p.name)); dlg.appendChild(lab);
-      });
-      dlg.appendChild(el("div", "margin:12px 0 6px;color:#6e6e73;font-size:12px", "Exactly what will be sent"));
-      dlg.appendChild(el("pre", "max-height:40vh;overflow:auto;white-space:pre-wrap;margin:0;padding:10px 12px;background:#f5f5f7;border-radius:10px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace", r.body));
-      var msg = el("p", "min-height:1.2em;margin:10px 0;color:#6e6e73;font-size:12px");
-      var row = el("div", "display:flex;justify-content:flex-end;gap:8px");
-      var send = button("Send", true, function () {
-        var pick = dlg.querySelector("input[name=nx-proj]:checked");
-        if (!pick) { msg.textContent = "Pick a project."; return; }
-        send.disabled = true; msg.textContent = "Sending…";
+      if (!r || r.error) { if (note) note.textContent = (r && r.error) || "Couldn't reach Nikxel."; return; }
+      if (!r.paired) { if (note) note.textContent = "Connect Nikxel to your organization first, under Organization in the Nikxel window."; return; }
+      if (!r.projects || !r.projects.length) { if (note) note.textContent = "You're not on any project yet. Make one under Organization → Projects."; return; }
+      var pick = el("select", "font:600 14px/1 var(--sans);padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);max-width:260px");
+      pick.setAttribute("aria-label", "Project");
+      if (!r.suggested) pick.appendChild(el("option", "", "Pick a project")).value = "";
+      r.projects.forEach(function (p) { var o = el("option", "", p.name); o.value = p.id; o.selected = p.id === r.suggested; pick.appendChild(o); });
+      box.insertBefore(pick, projBtn);
+      var peek = el("button", "border:0;background:none;color:var(--muted);font:500 13px var(--sans);text-decoration:underline;cursor:pointer;padding:0", "See what's sent");
+      peek.type = "button"; box.insertBefore(peek, projBtn.nextSibling);
+      function status() {
+        var name = pick.options[pick.selectedIndex] && pick.value ? pick.options[pick.selectedIndex].textContent : "";
+        projBtn.disabled = !pick.value;
+        if (!note) return;
+        if (r.sent && r.sent.project === pick.value) note.textContent = "Pushed to " + (r.sent.name || name) + " on " + hhmm(r.sent.at) + " ✓ Push again to update it.";
+        else if (pick.value && pick.value === r.suggested && r.why) note.textContent = "Suggested: " + r.why + " Not right? Pick another.";
+        else note.textContent = pick.value ? "Sends these minutes to " + name + ", without the client summary or transcript." : "Which project is this meeting from?";
+      }
+      pick.onchange = status; status();
+      projBtn.onclick = function () {
+        projBtn.disabled = true; pick.disabled = true; if (note) note.textContent = "Pushing…";
         call("share-project", { project: pick.value }).then(function (s) {
-          if (s && s.ok) done("Shared to " + pick._name);
-          else { send.disabled = false; msg.textContent = (s && s.error) || "Couldn't share it."; }
+          projBtn.disabled = false; pick.disabled = false;
+          if (s && s.ok) { r.sent = s.sent; status(); }
+          else if (note) note.textContent = (s && s.error) || "Couldn't push it.";
         });
-      });
-      row.appendChild(button("Cancel", false, function () { dlg.close(); })); row.appendChild(send);
-      dlg.appendChild(msg); dlg.appendChild(row);
+      };
+      peek.onclick = function () {
+        var dlg = el("dialog", "width:min(560px,calc(100vw - 32px));box-sizing:border-box;border:0;border-radius:16px;padding:20px;font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#1d1d1f;background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.3)");
+        dlg.onclose = function () { dlg.remove(); };
+        dlg.appendChild(el("h3", "margin:0 0 10px;font-size:16px", "Exactly what's sent"));
+        dlg.appendChild(el("pre", "max-height:60vh;overflow:auto;white-space:pre-wrap;margin:0 0 14px;padding:10px 12px;background:#f5f5f7;border-radius:10px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace", r.body));
+        var close = el("button", "border:0;border-radius:10px;padding:9px 16px;font:600 14px/1 system-ui,-apple-system,'Segoe UI',sans-serif;cursor:pointer;background:#1d1d1f;color:#fff;float:right", "Close");
+        close.type = "button"; close.onclick = function () { dlg.close(); }; dlg.appendChild(close);
+        document.body.appendChild(dlg); dlg.showModal();
+      };
     });
-  };
+  })();
+
+  // --- A What's new tour step on this page: the Nikxel window opened this meeting to show where
+  // Push to dashboard is. Dims the rest, points at the bar, then Next hands the tour back.
+  call("coach").then(function (r) {
+    var st = r && r.step, target = document.querySelector(".nx-project");
+    if (!st) return;
+    target = target && target.closest(".client-cta");
+    if (!target) return call("coach-done");
+    window.__nxCoach = true;
+    target.scrollIntoView({ block: "center" });
+    var hole = document.createElement("div"), tip = document.createElement("div"), font = "system-ui,-apple-system,'Segoe UI',sans-serif";
+    hole.style.cssText = "position:fixed;z-index:98;border-radius:18px;box-shadow:0 0 0 9999px rgba(10,12,16,.55);pointer-events:none";
+    tip.style.cssText = "position:fixed;z-index:99;width:min(340px,calc(100vw - 32px));box-sizing:border-box;padding:16px 18px;border-radius:14px;background:#5e5ce6;color:#fff;font:14px/1.45 " + font + ";box-shadow:0 12px 40px rgba(0,0,0,.35)";
+    var b = document.createElement("b"), p = document.createElement("p"), row = document.createElement("div"), n = document.createElement("span");
+    b.style.cssText = "display:block;font-size:15px;margin-bottom:4px"; b.textContent = st.title;
+    p.style.cssText = "margin:0 0 12px"; p.textContent = st.text;
+    row.style.cssText = "display:flex;align-items:center;gap:14px"; n.style.cssText = "opacity:.8;font-size:12px;margin-right:auto"; n.textContent = st.n + " of " + st.of;
+    row.appendChild(n); tip.append(b, p, row);
+    function place() {
+      var rc = target.getBoundingClientRect(), pad = 6;
+      Object.assign(hole.style, { left: rc.left - pad + "px", top: rc.top - pad + "px", width: rc.width + pad * 2 + "px", height: rc.height + pad * 2 + "px" });
+      var below = rc.bottom + 14 + tip.offsetHeight < innerHeight;
+      tip.style.left = Math.max(16, Math.min(rc.left, innerWidth - tip.offsetWidth - 16)) + "px";
+      tip.style.top = (below ? rc.bottom + 14 : Math.max(16, rc.top - tip.offsetHeight - 14)) + "px";
+    }
+    function button(label, primary, skip) {
+      var x = document.createElement("button"); x.type = "button"; x.textContent = label;
+      x.style.cssText = "border:0;cursor:pointer;font:600 13px " + font + ";border-radius:999px;" + (primary ? "padding:7px 16px;background:#fff;color:#3a38b8" : "padding:7px 0;background:none;color:#fff;text-decoration:underline");
+      x.onclick = function () {
+        hole.remove(); tip.remove(); removeEventListener("resize", place); removeEventListener("scroll", place, true);
+        call("coach-done", skip ? { skip: "1" } : {});
+      };
+      row.appendChild(x);
+    }
+    if (!st.last) button("Skip", false, true);
+    button(st.last ? "Done" : "Next", true, false);
+    document.body.append(hole, tip); place(); setTimeout(place, 400);   // after the scroll settles
+    addEventListener("resize", place); addEventListener("scroll", place, true);
+  });
 
   // --- Daily page: cross out what stays private, then send the day to the
   // org dashboard. What was crossed out comes back from <day>.sent.json.
@@ -654,7 +708,7 @@ li.task .nx-assign.done{background:#34c759;opacity:1}
     };
   }
 
-  // --- One-click ERP "Assign" on each action item, when Forklyft ERP is
+  // --- One-click ERP "Assign" on each action item, when the ERP is
   // connected. Creates the task (title + matched assignee + due) and opens it
   // in this browser; the user sets the project and the rest in Odoo.
   call("erp").then(function (r) {

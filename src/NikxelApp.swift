@@ -197,6 +197,14 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             maybeAskRole()
             // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) { CoachTour.startIfNew() }
+            // Just updated: say what's new; the Nikxel window walks them through it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                let unseen = WhatsNew.pending
+                guard !unseen.isEmpty else { return }
+                let titles = WhatsNew.releases.filter { unseen.contains($0.id) }.flatMap { $0.items.map(\.title) }
+                NikxelView.tell(icon: "✨", title: "Nikxel updated: see what's new", lines: Array(titles.prefix(3)) + (titles.count > 3 ? ["…"] : []),
+                                lifetime: 40, action: { DashboardWindowController.show(section: "whatsnew") })
+            }
         }
 
         // Start at login, once: a user who restarts the Mac shouldn't have to
@@ -240,33 +248,29 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func refreshERPMenu() {
-        erpConnectItem?.title = ERP.isConnected ? "Forklyft ERP connected ✓" : "Connect Forklyft ERP…"
+        erpConnectItem?.title = ERP.isConnected ? "ERP connected ✓" : "Connect ERP…"
     }
 
-    @objc func connectERP() {
-        if ERP.isConnected {
-            NikxelView.tell(icon: "🔗", title: "Forklyft ERP is connected",
-                            lines: ["Nikxel reads employees and tasks in the background. Summaries use real names and roles."])
-            return
-        }
-        NikxelView.tell(icon: "🔗", title: "Opening Forklyft ERP…",
-                        lines: ["A window opens once for your sign-in. After that it runs in the background with no window."])
+    /// The ERP is connected from Connections in the Nikxel window, where its address is typed.
+    @objc func connectERP() { DashboardWindowController.show(section: "connections") }
+
+    /// Opens the sign-in window on the ERP's address and waits for the login.
+    /// `done` runs on the main thread; on false, ERP.signInProblem says why.
+    func signInERP(_ done: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             ERP.signIn { ok in
                 DispatchQueue.main.async {
                     self.refreshERPMenu()
                     if ok {
-                        NikxelView.tell(icon: "✅", title: "Forklyft ERP connected",
-                                        lines: ["Nikxel now knows who's who, and reads and summarizes your ERP into your work context.",
-                                                "Meeting summaries will name people and let you assign tasks."])
+                        NikxelView.tell(icon: "✅", title: "ERP connected",
+                                        lines: ["I now know who's who there, and read and summarize your ERP into your work context.",
+                                                "Meeting summaries name people and let you assign tasks."])
                         let momGen = self.meetingCoordinator.momGen
                         DispatchQueue.global(qos: .utility).async {
                             ErpCrawl.ingest(runPrompt: { try momGen.runPrompt($0, kind: $1) })
                         }
-                    } else {
-                        NikxelView.tell(icon: "⚠️", title: "ERP not connected",
-                                        lines: ["Sign-in didn't finish. Try again from the menu."])
                     }
+                    done(ok)
                 }
             }
         }
@@ -826,54 +830,10 @@ class NikxelAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         rebuildTemplateMenu()
     }
 
-    @objc func editActiveTemplate() {
-        let slug = NikxelSettings.summaryTemplate
-        let alert = NSAlert()
-        alert.messageText = "Editing \u{201C}\(SummaryTemplates.displayName(for: slug))\u{201D}"
-        alert.informativeText = """
-        Write plain instructions, one per line — the same way you'd tell a person. They're added to the prompt your coding agent runs and override the built-in structure: drop a section you don't use, add one you do, change the order, set the length or the tone.
+    /// Both open the template dialog in the Nikxel window; nothing opens the .txt.
+    @objc func editActiveTemplate() { DashboardWindowController.editTemplate() }
 
-        Lines starting with # are ignored, so the notes already in the file are safe to leave there.
-
-        Takes effect on your next recording. Nikxel still won't invent content to satisfy an instruction — attendees, decisions, owners, numbers and dates come only from the transcript.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Open \(slug).txt")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runOnTop() == .alertFirstButtonReturn else { return }
-        NSWorkspace.shared.openFile(SummaryTemplates.activeURL)
-    }
-
-    @objc func newTemplate() {
-        let active = NikxelSettings.summaryTemplate
-        let alert = NSAlert()
-        alert.messageText = "New summary template"
-        alert.informativeText = "Name it after the kind of meeting or the role it's for — \"Client Calls\", \"Design Review\", \"Board\"."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.placeholderString = "Template name"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Create, starting blank")
-        alert.addButton(withTitle: "Create, copying \u{201C}\(SummaryTemplates.displayName(for: active))\u{201D}")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-
-        let response = alert.runOnTop()
-        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let copyFrom = response == .alertSecondButtonReturn ? active : nil
-
-        guard let slug = SummaryTemplates.create(named: name, copying: copyFrom) else {
-            NikxelView.tell(icon: "⚠️", title: "Couldn't create that template", lines: [
-                SummaryTemplates.slugify(name).isEmpty
-                    ? "Give it a name with at least one letter or number in it."
-                    : "A template with that name already exists. Pick a different name, or edit the existing one."
-            ], kind: .warning)
-            return
-        }
-        NikxelSettings.summaryTemplate = slug
-        rebuildTemplateMenu()
-        NSWorkspace.shared.openFile(SummaryTemplates.url(for: slug))
-    }
+    @objc func newTemplate() { DashboardWindowController.editTemplate(creating: true) }
 
     @objc func resetActiveTemplate() {
         let slug = NikxelSettings.summaryTemplate

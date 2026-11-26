@@ -83,6 +83,7 @@ enum NikxelSettings {
         var connectedAgent: String?
         var whatsappConnected: Bool?
         var erpConnected: Bool?
+        var erpURL: String?
         var onboardingCompleted: Bool?
         var roleAsked: Bool?
         var userContext: String?
@@ -92,6 +93,7 @@ enum NikxelSettings {
         var appearance: String?
         var tourDone: Bool?
         var dashboardTourDone: Bool?
+        var whatsNewSeen: String?
         var summaryTemplate: String?
         var waBotMode: String?
         var waGroupReplies: Bool?
@@ -281,6 +283,11 @@ enum NikxelSettings {
     static var dashboardTourDone: Bool {
         get { load().dashboardTourDone ?? false }
         set { save { $0.dashboardTourDone = newValue } }
+    }
+    /// The newest update (a WHATSNEW.md heading) whose What's new has been shown.
+    static var whatsNewSeen: String? {
+        get { load().whatsNewSeen }
+        set { save { $0.whatsNewSeen = newValue } }
     }
 
     /// The Nikxel window's look: "system", "light" or "dark".
@@ -481,6 +488,14 @@ enum NikxelSettings {
     static var erpConnected: Bool {
         get { load().erpConnected ?? false }
         set { save { $0.erpConnected = newValue } }
+    }
+
+    /// The ERP's address as typed under Connections, with https:// added; nil
+    /// until someone connects one (ERP.base falls back to Forklyft's, the only
+    /// ERP before this was a setting).
+    static var erpURL: String? {
+        get { load().erpURL }
+        set { save { $0.erpURL = newValue } }
     }
 
     /// Gates auto-showing the onboarding wizard on launch.

@@ -19,6 +19,7 @@ final class ChatSession {
     private var mailSnapshot = "" // the inbox at open time, when Gmail is connected
     private var knownMailIds: Set<String> = []  // ids the chat has shown the model; labels only touch these
     private var lastDraftId: String?            // what "send it" sends
+    private var files: [String] = []            // what the user attached in this chat (Attachments ids); in every answer's context
     private let feedReady = DispatchGroup()
     private var recorder: AVAudioRecorder?
     private let voiceURL = URL(fileURLWithPath: NSHomeDirectory() + "/.nikxel/edits/chat-voice.wav")
@@ -59,18 +60,21 @@ final class ChatSession {
             ["name": "Projects", "detail": feed.offline ? "Team dashboard not reachable." : "\(Set(projects.map(\.name)).count) projects on your team dashboard.", "on": !feed.offline && !projects.isEmpty],
             ["name": "WhatsApp", "detail": waSnapshot.isEmpty ? "Not open or not logged in." : "Unread, recent chats and the open thread.", "on": !waSnapshot.isEmpty],
             ["name": "Gmail", "detail": mailSnapshot.isEmpty ? (GoogleAuth.shared.isAuthorized ? "Reconnect Google to give me your mail." : "Connect Google to search, draft and tidy mail.") : "Your inbox: search, draft, label, send.", "on": !mailSnapshot.isEmpty],
-            ["name": "Forklyft ERP", "detail": ERP.isConnected ? "Say “make a task to …” to create one." : "Not connected.", "on": ERP.isConnected],
+            ["name": "ERP", "detail": ERP.isConnected ? "I read its open tasks live; say “make a task to …” to create one." : "Not connected.", "on": ERP.isConnected],
         ]
     }
 
     /// Answers `text`; `done` gets {text, offline, error} on the main thread.
     /// `attach` goes into the context only (an automation's meeting summary),
-    /// so what it says can't be taken as a mail or ERP command.
-    func send(_ text: String, attach: String = "", done: @escaping ([String: Any]) -> Void) {
-        let history = self.history, agent = self.agent, today = Date()
+    /// so what it says can't be taken as a mail or ERP command. `automation`: an automation running,
+    /// whose "remind me…" mustn't make another automation.
+    /// `files`: newly attached ones (Attachments ids), kept for the rest of this chat.
+    func send(_ text: String, attach: String = "", files: [String] = [], automation: Bool = false, done: @escaping ([String: Any]) -> Void) {
+        self.files += files.filter { !self.files.contains($0) }
+        let history = self.history, agent = self.agent, today = Date(), attached = self.files
         // "open my latest meeting summary": opened here, never left to the model, which can only answer in words.
         let library = SummaryLibrary.scan()
-        if attach.isEmpty, let i = ChatContext.openTarget(text, entries: library.map { (kind: $0.kind, title: $0.title) }) {
+        if attach.isEmpty, files.isEmpty, let i = ChatContext.openTarget(text, entries: library.map { (kind: $0.kind, title: $0.title) }) {
             let e = library[i]
             // Always the Nikxel window's reader, whatever "open summaries in" says; a .md-only one has no page to show.
             DispatchQueue.main.async {
@@ -106,8 +110,13 @@ final class ChatSession {
                 Calendar: \(yn(g.isAuthorized && g.hasScope("https://www.googleapis.com/auth/calendar.readonly"))); \
                 WhatsApp: \(yn(NikxelSettings.whatsappConnected)); WhatsApp auto-reply: \(ChatbotEngine.shared.isEnabled ? "on" : "off"); \
                 Slack: \(yn(Slack.isConnected)); ERP: \(yn(ERP.isConnected)); Organization: \(yn(CloudSync.token != nil))
+                \(ERP.isConnected ? "With ERP connected, I read its open tasks live (below, when the question is about tasks) and I create a task when asked to make or draft one. Never say I can't reach the ERP." : "")
                 """
-            var context = [NikxelSettings.userContextBlock, attach, live, status, named, self.waSnapshot, self.mailSnapshot,
+            // ERP tasks as they are now, when the question (or automation) is about them.
+            let erp = ERP.asksAboutTasks(text) ? ERP.openTasksBlock() : ""
+            // What they attached comes first after who they are: it's what the question is usually about.
+            let fileBlocks = attached.compactMap { Attachments.block($0) }.joined(separator: "\n\n")
+            var context = [NikxelSettings.userContextBlock, fileBlocks, attach, live, status, erp, named, self.waSnapshot, self.mailSnapshot,
                            ChatContext.build(ChatContext.localBlocks(root: Self.root, today: today) + ChatContext.projectBlocks(feed),
                                              cap: ChatContext.cap)].filter { !$0.isEmpty }.joined(separator: "\n\n")
             // Mail: "send it", drafts and labels answer here; a search adds to the context.
@@ -116,6 +125,10 @@ final class ChatSession {
             case .context(let more): context += "\n\n" + more
             case .none: break
             }
+            // "remind me tomorrow to …" becomes a one-time automation, so it really happens.
+            if !automation, Automation.looksLikeReminder(text) {
+                return finish(Automations.shared.remind(text, files: attached, agent: agent), answered: true)
+            }
             // "make a task to …" creates one in ERP, drafted from the same
             // meeting/WhatsApp/project context, then opens it to review.
             if ERP.looksLikeTaskRequest(text) {
@@ -123,7 +136,8 @@ final class ChatSession {
             }
             do {
                 let a = try agent.runPrompt(ChatContext.prompt(context: context, history: history, question: text, today: today),
-                                            kind: "chat", claudeModel: "haiku", timeout: 30)
+                                            // An automation writes more (an SOP, a follow-up email) and nobody's waiting on it.
+                                            kind: "chat", claudeModel: automation ? "sonnet" : "haiku", timeout: automation ? 180 : 30)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 cblog("ChatSession: \(context.count) chars of context, answered")
                 finish(a, answered: true)
@@ -165,9 +179,9 @@ final class ChatSession {
     /// the record to review — the chat-side twin of the summary's Assign button.
     /// Runs on the send background queue, so the network calls are off main.
     private static func makeERPTask(request: String, context: String, today: Date, agent: MOMGenerator) -> String {
-        guard ERP.isConnected else { return "Connect Forklyft ERP in Nikxel first, then ask again." }
+        guard ERP.isConnected else { return "Connect your ERP under Connections in Nikxel first, then ask again." }
         guard ERP.hasLiveSession() else {
-            return "Your ERP session has ended — reconnect Forklyft ERP from the Nikxel menu, then try again."
+            return "Your ERP session has ended — reconnect it under Connections in Nikxel, then try again."
         }
         let draftReply: String   // context already carries the live activity + WhatsApp read
         do {
@@ -186,6 +200,7 @@ final class ChatSession {
         if let u = URL(string: url) { DispatchQueue.main.async { NSWorkspace.shared.open(u) } }
         var line = "Created “\(draft.title)” in ERP"
         if let a = draft.assignee { line += " · for \(a)" }
+        if let r = draft.reviewer { line += " · reviewer \(r)" }
         if let p = draft.project { line += " · \(p)" }
         if let d = draft.due { line += " · due \(d)" }
         return line + ". Opening it so you can review and edit."

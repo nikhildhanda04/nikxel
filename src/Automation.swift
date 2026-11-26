@@ -18,12 +18,25 @@ struct Automation: Codable, Equatable {
     var enabled: Bool = true
     /// "yyyy-MM-dd HH:mm" of the last scheduled run, so a minute is never run twice.
     var lastRun: String = ""
+    /// A temporary one ("remind me tomorrow…"): "yyyy-MM-dd". It runs once, that day at `time` (or as soon
+    /// as Nikxel is next awake after it), then switches itself off. nil: it repeats on `days`.
+    var date: String?
+    /// Files it follows every run (Attachments ids), e.g. the user's SOP format. nil: none.
+    var files: [String]?
 
     static let triggers = ["meeting", "day", "week", "schedule"]
     static let weekdays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 
     /// "After every meeting", "Weekdays at 09:00"…
     var when: String {
+        if let date, trigger == "schedule" {
+            let f = Self.dayFormatter, out = DateFormatter()
+            out.dateFormat = "EEE d MMM"
+            let d = f.date(from: date)
+            let cal = Calendar.current
+            let day = d.map { cal.isDateInToday($0) ? "today" : cal.isDateInTomorrow($0) ? "tomorrow" : out.string(from: $0) } ?? date
+            return "Once, \(day) at \(time)"
+        }
         switch trigger {
         case "meeting": return "After every meeting summary"
         case "day": return "After your day summary"
@@ -38,11 +51,24 @@ struct Automation: Codable, Equatable {
     /// Due at `now` (a schedule whose minute it is, not already run this minute).
     func due(at now: Date, calendar: Calendar = .current) -> Bool {
         guard enabled, trigger == "schedule" else { return false }
+        if let date {
+            // Late is fine (the Mac was asleep at 9): it still runs, once.
+            let f = Self.dayFormatter; f.calendar = calendar; f.timeZone = calendar.timeZone
+            guard lastRun.isEmpty, let day = f.date(from: date) else { return false }
+            let hm = time.split(separator: ":").compactMap { Int($0) }
+            return hm.count == 2 && calendar.date(bySettingHour: hm[0], minute: hm[1], second: 0, of: day).map { now >= $0 } == true
+        }
         let c = calendar.dateComponents([.hour, .minute, .weekday], from: now)
         guard String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) == time else { return false }
         let wd = Self.weekdays[((c.weekday ?? 1) - 1) % 7]
         let dayOK = days == "daily" || (days == "weekdays" && !["sat", "sun"].contains(wd)) || days == wd
         return dayOK && lastRun != Self.minuteKey(now)
+    }
+
+    static var dayFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        return f
     }
 
     static func minuteKey(_ d: Date) -> String {
@@ -63,6 +89,7 @@ struct Automation: Codable, Equatable {
         let hm = a.time.split(separator: ":").compactMap { Int($0) }
         a.time = hm.count == 2 && (0..<24).contains(hm[0]) && (0..<60).contains(hm[1]) ? String(format: "%02d:%02d", hm[0], hm[1]) : "09:00"
         if !(["daily", "weekdays"] + weekdays).contains(a.days) { a.days = "daily" }
+        if a.trigger != "schedule" || a.date.flatMap(dayFormatter.date(from:)) == nil { a.date = nil }
         if a.id.isEmpty { a.id = UUID().uuidString }
         return a
     }
@@ -91,22 +118,35 @@ struct Automation: Codable, Equatable {
 
     // MARK: - Asking the agent
 
-    static let shape = #"{"name": "short name", "trigger": "meeting|day|week|schedule", "time": "HH:mm", "days": "daily|weekdays|mon|tue|wed|thu|fri|sat|sun", "instruction": "what Nikxel should do, written to Nikxel, ending with: If there's nothing to do, reply SKIP."}"#
+    static let shape = #"{"name": "short name", "trigger": "meeting|day|week|schedule", "time": "HH:mm", "days": "daily|weekdays|mon|tue|wed|thu|fri|sat|sun", "date": "yyyy-MM-dd, only for a one-time one (a reminder or a task for a given day); leave it out for a repeating one", "instruction": "what Nikxel should do, written to Nikxel, ending with: If there's nothing to do, reply SKIP."}"#
 
     static let can = """
     What an automation can do when it runs (it is carried out by Nikxel's chat, which can see the user's \
     meeting minutes, day and week summaries and notes from the last 14 days, their team projects, WhatsApp \
-    chats when WhatsApp is open, their Gmail inbox when Google is connected, and Forklyft ERP when connected): \
-    answer or summarise something and show it to the user; draft an email in Gmail (never send it); make a \
-    task in ERP. It cannot send WhatsApp messages or emails by itself.
+    chats when WhatsApp is open, their Gmail inbox when Google is connected, and their ERP when connected): \
+    answer or summarise something and show it to the user; read the open tasks in ERP (who they're for, \
+    stage, deadline); draft an email in Gmail (never send it); make a task in ERP. It cannot send WhatsApp messages or emails by itself.
     Triggers: "meeting" runs after every meeting summary (the summary is given to it), "day" after the \
-    end-of-day summary, "week" after the weekly summary, "schedule" at a time on given days.
+    end-of-day summary, "week" after the weekly summary, "schedule" at a time on given days, or once on a "date" \
+    (then it switches itself off). It can be given files the user attached (a template or format to \
+    follow, a price list), which it gets every time it runs. An automation can be for only some \
+    meetings (client calls, ones where an SOP is needed): it decides from each meeting's summary.
     """
 
     /// Turn the user's request into one automation.
-    static func makePrompt(request: String) -> String {
-        """
+    static func makePrompt(request: String, now: Date = Date(), files: [String] = []) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "EEEE yyyy-MM-dd HH:mm"
+        return """
         The user wants Nikxel to set up an automation. \(can)
+        It's \(f.string(from: now)) now. Something for one day ("remind me tomorrow morning to…", "on Friday \
+        check…", "at 5 to…") is a one-time "schedule" with a "date"; "every…", "each…" or "after meetings" repeats. \
+        Morning is 09:00, afternoon 14:00, evening 18:00, unless they say a time. For a reminder the \
+        instruction is "Remind me to <what they said>, in one or two short lines, adding anything useful you \
+        can see about it." and never ends with SKIP. Name it after the task, e.g. "Remind: call Vikas". \
+        If they want it only for some meetings or days (e.g. "only client calls", "when an SOP is needed"), \
+        start the instruction with that test spelled out, e.g. "If this was a call with a client or someone \
+        outside my company where a process was agreed, …; otherwise reply SKIP."\(files.isEmpty ? "" : " The user attached \(files.map { "“\($0)”" }.joined(separator: ", ")) for it; it gets the file every run, so the instruction says to follow it by name, e.g. \"write an SOP in the exact format of “\(files[0])”\".")
 
         Reply with only one JSON object, no prose, in this shape:
         \(shape)
@@ -144,9 +184,16 @@ struct Automation: Codable, Equatable {
         return list.compactMap { d in
             let a = Automation(id: "", name: d["name"] as? String ?? "", trigger: d["trigger"] as? String ?? "",
                                time: d["time"] as? String ?? "09:00", days: (d["days"] as? String ?? "daily").lowercased(),
-                               instruction: d["instruction"] as? String ?? "")
+                               instruction: d["instruction"] as? String ?? "", date: d["date"] as? String,
+                               files: (d["files"] as? [String]).flatMap { $0.isEmpty ? nil : $0 })
             return clean(a).map { ($0, d["why"] as? String ?? "") }
         }
+    }
+
+    /// "Remind me…", "set a reminder…": the chat makes an automation for it instead of only saying it will.
+    static func looksLikeReminder(_ text: String) -> Bool {
+        text.range(of: #"\b(remind me|(set|add|make|create) (me )?(an? )?reminder|nudge me|ping me|don'?t let me forget|(set up|add|make|create) (an? )?automation)\b"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     // MARK: - Store
@@ -166,6 +213,8 @@ struct Automation: Codable, Equatable {
     }
 
     var dict: [String: Any] {
-        ["id": id, "name": name, "trigger": trigger, "time": time, "days": days, "instruction": instruction, "enabled": enabled, "when": when]
+        ["id": id, "name": name, "trigger": trigger, "time": time, "days": days, "instruction": instruction, "enabled": enabled, "when": when,
+         "date": date ?? NSNull(), "done": date != nil && !lastRun.isEmpty,
+         "files": files ?? []]
     }
 }

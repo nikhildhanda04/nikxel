@@ -25,10 +25,24 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         shared?.web.evaluateJavaScript("nx.go(\(PageAssets.json([section]) ?? "[]")[0])")
     }
 
+    /// Opens the template dialog on Recording & notes: the menu bar's Edit and New.
+    static func editTemplate(creating: Bool = false) {
+        show(section: "meetings")
+        shared?.openTemplate(NikxelSettings.summaryTemplate, creating: creating)
+        shared?.push()
+    }
+
     /// A summary page the reader can show: an .html or .pdf under ~/Documents/nikxel.
     static func canRead(_ url: URL) -> Bool {
         ["html", "pdf"].contains(url.pathExtension.lowercased())
             && url.resolvingSymlinksInPath().path.hasPrefix(SummaryLibrary.root.resolvingSymlinksInPath().path + "/")
+    }
+
+    /// A What's new tour step inside a meeting summary: "tourMeeting" opens the latest meeting and parks
+    /// the step here; that page's widget shows it (PageShare /coach), then /coach-done hands back.
+    static var coach: (file: URL, step: [String: Any])?
+    static func tourResume(skip: Bool) {
+        DispatchQueue.main.async { shared?.web.evaluateJavaScript("nx.tourResume(\(skip))") }
     }
 
     /// Shows the window with `url` open in the reader.
@@ -50,6 +64,17 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
     private var sideCollapsed = UserDefaults.standard.bool(forKey: "nikxel.dashboardSideCollapsed")
     /// The text file open in the page's editor (personality, a contact list, a template).
     private var editing: (url: URL, title: String, help: String)?
+    /// The summary template open in the page's template dialog. `templateRev`
+    /// tells the page to reload its draft (opened, created, reset); `templateNew`
+    /// opens it on the new-template form.
+    private var template: String?
+    private var templateRev = 0
+    private var templateNew = false
+    private var templateError = ""
+    /// The ERP sign-in under Connections: the window is open and we're waiting,
+    /// or why the last try didn't connect.
+    private var erpWaiting = false
+    private var erpProblem = ""
     /// The Chat section's conversation, the same engine as the avatar's chat.
     private var chat: ChatSession?
     /// Today's calendar, fetched at most every few minutes as the window comes forward.
@@ -159,13 +184,40 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             push()
         case "tourDone":
             NikxelSettings.dashboardTourDone = true
+            // Someone new just had the whole tour: today's update isn't news to them.
+            if NikxelSettings.whatsNewSeen == nil { WhatsNew.markSeen() }
+            push()
+        case "whatsNewSeen":
+            WhatsNew.markSeen()
             push()
         case "chatStart":
             startChat()
         case "chat":
             let id = body["id"] as? Int ?? 0
             startChat()
-            chat?.send(body["text"] as? String ?? "") { [weak self] in self?.reply(id, $0) }
+            chat?.send(body["text"] as? String ?? "", files: body["files"] as? [String] ?? []) { [weak self] in self?.reply(id, $0) }
+        case "attachAdd":
+            // A file dropped on the chat or an automation: read here, never uploaded.
+            let id = body["id"] as? Int ?? 0, name = body["name"] as? String ?? "file"
+            let data = (body["data"] as? String).flatMap { Data(base64Encoded: $0) } ?? Data()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let r = Attachments.add(name: name, data: data)
+                DispatchQueue.main.async { self.reply(id, r) }
+            }
+        case "attachPick":
+            // The + button: files from a Finder sheet, each read like a dropped one.
+            let id = body["id"] as? Int ?? 0
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = true
+            panel.message = "Give Nikxel a document or image to read"
+            guard let window else { return reply(id, []) }
+            panel.beginSheetModal(for: window) { [weak self] r in
+                let urls = r == .OK ? panel.urls : []
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let out = urls.map(Attachments.add(url:))
+                    DispatchQueue.main.async { self?.reply(id, out) }
+                }
+            }
         case "chatMic":
             let id = body["id"] as? Int ?? 0
             startChat()
@@ -208,10 +260,15 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             guard let d = body["a"] as? [String: Any] else { return }
             let a = Automation(id: d["id"] as? String ?? "", name: d["name"] as? String ?? "", trigger: d["trigger"] as? String ?? "",
                                time: d["time"] as? String ?? "09:00", days: d["days"] as? String ?? "daily",
-                               instruction: d["instruction"] as? String ?? "")
+                               instruction: d["instruction"] as? String ?? "", date: d["date"] as? String,
+                               files: (d["files"] as? [String])?.filter { Attachments.name($0) != nil })
             guard var clean = Automation.clean(a) else { return }
             var list = Automation.load()
-            if let i = list.firstIndex(where: { $0.id == clean.id }) { clean.enabled = list[i].enabled; clean.lastRun = list[i].lastRun; list[i] = clean }
+            if let i = list.firstIndex(where: { $0.id == clean.id }) {
+                // A one-time one moved to another day or time runs again.
+                let moved = clean.date != nil && (clean.date != list[i].date || clean.time != list[i].time)
+                clean.enabled = moved || list[i].enabled; clean.lastRun = moved ? "" : list[i].lastRun; list[i] = clean
+            }
             else { list.append(clean) }
             Automation.save(list)
             push()
@@ -240,6 +297,24 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
                     DispatchQueue.main.async { self?.reply(id, ["error": (error as Any?) ?? NSNull()]); self?.push() }
                 }
             }
+        case "orgSwitch":
+            // Another of the user's organizations ({org}), or a new ({org_name}) or joined ({invite}) one; no new sign-in.
+            let id = body["id"] as? Int ?? 0
+            let req = ["org": body["org"], "org_name": body["orgName"], "invite": body["invite"]].compactMapValues { ($0 as? String).flatMap { $0.isEmpty ? nil : $0 } }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let error = CloudSync.switchOrg(req)
+                cblog("Dashboard: organization switch \(error == nil ? "done" : "failed")")
+                DispatchQueue.main.async { self.reply(id, ["error": (error as Any?) ?? NSNull()]); self.push() }
+            }
+        case "tourMeeting":
+            // A tour step that lives inside a meeting summary: the newest one opens, and its page shows the step.
+            guard let m = SummaryLibrary.scan().first(where: { $0.kind == "meetings" && $0.file.pathExtension == "html" }) else { return Self.tourResume(skip: false) }
+            Self.coach = (m.file, body)
+            read(m.file)
+            // A page that never asks for it (an old one without the widget) doesn't leave the tour stuck.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                if Self.coach?.file == m.file { Self.coach = nil; Self.tourResume(skip: false) }
+            }
         case "erpMyProjects":
             let id = body["id"] as? Int ?? 0
             DispatchQueue.global(qos: .userInitiated).async {
@@ -259,7 +334,10 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
                 DispatchQueue.global(qos: .userInitiated).async { Learning.decide(key, yes: yes); DispatchQueue.main.async { self.push() } }
             }
         case "autoRun":
-            if let a = Automation.load().first(where: { $0.id == body["id"] as? String }) { Automations.shared.runNow(a) }
+            // "Run on…": a meeting (or day, week) the user picked, which it then does even if it would have skipped it.
+            let picked = (body["file"] as? String).map { URL(fileURLWithPath: $0).standardizedFileURL }
+                .flatMap { $0.path.hasPrefix(SummaryLibrary.root.path + "/") ? $0 : nil }
+            if let a = Automation.load().first(where: { $0.id == body["id"] as? String }) { Automations.shared.runNow(a, on: picked) }
         case "autoMake":
             let id = body["id"] as? Int ?? 0
             Automations.shared.make(body["text"] as? String ?? "") { [weak self] a in
@@ -278,6 +356,12 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             push()
         case "closeFile":
             editing = nil
+            push()
+        case "erp":
+            erpOp(body["op"] as? String ?? "", url: body["url"] as? String ?? "")
+            push()
+        case "template":
+            templateOp(body["op"] as? String ?? "", slug: body["slug"] as? String ?? "", body)
             push()
         case "tab":
             if let id = body["id"] as? String, let t = tabs.first(where: { $0.file.path == id }) { activate(t) }
@@ -480,6 +564,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             "openInApp": NikxelSettings.openSummariesInApp,
             "appearance": NikxelSettings.appearance,
             "tour": !NikxelSettings.dashboardTourDone,
+            "whatsNew": WhatsNew.dicts(WhatsNew.releases),
+            "whatsNewUnseen": WhatsNew.pending,
             "tasks": tasks,
             "people": people,
             "today": self.today(library),
@@ -488,13 +574,25 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             "botReplies": DashboardData.botReplies(on: Date(), in: waLogs),
             "neverReply": WAContactLists.names(.neverReply),
             "usageDays": Self.usageDays(),
-            "automations": Automation.load().map(\.dict),
+            // Each automation's files with their names, for its chips.
+            "automations": Automation.load().map { a -> [String: Any] in
+                var d = a.dict
+                d["files"] = (a.files ?? []).compactMap { id in Attachments.name(id).map { ["id": id, "name": $0] } }
+                return d
+            },
             "automationRuns": Automations.shared.runs,
             "automationRunning": Automations.shared.running ?? "",
             "nikxelSuggested": Learning.history(),
             "ideas": Automation.ideas.map(\.dict),
             "editor": editing.map { e -> [String: Any] in
                 ["title": e.title, "help": e.help, "text": (try? String(contentsOf: e.url, encoding: .utf8)) ?? ""]
+            } ?? NSNull(),
+            "erp": ["connected": ERP.isConnected, "waiting": erpWaiting, "problem": erpProblem,
+                    "url": NikxelSettings.erpURL ?? (ERP.isConnected ? ERP.base : "")],
+            "templateEditor": template.map { slug -> [String: Any] in
+                ["slug": slug, "name": SummaryTemplates.displayName(for: slug), "shipped": SummaryTemplates.isShipped(slug),
+                 "text": (try? String(contentsOf: SummaryTemplates.url(for: slug), encoding: .utf8)) ?? "",
+                 "rev": templateRev, "creating": templateNew, "error": templateError]
             } ?? NSNull(),
             "hour": Calendar.current.component(.hour, from: Date()),
             "name": NikxelSettings.hasUserName ? NikxelSettings.userName : (NikxelSettings.accountFirstName ?? ""),
@@ -598,9 +696,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         case "openDaily": app.openDaily()
         case "openUsage": app.openUsageFolder()
         case "regenerate": app.regenerateUnfinished()
-        case "editTemplate":
-            edit(SummaryTemplates.activeURL, "“\(SummaryTemplates.displayName(for: NikxelSettings.summaryTemplate))” template",
-                 "Plain instructions, one per line, the way you’d tell a person: drop a section, add one, change the order, the length or the tone. Lines starting with # are ignored. Takes effect on your next recording; names, decisions and numbers still come only from the transcript.")
+        case "editTemplate", "resetTemplate", "deleteTemplate": openTemplate(NikxelSettings.summaryTemplate); push()
         case "aboutMeVoice": app.openAboutMe()
         case "openWhatsApp": app.openWhatsAppWindow()
         case "editPersonality":
@@ -624,15 +720,88 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
         case "toggleMicMute": app.toggleMicMute()
         case "toggleVisibility": app.toggleVisibility()
         case "quit": app.quitApp()
-        case "newTemplate": app.newTemplate()
-        case "resetTemplate": app.resetActiveTemplate()
-        case "deleteTemplate": app.deleteActiveTemplate()
+        case "newTemplate": openTemplate(NikxelSettings.summaryTemplate, creating: true); push()
         case "openTemplates": app.openTemplatesFolder()
         case "closeSummary": showSection(); push()
         case "replayTour": CoachTour.replay()
         case "openInBrowser": if let url = active?.file { NSWorkspace.shared.open(url) }
         case "revealSummary": if let url = active?.file { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         default: break
+        }
+    }
+
+    /// Connections → ERP: the address is typed in the page, the sign-in window
+    /// opens on it, and the page shows waiting, connected, or what went wrong.
+    private func erpOp(_ op: String, url: String) {
+        switch op {
+        case "connect":
+            guard !erpWaiting else { return }
+            guard let address = ERP.address(url) else {
+                erpProblem = "That doesn’t look like a web address. Try something like erp.yourcompany.com."
+                return
+            }
+            if ERP.isConnected { ERP.disconnect() }   // a new address is a different ERP
+            NikxelSettings.erpURL = address.absoluteString
+            erpProblem = ""
+            erpWaiting = true
+            app?.signInERP { [weak self] ok in
+                guard let self = self else { return }
+                self.erpWaiting = false
+                self.erpProblem = ok ? "" : ERP.signInProblem
+                self.push()
+            }
+        case "cancel":
+            DispatchQueue.global(qos: .userInitiated).async { ERP.quit() }   // the sign-in sees its window gone and reports
+        case "disconnect":
+            ERP.disconnect()
+            erpProblem = ""
+            app?.refreshERPMenu()
+        default: break
+        }
+    }
+
+    private func openTemplate(_ slug: String, creating: Bool = false) {
+        SummaryTemplates.seedIfMissing()
+        template = slug
+        templateNew = creating
+        templateError = ""
+        templateRev += 1
+    }
+
+    /// The template dialog's requests: everything happens in the page, nothing opens a file.
+    private func templateOp(_ op: String, slug: String, _ body: [String: Any]) {
+        let use = {
+            NikxelSettings.summaryTemplate = slug
+            self.app?.rebuildTemplateMenu()
+        }
+        templateError = ""
+        switch op {
+        case "open": openTemplate(slug)
+        case "save":
+            if let text = body["text"] as? String, SummaryTemplates.exists(slug) {
+                try? text.write(to: SummaryTemplates.url(for: slug), atomically: true, encoding: .utf8)
+            }
+            if body["use"] as? Bool == true { use() }
+            template = nil
+        case "use": use()
+        case "new":
+            let name = (body["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let copy = (body["copy"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let made = SummaryTemplates.create(named: name, copying: copy) {
+                NikxelSettings.summaryTemplate = made
+                app?.rebuildTemplateMenu()
+                openTemplate(made)
+            } else {
+                templateError = SummaryTemplates.slugify(name).isEmpty
+                    ? "Give it a name with at least one letter or number in it."
+                    : "There’s already a template called that. Pick another name, or edit that one."
+            }
+        case "reset": SummaryTemplates.reset(slug); openTemplate(slug)
+        case "delete":
+            SummaryTemplates.delete(slug)
+            app?.rebuildTemplateMenu()
+            openTemplate(NikxelSettings.summaryTemplate)
+        default: template = nil
         }
     }
 
@@ -664,5 +833,18 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate, WKS
             NikxelSettings.projectsRoot = url.path
             self?.push()
         }
+    }
+}
+
+/// Seen and unseen updates, kept in settings (WhatsNew.swift stays settings-free for its check).
+extension WhatsNew {
+    /// Unseen updates, for the window and the launch card. [] for someone who
+    /// hasn't had the first-run tour yet: everything is new to them.
+    static var pending: [String] {
+        NikxelSettings.dashboardTourDone ? unseen(releases, seen: NikxelSettings.whatsNewSeen) : []
+    }
+
+    static func markSeen() {
+        if let id = releases.first?.id { NikxelSettings.whatsNewSeen = id }
     }
 }

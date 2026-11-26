@@ -67,6 +67,7 @@ interface Stored {
   whatsappConnected?: boolean;
   erpConnected?: boolean;
   erpSession?: string;
+  erpURL?: string;
   onboardingCompleted?: boolean;
   roleAsked?: boolean;
   userContext?: string;
@@ -97,6 +98,7 @@ interface Stored {
   appearance?: string;
   tourDone?: boolean;
   dashboardTourDone?: boolean;
+  whatsNewSeen?: string;
   desktopShortcutMade?: boolean;
   trayPromoted?: boolean;
   /// Any key this version doesn't know is kept on save.
@@ -260,6 +262,10 @@ export const Settings = {
 
   get erpConnected(): boolean { return load().erpConnected ?? false; },
   set erpConnected(v: boolean) { save(s => { s.erpConnected = v; }); },
+  /// The ERP's address as typed under Connections, with https:// added; "" until
+  /// someone connects one (ERP.base() falls back to Forklyft's).
+  get erpURL(): string { return load().erpURL ?? ""; },
+  set erpURL(v: string) { save(s => { s.erpURL = v || undefined; }); },
   get erpSession(): string { return load().erpSession ?? ""; },
   set erpSession(v: string) { save(s => { s.erpSession = v || undefined; }); },
 
@@ -304,6 +310,9 @@ export const Settings = {
   set tourDone(v: boolean) { save(s => { s.tourDone = v; }); },
   get dashboardTourDone(): boolean { return load().dashboardTourDone ?? false; },
   set dashboardTourDone(v: boolean) { save(s => { s.dashboardTourDone = v; }); },
+  /// The newest update (a WHATSNEW.md heading) whose What's new has been shown.
+  get whatsNewSeen(): string | undefined { return load().whatsNewSeen; },
+  set whatsNewSeen(v: string | undefined) { save(s => { s.whatsNewSeen = v; }); },
 
   /// Done once at first launch, so undoing either (deleting the shortcut,
   /// hiding the icon again) sticks.

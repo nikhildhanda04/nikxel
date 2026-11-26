@@ -144,7 +144,17 @@ class NikxelView: NSView, StateMachineDelegate {
     /// The one avatar, for code with no view at hand (GoogleSync, GoogleAuth)
     /// to ask through. Set in init.
     static weak var main: NikxelView?
-    var card: Card?
+    /// When a card goes, the next one waiting takes its place, fresh.
+    var card: Card? {
+        didSet {
+            guard card == nil, !waiting.isEmpty else { return }
+            var next = waiting.removeFirst()
+            next.addedAt = CACurrentMediaTime(); next.opacity = 0
+            card = next
+        }
+    }
+    /// Cards that arrived while one that waits (a question, the day digest, a reminder) was up.
+    private var waiting: [Card] = []
     let cardFadeIn: TimeInterval = 0.45
     let cardFadeOut: TimeInterval = 0.6
 
@@ -321,13 +331,22 @@ class NikxelView: NSView, StateMachineDelegate {
                   lifetime: TimeInterval = 20,
                   action: (() -> Void)? = nil,
                   buttons: [CardButton] = []) {
-        // A question waiting on an answer isn't knocked off by a passing notice.
-        // ponytail: that notice is dropped, not queued; queue if it matters.
-        if card?.buttons.isEmpty == false && buttons.isEmpty { return }
-        card = Card(icon: icon, title: title, lines: lines, bulleted: bulleted,
-                    kind: kind, addedAt: CACurrentMediaTime(), lifetime: lifetime,
-                    action: action, buttons: buttons)
+        let new = Card(icon: icon, title: title, lines: lines, bulleted: bulleted,
+                       kind: kind, addedAt: CACurrentMediaTime(), lifetime: lifetime,
+                       action: action, buttons: buttons)
+        // A card that waits (a question, the day digest, a reminder) isn't knocked off: the new one
+        // queues behind it. ponytail: the queue keeps the last 5; plenty for one evening.
+        if let c = card, !c.buttons.isEmpty || c.lifetime > cardMaxLifetime {
+            waiting = Array((waiting + [new]).suffix(5))
+            return
+        }
+        card = new
         needsDisplay = true
+    }
+
+    /// No keyboard or mouse for a minute: away from the computer (or it's locked).
+    static var userAway: Bool {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!) > 60
     }
 
     func dismissCard() {
@@ -591,6 +610,12 @@ class NikxelView: NSView, StateMachineDelegate {
             if reminderBubbles.count != before || changed { needsDisplay = true }
         }
 
+        // A card meant to wait doesn't run its 10 s while nobody's at the computer (the 10pm digest,
+        // a 9am reminder): it's still there when they're back.
+        if var c = card, c.lifetime > cardMaxLifetime, now - c.addedAt > cardFadeIn, Self.userAway {
+            c.addedAt = now - cardFadeIn
+            card = c
+        }
         if var c = card {
             let age = now - c.addedAt
             // Every card goes after 10 s unattended, errors and questions too.

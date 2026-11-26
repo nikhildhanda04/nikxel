@@ -1,6 +1,6 @@
 import { BrowserWindow, session } from "electron";
 import { cblog } from "../core/diag";
-import { BASE, PARTITION, isConnected, hasLiveSession } from "./erp";
+import { base, PARTITION, isConnected, hasLiveSession } from "./erp";
 import { ErpContext } from "./erpContext";
 import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 
@@ -40,7 +40,7 @@ export async function capture(): Promise<string[]> {
       webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     win.webContents.setUserAgent(ua);
-    await win.loadURL(`${BASE}/odoo/`, { userAgent: ua }).catch(() => { /* SPA loads async; waitForApp handles it */ });
+    await win.loadURL(`${base()}/odoo/`, { userAgent: ua }).catch(() => { /* SPA loads async; waitForApp handles it */ });
     if (!(await waitForApp(win))) { cblog("ErpCrawl: app didn't load (blocked or logged out)"); return []; }
     const odoo = await evalBool(win, "!!document.querySelector('.o_main_navbar, .o_web_client')");
     const sections = odoo ? await captureOdoo(win) : await captureGeneric(win);
@@ -100,7 +100,7 @@ async function captureOdoo(win: BrowserWindow): Promise<string[]> {
   const sections: string[] = [];
   for (const slug of ODOO_APPS) {
     if (sections.length >= MAX_SECTIONS) break;
-    await navigate(win, `${BASE}/odoo/${slug}`);
+    await navigate(win, `${base()}/odoo/${slug}`);
     await waitForContent(win, ".o_content");
     const text = await textOf(win, ".o_content");
     if (text.length > KEEP_MIN) sections.push(`## ${slug}\n${text}`);

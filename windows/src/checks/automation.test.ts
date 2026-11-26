@@ -35,3 +35,23 @@ test("Automation: schedule, clean, parse, ideas, store", () => {
   assert.deepEqual(A.load(), [a], "saved and loaded");
   fs.rmSync(tmp, { force: true });
 });
+
+test("Automation: one-time (temporary) ones and reminder requests", () => {
+  const sat9 = new Date("2026-11-28T09:00:00Z");
+  const once = A.make({ id: "r", name: "Remind: call Vikas", trigger: "schedule", time: "09:00", instruction: "Remind me", date: "2026-11-28" });
+  assert.ok(!A.due(once, new Date("2026-11-27T09:00:00Z"), true), "once: not the day before");
+  assert.ok(A.due(once, sat9, true) && A.due(once, new Date("2026-11-28T14:30:00Z"), true), "once: on time, and late");
+  once.lastRun = "2026-11-28 09:00"; assert.ok(!A.due(once, new Date("2026-11-29T09:00:00Z"), true), "once: never twice");
+  assert.equal(A.clean(A.make({ trigger: "meeting", instruction: "y", date: "2026-11-28" }))?.date, null, "only a schedule has a date");
+  assert.equal(A.clean(A.make({ trigger: "schedule", instruction: "y", date: "tomorrow" }))?.date, null, "a bad date is dropped");
+  assert.equal(A.parse(`{"name":"Remind","trigger":"schedule","time":"9:00","date":"2026-11-28","instruction":"Remind me"}`)[0]?.a.date, "2026-11-28", "date parsed");
+  assert.ok(A.looksLikeReminder("remind me tomorrow morning to send the deck") && A.looksLikeReminder("Can you set a reminder for 5pm?")
+    && !A.looksLikeReminder("what reminders do I have?") && !A.looksLikeReminder("he reminded me of the deal"), "reminder requests, not questions");
+  const tmp = path.join(os.tmpdir(), `au-${process.pid}-once.json`);
+  A.store.file = tmp;
+  A.save([once, A.make({ id: "d", trigger: "day", instruction: "i" })]);
+  const back = A.load();
+  assert.equal(back[0].date, "2026-11-28"); assert.equal(back[1].date, null, "saved and loaded, date only where set");
+  assert.ok(!/"date"/.test(fs.readFileSync(tmp, "utf8").split("},")[1]), "no date key on a repeating one, like the Mac");
+  fs.rmSync(tmp, { force: true });
+});

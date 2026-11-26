@@ -113,6 +113,8 @@ main.reading .inner{display:none}
 .row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:center;padding:16px 20px;border-top:1px solid var(--color-line)}
 .row:first-child{border-top:0}
 .row.stack{grid-template-columns:minmax(0,1fr)}
+.wnb p{margin:4px 0 0;color:var(--color-ink-2);font-size:14.5px;line-height:1.5;max-width:64ch}
+.nav button.new::after{content:'';flex:none;width:8px;height:8px;margin-left:auto;border-radius:50%;background:var(--color-accent)}
 .row b{display:block;font-weight:600;font-size:15px}
 .row small{display:block;color:var(--color-muted);font-size:13.5px;line-height:1.45;margin-top:2px;max-width:52ch}
 .row .ctl{display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap}
@@ -215,8 +217,14 @@ main.chatting .inner>div{height:100%;display:flex;flex-direction:column}
 .suggest{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .suggest button{border:1px solid var(--color-line);background:var(--color-paper);border-radius:999px;padding:8px 14px;font:500 13.5px var(--font-body);color:var(--color-ink-2);cursor:pointer;transition:border-color .4s var(--ease),color .4s var(--ease)}
 .suggest button:hover{border-color:var(--color-accent);color:var(--color-accent-text)}
-.field{flex:none;display:flex;align-items:center;gap:8px;margin:0 16px 16px;padding:6px 6px 6px 18px;border:1px solid var(--color-line-2);border-radius:999px;background:var(--color-paper);transition:border-color .4s var(--ease)}
+.field{flex:none;display:flex;align-items:center;gap:8px;margin:0 16px 16px;padding:6px 6px 6px 6px;border:1px solid var(--color-line-2);border-radius:999px;background:var(--color-paper);transition:border-color .4s var(--ease)}
 .field:focus-within{border-color:var(--color-accent)}
+/* Files for Nikxel to read: chips above the chat box (and on an automation); the chat lights up when one's dragged over. */
+.atts{display:flex;flex-wrap:wrap;gap:6px;margin:0 16px 8px}.atts:empty{display:none}
+.att{display:inline-flex;align-items:center;gap:6px;max-width:260px;padding:5px 6px 5px 10px;border-radius:999px;background:var(--color-paper-2);font:500 12.5px/1.2 var(--font-body);color:var(--color-ink-2)}
+.att span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.att button{border:0;background:transparent;color:var(--color-muted);cursor:pointer;padding:0 4px;font:inherit}
+.att.reading{opacity:.6}.draft .label-like{font-weight:600;font-size:14px}.msg .files{display:block;margin-top:6px;font-size:12.5px;opacity:.75}
+body.dropping .convo,body.dropping #draft .card{outline:2px dashed var(--color-accent);outline-offset:-6px}
 .field input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:15px var(--font-body);color:var(--color-ink);padding:8px 0}
 .field input::placeholder{color:var(--color-faint)}
 .icon{flex:none;width:36px;height:36px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:transparent;color:var(--color-muted);transition:background-color .3s var(--ease)}
@@ -342,6 +350,72 @@ main.chatting .inner>div{height:100%;display:flex;flex-direction:column}
 .tour-block{position:fixed;inset:0;z-index:59}
 /* file editor */
 textarea.file{min-height:min(56vh,520px);font:14.5px/1.6 var(--font-code);background:var(--color-card);margin-top:0}
+/* dialogs: the template editor, and plain text files (a contact list, how I sound) */
+.dlg-scrim{position:fixed;inset:0;z-index:40;background:oklch(15% 0.01 80 / .4);animation:fade .35s var(--ease) backwards}
+.dlg-wrap{position:fixed;inset:0;z-index:41;display:grid;place-items:center;padding:24px;pointer-events:none}
+.dlg{pointer-events:auto;width:min(920px,100%);height:min(720px,100%);display:flex;flex-direction:column;min-height:0;background:var(--color-card);border:1px solid var(--color-line);border-radius:20px;
+  box-shadow:0 2px 6px var(--color-shade-1),0 32px 70px -24px var(--color-shade-2);overflow:hidden;animation:rise .55s var(--ease) backwards;-webkit-user-select:text;user-select:text}
+.dlg.small{width:min(680px,100%)}
+.dlg-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px 16px 24px;border-bottom:1px solid var(--color-line)}
+.dlg-head h2{margin:0;font:600 20px/1.2 var(--font-display);letter-spacing:-.01em}
+.dlg-head p{margin:2px 0 0;font-size:13.5px;color:var(--color-muted)}
+.dlg-x{flex:none;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--color-muted);cursor:pointer;display:grid;place-items:center;transition:background-color .4s var(--ease),color .4s var(--ease)}
+.dlg-x:hover{background:var(--color-paper-2);color:var(--color-ink)}
+.dlg-x svg{width:16px;height:16px}
+.dlg-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:20px 24px;overflow-y:auto}
+.dlg-body textarea.file{flex:1;min-height:240px;margin-top:0;resize:none}
+.dlg-foot{display:flex;align-items:center;gap:8px;padding:14px 20px 14px 24px;border-top:1px solid var(--color-line);background:var(--color-paper)}
+.dlg-foot .grow{margin-right:auto;font-size:13.5px;color:var(--color-ink-2);min-width:0}
+.dlg-foot .grow.warn{color:var(--color-rec);font-weight:600}
+.tpl{flex:1;min-height:0;display:grid;grid-template-columns:220px minmax(0,1fr)}
+.tpl-list{display:flex;flex-direction:column;gap:2px;padding:16px 12px;border-right:1px solid var(--color-line);background:var(--color-paper);overflow-y:auto}
+.tpl-list button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;border:0;border-radius:10px;background:transparent;padding:10px 12px;cursor:pointer;font:500 14px/1.3 var(--font-body);color:var(--color-ink-2);
+  transition:background-color .4s var(--ease),color .4s var(--ease)}
+.tpl-list button:hover{background:var(--color-paper-2);color:var(--color-ink)}
+.tpl-list button[aria-current]{background:var(--color-card);color:var(--color-ink);font-weight:600;box-shadow:0 1px 3px var(--color-shade-3)}
+.tpl-list button small{font:500 12px/1.2 var(--font-body);color:var(--color-ok)}
+.tpl-list .tpl-add{margin-top:8px;color:var(--color-accent-text);font-weight:600}
+.tpl-main{min-height:0;overflow-y:auto;padding:20px 24px 24px;display:flex;flex-direction:column}
+.tpl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.tpl-top h3{margin:0;font:600 22px/1.2 var(--font-display);letter-spacing:-.015em;overflow-wrap:break-word;min-width:0}
+.tpl-top p{margin:4px 0 0;font-size:13.5px;color:var(--color-muted)}
+.tpl-block{margin-top:22px}
+.tpl-block>b{display:block;font-weight:600;font-size:15px}
+.tpl-block>small{display:block;color:var(--color-muted);font-size:13.5px;line-height:1.45;margin-top:2px}
+.togs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.tog{position:relative;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--color-line);border-radius:999px;background:var(--color-paper);padding:7px 12px 7px 8px;cursor:pointer;font:500 13.5px/1 var(--font-body);color:var(--color-muted);
+  transition:border-color .4s var(--ease),background-color .4s var(--ease),color .4s var(--ease)}
+.tog:hover{border-color:var(--color-line-2)}
+.tog::before{content:'';width:16px;height:16px;border-radius:50%;border:1.5px solid var(--color-line-2);box-sizing:border-box;transition:background-color .4s var(--ease),border-color .4s var(--ease)}
+.tog[aria-pressed="true"]{color:var(--color-ink);background:var(--color-card);border-color:var(--color-line-2)}
+.tog[aria-pressed="true"]::before{border:0;background:var(--color-ink)}
+.tog[aria-pressed="true"]::after{content:'';position:absolute;left:16px;top:50%;width:4px;height:8px;border:solid var(--color-on-ink);border-width:0 1.8px 1.8px 0;transform:translate(-50%,-62%) rotate(45deg)}
+.tog.fixed{cursor:default;opacity:.7}
+.tpl-block .seg{margin-top:10px}
+.adds{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 6px 10px 14px;border:1px solid var(--color-line);border-radius:12px;background:var(--color-paper)}
+.add b{font-weight:600;font-size:14px}
+.add span{display:block;font-size:13.5px;color:var(--color-muted);overflow-wrap:break-word}
+.addform{display:grid;grid-template-columns:180px minmax(0,1fr) auto;gap:8px;margin-top:10px}
+.addform .text{width:100%}
+.tpl-main textarea{min-height:110px;margin-top:10px;font-size:14.5px}
+.tpl-main textarea.file{flex:1;min-height:320px;resize:none}
+.ideas-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.idea{border:1px dashed var(--color-line-2);border-radius:999px;background:transparent;padding:6px 11px;cursor:pointer;font:500 13px/1.2 var(--font-body);color:var(--color-ink-2);text-align:left;
+  transition:border-color .4s var(--ease),color .4s var(--ease),background-color .4s var(--ease)}
+.idea:hover{border-color:var(--color-accent);color:var(--color-accent-text);background:var(--color-paper)}
+.tpl-new .text{width:100%;max-width:380px;height:40px;margin-top:12px;font-size:15px}
+.tpl-new .choices{max-width:380px}
+.row.erpform{display:block}
+.erpform label{display:block;cursor:default}
+.row .ctl .link+.link{margin-left:8px}
+.erpform label b{display:block;font-weight:600;font-size:15px}
+.erpform label small,.erpform>small{display:block;color:var(--color-muted);font-size:13.5px;line-height:1.45;margin-top:2px}
+.erpform>small{margin-top:10px;max-width:60ch}
+.erpline{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.erpline .text{flex:1;min-width:220px;width:auto;height:40px;font-size:15px}
+.tpl-err{margin:10px 0 0;color:var(--color-rec);font-size:13.5px;font-weight:600}
+@media (max-width:760px){.tpl{grid-template-columns:minmax(0,1fr)}.tpl-list{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--color-line)}.tpl-list button{width:auto;white-space:nowrap}.addform{grid-template-columns:minmax(0,1fr)}}
 /* tab bar: open summaries, like files in an editor */
 .tabbar{position:sticky;top:0;z-index:4;height:52px;display:flex;align-items:stretch;background:var(--color-paper-2);border-bottom:1px solid var(--color-line)}
 .tabbar[hidden]{display:none}
@@ -402,6 +476,17 @@ body.org .tabbar{display:none}
 main.orgwide .inner{max-width:1120px}
 .nav .back{color:var(--color-muted)}
 .nav .org-entry{margin-top:6px;border:1px dashed var(--color-line-2)}
+/* Organizations, Slack-style: a square initial per org, a dropdown of them, and + to add one. */
+.nav .av{flex:none;width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--color-ink-2);color:var(--color-paper);font:700 12px/1 var(--font-body)}
+.nav .chev{margin-left:auto;display:flex;transition:transform .3s var(--ease)}.nav [aria-expanded="true"] .chev{transform:rotate(180deg)}
+.nav .orgpick{padding:8px 12px 8px 18px}.nav .orgpick .lbl{min-width:0}.nav .orgpick small{display:block;margin-top:2px;color:var(--color-faint);font-size:12px;font-weight:500}
+.nav .orgpick .on{margin-left:auto;flex:none;width:8px;height:8px;border-radius:50%;background:var(--color-accent)}
+.nav .ws{display:flex;gap:6px;align-items:center}.nav .ws .ws-cur{flex:1;min-width:0;font-weight:600;color:var(--color-ink)}
+.nav .ws .ws-cur{gap:10px;padding-right:8px}.nav .ws .ws-cur .lbl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nav .ws .ws-add{flex:none;width:40px;justify-content:center;padding:10px 0;border:1px solid var(--color-line-2)}
+.nav .orgmenu{margin:2px 0 6px;padding:4px;border-radius:14px;background:var(--color-card);box-shadow:inset 0 0 0 1px var(--color-line)}
+body.folded .nav .ws{flex-direction:column}body.folded .nav .chev,body.folded .nav .orgpick .on{display:none}body.folded .nav .orgpick{padding:8px 0}
+.rolegrid{width:100%;border-collapse:collapse}.rolegrid th,.rolegrid td{padding:10px 12px;text-align:center;border-bottom:1px solid var(--color-line,rgba(0,0,0,.08))}.rolegrid th{font-size:12px;font-weight:600;line-height:1.3;color:var(--color-muted)}
+.rolegrid td:first-child,.rolegrid th:first-child{text-align:left}.rolegrid input[type=text]{width:100%;min-width:120px}.rolegrid input[type=checkbox]{width:18px;height:18px;accent-color:currentColor}
 .orgstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:28px}
 .orgstats .card{padding:16px 18px}.orgstats b{display:block;font:500 30px/1.1 var(--font-display)}.orgstats small{color:var(--color-muted)}
 .rules{margin:0;padding:6px 20px 14px 38px;color:var(--color-ink-2)}.rules li{margin:8px 0}
@@ -466,7 +551,7 @@ body.dragging .can-drop{border-color:var(--color-line-2)}
 (function () {
 'use strict';
 var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-var SECTIONS = [['home', 'Home'], ['chat', 'Chat'], ['library', 'Library'], ['tasks', 'Tasks'], ['automations', 'Automations'], ['people', 'People'], ['activity', 'Activity'], null, ['you', 'You'], ['meetings', 'Recording & notes'], ['whatsapp', 'WhatsApp'], ['connections', 'Connections'], ['advanced', 'Advanced']];
+var SECTIONS = [['home', 'Home'], ['chat', 'Chat'], ['library', 'Library'], ['tasks', 'Tasks'], ['automations', 'Automations'], ['people', 'People'], ['activity', 'Activity'], ['whatsnew', 'What’s new'], null, ['you', 'You'], ['meetings', 'Recording & notes'], ['whatsapp', 'WhatsApp'], ['connections', 'Connections'], ['advanced', 'Advanced']];
 var ICON = {
   home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
   chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
@@ -474,6 +559,7 @@ var ICON = {
   tasks: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12l3 3 5-6"/>',
   people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  whatsnew: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   automations: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   you: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   meetings: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/>',
@@ -482,8 +568,11 @@ var ICON = {
   org: '<path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 21v-5h6v5M9 10h.01M15 10h.01M9 13.5h.01M15 13.5h.01"/>',
   chart: '<rect x="9" y="3" width="6" height="5" rx="1.5"/><rect x="3" y="16" width="6" height="5" rx="1.5"/><rect x="15" y="16" width="6" height="5" rx="1.5"/><path d="M12 8v4M6 16v-4h12v4"/>',
   projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  roles: '<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
   shared: '<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M16 6l-4-4-4 4M12 2v13"/>',
   back: '<path d="M15 18l-6-6 6-6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
   advanced: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   doc: '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 13h6M9 17h4"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -494,6 +583,7 @@ var KINDS = [['meetings', 'Meetings'], ['notes', 'Notes'], ['daily', 'Days'], ['
 var nav = document.getElementById('nav'), main = document.getElementById('main'), inner = document.getElementById('inner'), foot = document.getElementById('foot');
 var S = null, current = null, rows = [], tick = 0, libKind = 'meetings', libQuery = '';
 var taskView = 'mine', person = null, found = { q: '', list: [] };
+var pickFor = null; // the automation whose "Run on…" list is open
 var draft = null, making = false, makeText = '', makeError = '', suggesting = false, suggestions = null;
 var md = (function () {
 \#(AvatarChat.markdownJS)
@@ -582,6 +672,43 @@ var HOURS = []; for (var h = 0; h < 24; h++) HOURS.push([h, hourLabel(h)]);
 var SUMMARY_TIMES = [[1260, '9 pm'], [1320, '10 pm'], [1380, '11 pm'], [1440, 'Midnight'], [1500, '1 am'], [1560, '2 am']];
 function pairs(list) { return list.map(function (x) { return [x.id, x.name]; }); }
 
+// --- ERP connection ----------------------------------------------------------------
+// Typed here, signed in in a window that opens on that address. erpDraft keeps
+// what's typed across state pushes; erpChange shows the form while connected.
+var erpDraft = null, erpChange = false;
+function erpHost(u) { return String(u || '').replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, ''); }
+function erpRows(e) {
+  var help = 'Your company’s ERP. I read its people and tasks, and make tasks when you ask.';
+  if (e.waiting) {
+    return row('Waiting for you to sign in', 'A window opened on ' + esc(erpHost(e.url)) + '. Sign in there the way you always do; it closes by itself once you’re in.',
+      '<span class="chip">Signing in</span><button type="button" class="btn" data-erp="cancel">Cancel</button>');
+  }
+  if (e.connected && !erpChange) {
+    return row('Connected to ' + esc(erpHost(e.url)), help,
+      chip(true) + '<button type="button" class="link" data-erp="change">Change</button><button type="button" class="link" data-erp="disconnect">Disconnect</button>');
+  }
+  var value = erpDraft != null ? erpDraft : (e.url || '');
+  return row(e.connected ? 'Connect a different ERP' : 'Connect your ERP', help, e.connected ? '<button type="button" class="link" data-erp="keep">Keep ' + esc(erpHost(e.url)) + '</button>' : chip(false)) +
+    '<div class="row stack erpform"><label for="erpurl"><b>Its web address</b><small>The one you open in your browser to log in, like erp.yourcompany.com.</small></label>' +
+    '<div class="erpline"><input class="text" id="erpurl" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="erp.yourcompany.com" value="' + esc(value) + '">' +
+    '<button type="button" class="btn primary" data-erp="connect">Open sign-in</button></div>' +
+    (e.problem ? '<p class="tpl-err" role="alert">' + esc(e.problem) + '</p>' : '') +
+    '<small>A window opens on that address. Sign in there; I keep the login and close the window. Nothing in your ERP changes until you ask me to make a task.</small></div>';
+}
+function erpClick(t) {
+  var op = t.dataset.erp;
+  if (op === 'change') { erpChange = true; erpDraft = null; return show(current, false); }
+  if (op === 'keep') { erpChange = false; erpDraft = null; return show(current, false); }
+  if (op === 'connect') {
+    var v = document.getElementById('erpurl').value.trim();
+    if (!v) { document.getElementById('erpurl').focus(); return; }
+    erpDraft = v; erpChange = false;
+    return post({ type: 'erp', op: 'connect', url: v });
+  }
+  post({ type: 'erp', op: op });
+}
+document.addEventListener('input', function (e) { if (e.target.id === 'erpurl') erpDraft = e.target.value; });
+
 // --- today, tasks, people ----------------------------------------------------------
 function hhmm(t) { var d = new Date(t * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
 function clock(since) {
@@ -621,20 +748,33 @@ function todayCards(s) {
     '<div class="card"><h3>Still open</h3>' + tasks + '</div></div></section>';
 }
 var TRIGGERS = [['meeting', 'After every meeting'], ['day', 'After my day summary'], ['week', 'After my week summary'], ['schedule', 'On a schedule']];
-var DAYSETS = [['daily', 'Every day'], ['weekdays', 'Weekdays'], ['mon', 'Mondays'], ['tue', 'Tuesdays'], ['wed', 'Wednesdays'], ['thu', 'Thursdays'], ['fri', 'Fridays'], ['sat', 'Saturdays'], ['sun', 'Sundays']];
+var DAYSETS = [['once', 'Once, on a day'], ['daily', 'Every day'], ['weekdays', 'Weekdays'], ['mon', 'Mondays'], ['tue', 'Tuesdays'], ['wed', 'Wednesdays'], ['thu', 'Thursdays'], ['fri', 'Fridays'], ['sat', 'Saturdays'], ['sun', 'Sundays']];
 function draftCard() {
   var d = draft;
   return '<section class="group" data-in id="draft"><h2>' + (d.id ? 'Edit automation' : 'New automation') + '</h2><div class="card draft">' +
     '<label>Name<input class="text" data-draft="name" value="' + esc(d.name) + '" autocomplete="off"></label>' +
     '<label>When<span class="when"><select data-draft="trigger">' + TRIGGERS.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === d.trigger ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') + '</select>' +
       (d.trigger === 'schedule' ? '<select data-draft="days">' + DAYSETS.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === d.days ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') + '</select>' +
+        (d.days === 'once' ? '<input class="text" type="date" data-draft="date" value="' + esc(d.date) + '" style="width:160px">' : '') +
         '<input class="text" type="time" data-draft="time" value="' + esc(d.time) + '" style="width:120px">' : '') + '</span></label>' +
+    (d.trigger === 'schedule' && d.days === 'once' ? '<p class="visible" style="margin:0">Temporary: it runs once, then switches itself off. If your computer is asleep then, it runs when you’re back.</p>' : '') +
     '<label>What I should do<textarea data-draft="instruction" spellcheck="false">' + esc(d.instruction) + '</textarea></label>' +
+    '<div class="label-like">Files it follows<p class="visible" style="margin:2px 0 8px">A template or format to follow every time, like your SOP format. Drop it here or attach it.</p>' +
+      '<div class="atts" style="margin:0 0 8px">' + attsHTML(d.files || [], 'draft') + '</div><button type="button" class="btn" data-draftattach>Attach a file</button></div>' +
     '<div class="actions"><button type="button" class="btn primary" data-autosave>Save automation</button><button type="button" class="btn" data-autocancel>Cancel</button></div></div></section>';
+}
+// "Run on…": an automation for meetings (or days, weeks) run on one you pick, e.g. a client call it skipped.
+var RUN_ON = { meeting: 'meetings', day: 'daily', week: 'weekly' };
+function runOnHTML(a, s) {
+  var list = s.library.filter(function (e) { return e.kind === RUN_ON[a.trigger]; }).slice(0, 40);
+  return '<div class="meta"><select data-autorunon="' + esc(a.id) + '" aria-label="Run it on"><option value="">' + (list.length ? 'Pick one to run it on…' : 'Nothing to run it on yet') + '</option>' +
+    list.map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(e.date.slice(0, 10) + ' · ' + e.title) + '</option>'; }).join('') + '</select>' +
+    '<span class="visible">It runs even if it would have skipped this one.</span></div>';
 }
 function redrawAutomations() { if (current === 'automations' && !S.active && !S.editor) show('automations', false); }
 function openDraft(a) {
-  draft = { id: a.id || '', name: a.name, trigger: a.trigger, time: a.time || '09:00', days: a.days || 'daily', instruction: a.instruction };
+  var tmr = new Date(Date.now() + 864e5), ymd = tmr.getFullYear() + '-' + ('0' + (tmr.getMonth() + 1)).slice(-2) + '-' + ('0' + tmr.getDate()).slice(-2);
+  draft = { id: a.id || '', name: a.name, trigger: a.trigger, time: a.time || '09:00', days: a.date ? 'once' : a.days || 'daily', date: a.date || ymd, instruction: a.instruction, files: (a.files || []).slice() };
   redrawAutomations();
   var el = document.getElementById('draft'); if (el) el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
@@ -701,7 +841,9 @@ var VIEWS = {
     return '<div class="chat-head" data-in><div><h1 class="display">Chat</h1><p class="lead">Ask about your meetings, days, projects, WhatsApp and mail, the same as clicking me on screen.</p></div>' +
       btn('New chat', 'chatNew') + '</div>' +
       '<div class="chatwrap" data-in><div class="card convo"><div class="log" id="log">' + logHTML() + '</div>' +
-        '<form class="field" id="chatf"><input id="ci" placeholder="Ask anything…" autocomplete="off" spellcheck="false" aria-label="Message" value="' + esc(chatDraft) + '">' +
+        '<div class="atts" id="atts">' + attsHTML(chatFiles, 'chat') + '</div>' +
+        '<form class="field" id="chatf"><button type="button" class="icon" data-chat="attach" aria-label="Attach a document or image" title="Attach a document or image (or drop one here)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
+        '<input id="ci" placeholder="Ask anything…" autocomplete="off" spellcheck="false" aria-label="Message" value="' + esc(chatDraft) + '">' +
         '<button type="button" class="icon" data-chat="mic" aria-label="Speak"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></button>' +
         '<button class="icon go" data-chat="send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form></div>' +
       '<aside class="card srcs"><h2>What I can see</h2><p>Each question is answered from these.</p><div id="srcs">' + sourcesHTML() + '</div></aside></div>';
@@ -722,8 +864,11 @@ var VIEWS = {
     var mine = s.automations.length ? s.automations.map(function (a) {
       var on = a.id === s.automationRunning;
       return '<div class="auto' + (a.enabled ? '' : ' off') + '"><div><b>' + esc(a.name) + '</b><p>' + esc(a.instruction) + '</p>' +
-        '<div class="meta"><span class="chip">' + esc(a.when) + '</span>' + (on ? '<span class="busy"><span class="dots"><i></i><i></i><i></i></span>Running…</span>' : '') + '</div></div>' +
+        '<div class="meta"><span class="chip">' + esc(a.when) + '</span>' + (a.date ? '<span class="chip">' + (a.done ? 'Done, switched off' : 'Temporary') + '</span>' : '') +
+          (a.files || []).map(function (f) { return '<span class="chip">📎 ' + esc(f.name) + '</span>'; }).join('') + (on ? '<span class="busy"><span class="dots"><i></i><i></i><i></i></span>Running…</span>' : '') + '</div>' +
+        (pickFor === a.id ? runOnHTML(a, s) : '') + '</div>' +
         '<div class="ctl">' + '<button type="button" class="link" data-autorun="' + esc(a.id) + '"' + (on ? ' disabled' : '') + '>Run now</button>' +
+        (RUN_ON[a.trigger] ? '<button type="button" class="link" data-autopick="' + esc(a.id) + '"' + (on ? ' disabled' : '') + '>Run on…</button>' : '') +
         '<button type="button" class="link" data-autoedit="' + esc(a.id) + '">Edit</button>' +
         '<button type="button" class="link" data-autodel="' + esc(a.id) + '">Delete</button>' +
         '<button type="button" class="switch" role="switch" aria-checked="' + a.enabled + '" aria-label="On" data-autotoggle="' + esc(a.id) + '"></button></div></div>';
@@ -747,7 +892,8 @@ var VIEWS = {
     }).join('') : '<p class="empty">Nothing yet. As I learn how you work, my ideas show up here, even the ones you missed on screen.</p>';
     var runs = s.automationRuns.length ? s.automationRuns.slice(0, 15).map(function (r) {
       return '<div class="run' + (r.skipped ? ' skip' : '') + '"><header><time>' + esc(when({ date: (function (d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })(new Date(r.t * 1000)) + ' ' + hhmm(r.t), kind: 'meetings' })) + '</time><b>' + esc(r.name) + '</b>' +
-        (r.file ? '<button type="button" class="link" data-open="' + esc(r.file) + '">Open summary</button>' : '') + '</header>' +
+        (r.file ? '<button type="button" class="link" data-open="' + esc(r.file) + '">Open summary</button>' : '') +
+        (r.text && !r.skipped ? '<button type="button" class="link" data-copyrun="' + s.automationRuns.indexOf(r) + '">Copy</button>' : '') + '</header>' +
         '<div class="out">' + (r.skipped ? 'Nothing to do this time.' : md(r.text)) + '</div></div>';
     }).join('') : '<p class="empty">Nothing has run yet.</p>';
     return '<div data-in><h1 class="display">Automations</h1><p class="lead">Tell me what to do when something happens, and I’ll do it every time: answer, draft an email, or make an ERP task. I never send anything without you.</p></div>' +
@@ -780,6 +926,17 @@ var VIEWS = {
       '<section class="group" data-in><h2>WhatsApp replies today</h2><div class="card">' + replies + '</div></section>' +
       '<section class="group" data-in><h2>AI use, last 14 days</h2><div class="card">' + usageChart(s.usageDays) + '</div>' +
       '<p style="margin:12px 0 0">' + link('Open usage log', 'openUsage') + '</p></section>';
+  },
+
+  whatsnew: function (s) {
+    var rel = s.whatsNew || [], unseen = s.whatsNewUnseen || [];
+    return '<div data-in><h1 class="display">What’s new</h1><p class="lead">What each update added. Show me walks you through one again.</p></div>' +
+      (rel.length ? rel.map(function (r) {
+        var tour = featureSteps([r.id]).length;
+        return '<section class="group" data-in><h2>' + esc(dayName(r.id)) + (unseen.indexOf(r.id) >= 0 ? ' <span class="chip ok">New</span>' : '') + '</h2><div class="card">' +
+          r.items.map(function (it) { return '<div class="row stack"><div><b>' + esc(it.title) + '</b><div class="wnb">' + md(it.body) + '</div></div></div>'; }).join('') + '</div>' +
+          (tour ? '<p style="margin:12px 0 0"><button type="button" class="btn" data-wn="' + esc(r.id) + '">Show me</button></p>' : '') + '</section>';
+      }).join('') : '<p class="lead" data-in style="margin-top:24px">Nothing listed yet.</p>');
   },
 
   library: function (s) {
@@ -826,9 +983,8 @@ var VIEWS = {
         row('Open summaries in Nikxel', 'Off opens them in your browser instead.', sw('openInApp', s.openInApp))) +
       group('Templates',
         row('Summary template', 'The structure your minutes follow.', select('summaryTemplate', pairs(s.templates), s.summaryTemplate)) +
-        row('Change “' + esc(tpl) + '”', s.templateShipped ? 'Reset puts back the built-in version.' : 'Delete sends summaries back to the Default template.',
-          link('Edit…', 'editTemplate') + (s.templateShipped ? link('Reset…', 'resetTemplate') : link('Delete…', 'deleteTemplate'))) +
-        row('More templates', 'One per kind of meeting: client calls, design reviews, the board.', link('New…', 'newTemplate') + link('Open folder', 'openTemplates'))) +
+        row('Change “' + esc(tpl) + '”', 'Pick its sections, length and tone, or write it in your own words.', link('Edit…', 'editTemplate')) +
+        row('More templates', 'One per kind of meeting: client calls, design reviews, the board.', link('New…', 'newTemplate'))) +
       group('Your files',
         row('Meeting minutes', '', link('Open folder', 'openMeetings')) +
         row('Notes', '', link('Open folder', 'openNotes')) +
@@ -872,8 +1028,8 @@ var VIEWS = {
         conn('Google account', 'Calendar heads-ups, meeting tasks to Google Tasks, Gmail from the chat.', st.google, 'connectGoogle') +
         conn('Slack', 'The day’s messages go into your day summary.', st.slack, 'connectSlack') +
         conn(mac('Apple Reminders', 'Google Tasks reminders'), mac('New reminders bubble up when you open your Mac.', 'New Google Tasks bubble up on your PC.'), st.reminders, 'connectReminders') +
-        conn('Team dashboard', 'Send your day and your meeting minutes to your team.', st.dashboard, 'connectDashboard') +
-        conn('Forklyft ERP', 'What I read there helps me know your work.', st.erp, 'connectERP')) +
+        conn('Team dashboard', 'Send your day and your meeting minutes to your team.', st.dashboard, 'connectDashboard')) +
+      group('ERP', erpRows(s.erp || {})) +
       group('WhatsApp', row('WhatsApp', 'Replies, call links and tasks from chats.', chip(st.whatsapp) + go('Settings', 'whatsapp')));
   },
 
@@ -902,25 +1058,46 @@ var TOUR = [
   ['.rec', 'Record', 'Start or stop recording a meeting. You can also double-click me on your screen.'],
   ['[data-section="you"]', 'Settings', 'Your name, how I look, WhatsApp, Google, and everything else I do.']
 ];
-var tourAt = -1, tourEls = null;
-function startTour() {
+var tourAt = -1, tourEls = null, tourSteps = TOUR, tourEnd = null, tourFrom = null;
+// steps: [selector, title, text, section to open first]; onEnd runs when it's finished or skipped.
+function startTour(steps, onEnd) {
   if (tourAt >= 0) return;
+  tourSteps = steps || TOUR;
+  tourEnd = onEnd || function () { post({ type: 'tourDone' }); };
+  tourFrom = current;
   tourEls = { block: document.createElement('div'), hole: document.createElement('div'), tip: document.createElement('div') };
   tourEls.block.className = 'tour-block'; tourEls.hole.className = 'tour-hole'; tourEls.tip.className = 'tour-tip';
   tourEls.tip.setAttribute('role', 'dialog');
   document.body.append(tourEls.block, tourEls.hole, tourEls.tip);
   tourAt = 0; showTourStep();
 }
+// A feature tour opens each section it talks about (the organization's too), then points at it.
 function showTourStep() {
-  var step = TOUR[tourAt], el = document.querySelector(step[0]);
-  if (!el) { tourAt++; return tourAt < TOUR.length ? showTourStep() : endTour(); }
+  var to = tourSteps[tourAt][3];
+  if (to === 'meeting') {
+    // Inside a summary: the window opens the newest meeting and its page shows this step; nx.tourResume carries on.
+    [tourEls.block, tourEls.hole, tourEls.tip].forEach(function (e) { e.hidden = true; });
+    var raw = tourSteps[tourAt][4] || {};
+    return post({ type: 'tourMeeting', title: raw.title, text: raw.text, n: tourAt + 1, of: tourSteps.length, last: tourAt === tourSteps.length - 1 });
+  }
+  [tourEls.block, tourEls.hole, tourEls.tip].forEach(function (e) { e.hidden = false; });
+  // An open summary covers the page: going to the step's section closes it.
+  if (to && (to !== current || (S && S.active))) {
+    try { goTo(to); } catch (e) { /* a page that can't draw doesn't stop the tour: its sidebar entry is still there */ }
+    setTimeout(placeTourStep, 90);
+  } else placeTourStep();
+}
+function placeTourStep() {
+  if (!tourEls) return;
+  var step = tourSteps[tourAt], el = document.querySelector(step[0]);
+  if (!el) { tourAt++; return tourAt < tourSteps.length ? showTourStep() : endTour(); }
   var r = el.getBoundingClientRect(), pad = 6;
   Object.assign(tourEls.hole.style, { left: r.left - pad + 'px', top: r.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
-  var last = tourAt === TOUR.length - 1;
+  var last = tourAt === tourSteps.length - 1;
   // A pen-stroke arrow from the note back to what it's about.
   tourEls.tip.innerHTML = '<svg class="tour-arrow" viewBox="0 0 58 44" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M56 30 C 44 40, 26 38, 14 26 S 6 14, 4 12"/><path class="head" d="M3 24 L 3 11 L 16 10"/></g></svg>' +
-    '<b>' + step[1] + '</b><p>' + step[2] + '</p><div class="row2"><span class="count">' + (tourAt + 1) + ' of ' + TOUR.length + '</span>' +
+    '<b>' + step[1] + '</b><p>' + step[2] + '</p><div class="row2"><span class="count">' + (tourAt + 1) + ' of ' + tourSteps.length + '</span>' +
     (last ? '' : '<button type="button" class="link" data-tour="end">Skip</button>') +
     '<button type="button" class="btn primary" data-tour="next" style="padding:8px 14px">' + (last ? 'Got it' : 'Next') + '</button></div>';
   var top = Math.max(12, Math.min(innerHeight - tourEls.tip.offsetHeight - 12, r.top + r.height / 2 - 34));
@@ -933,7 +1110,44 @@ function endTour() {
   if (!tourEls) return;
   tourEls.block.remove(); tourEls.hole.remove(); tourEls.tip.remove();
   tourEls = null; tourAt = -1;
-  post({ type: 'tourDone' });
+  // A feature tour hands you back where you were.
+  if (tourSteps !== TOUR && tourFrom && tourFrom !== current) goTo(tourFrom);
+  var done = tourEnd; tourEnd = null;
+  if (done) done();
+}
+
+// --- what's new --------------------------------------------------------------------
+// The tour of the given updates (WHATSNEW.md), oldest first: a step for each `tour:` line.
+function featureSteps(ids) {
+  var out = [];
+  (S && S.whatsNew || []).filter(function (r) { return ids.indexOf(r.id) >= 0; }).reverse().forEach(function (r) {
+    r.items.forEach(function (it) {
+      (it.tour || []).forEach(function (t) {
+        // "meeting": a step shown inside the newest meeting summary, not on a sidebar entry.
+        out.push(['#nav [data-section="' + t.section + '"]', esc(t.title), esc(String(t.text).replace(/\*\*/g, '')), t.section,
+          { title: t.title, text: String(t.text).replace(/\*\*/g, '') }]);
+      });
+    });
+  });
+  return out;
+}
+function seenWhatsNew() { post({ type: 'whatsNewSeen' }); }
+// Once per update: the first time the window opens after it, after the beginner tour if that's still due.
+var featureTourChecked = false;
+function maybeFeatureTour() {
+  if (featureTourChecked || !S || S.tour || tourAt >= 0) return;
+  var ids = S.whatsNewUnseen || [];
+  featureTourChecked = true;
+  var steps = featureSteps(ids);
+  if (steps.length) setTimeout(function () { if (!S.editor && !T) startTour(steps, seenWhatsNew); }, reduce ? 200 : 1400);
+}
+function markNew() {
+  var b = nav.querySelector('[data-section="whatsnew"]');
+  if (b) b.classList.toggle('new', !!(S && S.whatsNewUnseen && S.whatsNewUnseen.length));
+}
+function dayName(id) {
+  var d = new Date(String(id).slice(0, 10) + 'T12:00:00'); // "2026-11-27.2", a second update that day, shows as the date
+  return isNaN(d) ? id : d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 // --- library and reader ------------------------------------------------------------
@@ -979,6 +1193,7 @@ function drawFoot(s) {
 }
 
 // --- chat ------------------------------------------------------------------------
+var chatFiles = []; // attached for the next message: {id, name}, or {reading: name} while it's read
 var chatLog = [], chatDraft = '', chatBusy = false, chatListening = false, chatSources = null, chatSeq = 0, chatPending = {};
 var SUGGEST = ['What did I agree to in today’s meetings?', 'Who’s waiting on me on WhatsApp?', 'What did I work on this week?', 'Anything urgent in my inbox?'];
 function chatAsk(type, text, extra) {
@@ -989,7 +1204,8 @@ function logHTML() {
     '<div class="suggest">' + SUGGEST.map(function (q) { return '<button type="button" data-chat="suggest">' + esc(q) + '</button>'; }).join('') + '</div></div>';
   return chatLog.map(function (m) {
     if (m.pending) return '<div class="msg bot"><span class="dots"><i></i><i></i><i></i></span><span class="hint">' + esc(m.pending) + '</span></div>';
-    return '<div class="msg ' + m.who + '">' + (m.who === 'bot' ? md(m.text) : esc(m.text)) + '</div>';
+    return '<div class="msg ' + m.who + '">' + (m.who === 'bot' ? md(m.text) : esc(m.text)) +
+      (m.files && m.files.length ? '<span class="files">📎 ' + m.files.map(esc).join(', ') + '</span>' : '') + '</div>';
   }).join('');
 }
 function sourcesHTML() {
@@ -1013,13 +1229,16 @@ function syncChat() {
   mic.disabled = chatBusy || (meeting && !chatListening);
   mic.title = meeting ? 'Recording a meeting: type instead' : 'Tap, speak, tap again to send';
   mic.classList.toggle('rec', chatListening);
-  go.disabled = chatBusy || chatListening || !ci.value.trim();
+  var ready = chatFiles.length && !chatFiles.some(function (f) { return f.reading; });
+  go.disabled = chatBusy || chatListening || (!ci.value.trim() && !ready) || chatFiles.some(function (f) { return f.reading; });
 }
 function chatRun(text) {
-  chatLog.push({ who: 'me', text: text });
-  var wait = { pending: 'thinking…' };
+  var files = chatFiles.filter(function (f) { return f.id; });
+  chatFiles = []; drawAtts();
+  chatLog.push({ who: 'me', text: text, files: files.map(function (f) { return f.name; }) });
+  var wait = { pending: files.length ? 'reading what you attached…' : 'thinking…' };
   chatLog.push(wait); chatBusy = true; drawLog();
-  chatAsk('chat', text).then(function (r) {
+  chatAsk('chat', text, { files: files.map(function (f) { return f.id; }) }).then(function (r) {
     chatLog[chatLog.indexOf(wait)] = { who: 'bot', text: r.text };
     chatBusy = false;
     var ci = document.getElementById('ci');
@@ -1028,6 +1247,47 @@ function chatRun(text) {
     if (ci) ci.focus();
   });
 }
+// --- files for Nikxel to read (dropped, or the + button): read on this computer, never uploaded ---
+function attsHTML(list, where) {
+  return list.map(function (f, i) {
+    return '<span class="att' + (f.reading ? ' reading' : '') + '" title="' + esc(f.name || f.reading) + '">📎 <span>' + esc(f.reading ? 'Reading ' + f.reading + '…' : f.name) + '</span>' +
+      (f.reading ? '' : '<button type="button" data-unattach="' + where + ':' + i + '" aria-label="Remove ' + esc(f.name) + '">×</button>') + '</span>';
+  }).join('');
+}
+function drawAtts() { var el = document.getElementById('atts'); if (el) el.innerHTML = attsHTML(chatFiles, 'chat'); syncChat(); }
+// `into`: the chat's list or the automation draft's. Each file is read natively: {id, name} or {error}.
+function attachResults(into, results, redraw) {
+  (results || []).forEach(function (r) {
+    if (r.error) { if (into === chatFiles) { chatLog.push({ who: 'bot', text: r.error }); drawLog(); } else makeError = r.error; }
+    else into.push({ id: r.id, name: r.name });
+  });
+  redraw();
+}
+function attachDropped(fileList, into, redraw) {
+  [].forEach.call(fileList, function (file) {
+    var slot = { reading: file.name }; into.push(slot); redraw();
+    var done = function (r) { into.splice(into.indexOf(slot), 1); attachResults(into, [r], redraw); };
+    if (file.size > 15e6) return done({ error: file.name + ' is over 15 MB.' });
+    var fr = new FileReader();
+    fr.onload = function () { chatAsk('attachAdd', '', { name: file.name, data: String(fr.result).split(',')[1] || '' }).then(done); };
+    fr.onerror = function () { done({ error: 'Couldn’t open ' + file.name + '.' }); };
+    fr.readAsDataURL(file);
+  });
+}
+// Files dropped anywhere in the window go to the chat, or to the automation being edited; never opened as a page.
+var dragDepth = 0;
+function dropTarget() { return current === 'chat' && !(S && (S.active || S.editor)) ? 'chat' : current === 'automations' && draft ? 'draft' : null; }
+document.addEventListener('dragenter', function (e) { if (e.dataTransfer && [].indexOf.call(e.dataTransfer.types, 'Files') >= 0 && dropTarget()) { dragDepth++; document.body.classList.add('dropping'); } });
+document.addEventListener('dragleave', function () { if (dragDepth && --dragDepth === 0) document.body.classList.remove('dropping'); });
+document.addEventListener('dragover', function (e) { e.preventDefault(); });
+document.addEventListener('drop', function (e) {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dropping');
+  var files = e.dataTransfer && e.dataTransfer.files, to = dropTarget();
+  if (!files || !files.length || !to) return;
+  if (to === 'chat') attachDropped(files, chatFiles, drawAtts);
+  else { draft.files = draft.files || []; attachDropped(files, draft.files, redrawAutomations); }
+});
+
 function chatMic() {
   if (!chatListening) {
     chatAsk('chatMic').then(function (r) {
@@ -1052,9 +1312,11 @@ function chatMic() {
 // The shared side, in its own room (body.org). Everything here is read live from
 // the team's server through this computer's pairing (post 'org' → nikxel-api);
 // nothing of the team's is kept on disk, and nothing leaves without a click.
-var ORG_SECTIONS = [['org-home', 'Overview', 'org'], ['org-chart', 'Org chart', 'chart'], ['org-projects', 'Projects', 'projects'], ['org-shared', 'Shared by me', 'shared'], ['org-connection', 'Connection', 'connections']];
-var TIERS = [['owner', 'Owner'], ['cofounder', 'Co-founders'], ['admin', 'Admins'], ['member', 'Members']];
+var ORG_SECTIONS = [['org-home', 'Overview', 'org'], ['org-chart', 'Org chart', 'chart'], ['org-projects', 'Projects', 'projects'], ['org-roles', 'Roles', 'roles'], ['org-shared', 'Shared by me', 'shared'], ['org-connection', 'Organizations', 'connections']];
+// The org's roles, from the server (the owner can add and change them); these are the defaults until they load.
+var TIERS = [['owner', 'Owner'], ['cofounder', 'Co-founder'], ['admin', 'Admin'], ['member', 'Member']];
 var ROLE_NAME = { owner: 'Owner', cofounder: 'Co-founder', admin: 'Admin', member: 'Member' };
+var PERM_NAME = [['invite', 'Invite people'], ['people', 'Change roles, remove people'], ['all_projects', 'See every project'], ['day_summaries', 'Read teammates’ days'], ['chat_all', 'Every project in chat']];
 var O = { erp: null, loaded: false, loading: false, error: '', org: null, me: null, members: [], projects: [], shared: null, sel: null, open: null, invite: null, note: '', newProj: '' };
 var dragId = null;
 
@@ -1071,8 +1333,10 @@ function orgErr(r) {
 }
 function orgRedraw() { if (inOrg() && !(S && S.editor)) show(current, false); }
 function orgFetch() {
-  return Promise.all([orgCall('GET', '/api/members'), orgCall('GET', '/api/projects'), orgCall('GET', '/api/shared/mine')]).then(function (x) {
+  return Promise.all([orgCall('GET', '/api/members'), orgCall('GET', '/api/projects'), orgCall('GET', '/api/shared/mine'), orgCall('GET', '/api/roles'), orgCall('GET', '/api/me/orgs')]).then(function (x) {
+    O.orgs = ok(x[4]) ? x[4].data : [];
     O.members = ok(x[0]) ? x[0].data : []; O.projects = ok(x[1]) ? x[1].data : []; O.shared = ok(x[2]) ? x[2].data : null;
+    if (ok(x[3])) { O.roles = x[3].data; TIERS = O.roles.map(function (r) { return [r.key, r.name]; }); ROLE_NAME = {}; O.roles.forEach(function (r) { ROLE_NAME[r.key] = r.name; }); }
     if (O.open) return orgCall('GET', '/api/projects/' + encodeURIComponent(O.open.project.id)).then(function (r) { O.open = ok(r) ? r.data : null; });
   });
 }
@@ -1096,28 +1360,31 @@ function orgDo(call, done) {
   }).then(orgRedraw);
 }
 
-function staffRole(r) { return r === 'owner' || r === 'cofounder' || r === 'admin'; }
-function amStaff() { return !!O.me && staffRole(O.me.role); }
+function can(perm) { return !!O.me && (O.me.role === 'owner' || (O.me.perms || []).indexOf(perm) >= 0); }
+function permsOf(key) { var r = (O.roles || []).filter(function (x) { return x.key === key; })[0]; return r ? r.perms : []; }
+// Nobody hands out more than they have: a role you can give or touch is one whose permissions are all yours.
+function covers(key) { return permsOf(key).every(can); }
+function roleName(key) { return ROLE_NAME[key] || 'Member'; }
+function aRole(key) { var n = roleName(key); return (/^[aeiou]/i.test(n) ? 'an ' : 'a ') + n.toLowerCase(); }
 function member(id) { return O.members.filter(function (m) { return m.user_id === id; })[0]; }
 function proj(id) { return O.projects.filter(function (p) { return p.id === id; })[0]; }
 function nameOf(m) { return (m && (m.name || m.email)) || 'Someone'; }
 function first(n) { return String(n || '').split(/\s+/)[0]; }
 // The server enforces all of this too; here it only decides what can be dragged where.
 function canMove(p, to) {
-  var me = O.me && O.me.role;
-  if (!staffRole(me) || !p || p.role === 'owner' || to === 'owner' || p.role === to || p.user_id === O.me.user_id) return false;
-  return !((to === 'cofounder' || p.role === 'cofounder') && me !== 'owner');
+  if (!can('people') || !p || p.role === 'owner' || to === 'owner' || p.role === to || p.user_id === O.me.user_id) return false;
+  return covers(to) && covers(p.role);
 }
-function canRemove(p) { return amStaff() && p.role !== 'owner' && p.user_id !== O.me.user_id && (p.role !== 'cofounder' || O.me.role === 'owner'); }
+function canRemove(p) { return can('people') && p.role !== 'owner' && p.user_id !== O.me.user_id && covers(p.role); }
 function onTeam(pr, id) { return pr.members.some(function (m) { return m.user_id === id; }); }
-function canEditTeam(pr) { return amStaff() || onTeam(pr, O.me.user_id); }
-function inviteRoles() { return !amStaff() ? [] : O.me.role === 'owner' ? ['member', 'admin', 'cofounder'] : ['member', 'admin']; }
+function canEditTeam(pr) { return can('all_projects') || onTeam(pr, O.me.user_id); }
+function inviteRoles() { return !can('invite') ? [] : TIERS.slice(1).map(function (t) { return t[0]; }).filter(covers); }
 function initials(n) { var w = String(n || '?').trim().split(/\s+/); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase(); }
 // Spread by the golden angle, so ids that differ by one letter still get far-apart colours.
 function hue(s) { var h = 0; s = String(s || ''); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9973; return Math.round(h * 137.508) % 360; }
 function av(id, name) { return '<span class="av" style="--h:' + hue(id) + '" aria-hidden="true">' + esc(initials(name)) + '</span>'; }
 function day(d) { return when({ date: d + ' 00:00', kind: 'daily' }); }
-function visibleTo(pr) { return 'Visible to the ' + pr.members.length + ' ' + (pr.members.length === 1 ? 'person' : 'people') + ' on it, and admins'; }
+function visibleTo(pr) { return 'Visible to the ' + pr.members.length + ' ' + (pr.members.length === 1 ? 'person' : 'people') + ' on it, and roles that see every project'; }
 
 function orgHead(title, lead) { return '<div data-in><h1 class="display">' + title + '</h1>' + (lead ? '<p class="lead">' + lead + '</p>' : '') + '</div>' + (O.note ? '<p class="note-line" role="status">' + esc(O.note) + '</p>' : ''); }
 // Every org page goes through here: not connected, loading, or the server said no.
@@ -1155,7 +1422,7 @@ function erpImport() {
   var have = O.projects.map(function (p) { return p.name.toLowerCase(); });
   var e = O.erp, fresh = e && e.names ? e.names.filter(function (n) { return have.indexOf(n.toLowerCase()) < 0; }) : [];
   return '<section class="group" data-in><h2>From your ERP</h2><div class="card">' + (!e
-    ? row('Bring in your ERP projects', 'The projects where you have a task, or gave someone one. You see the list before anything is sent.', '<button type="button" class="btn" data-org="erpread"' + (S.status.erp ? '' : ' disabled title="Connect Forklyft ERP first"') + '>Find them</button>')
+    ? row('Bring in your ERP projects', 'The projects where you have a task, or gave someone one. You see the list before anything is sent.', '<button type="button" class="btn" data-org="erpread"' + (S.status.erp ? '' : ' disabled title="Connect your ERP first"') + '>Find them</button>')
     : e.busy ? '<p class="busy"><span class="dots"><i></i><i></i><i></i></span>Reading your ERP tasks…</p>'
     : e.error ? row(esc(e.error), '', '<button type="button" class="btn" data-org="erpread">Try again</button>')
     : !fresh.length ? row('You’re up to date', 'Every ERP project you work on is already here.', '<button type="button" class="link" data-org="erpclose">Done</button>')
@@ -1168,25 +1435,25 @@ function newProjectForm() {
 }
 function inviteBox() {
   var i = O.invite;
-  return '<div class="banner" data-in><div style="flex:1;min-width:0"><b>Invite link for a new ' + ROLE_NAME[i.role].toLowerCase() + '</b>' +
+  return '<div class="banner" data-in><div style="flex:1;min-width:0"><b>Invite link for ' + esc(aRole(i.role)) + '</b>' +
     '<div class="invite"><code>' + esc(i.url || i.token) + '</code><button type="button" class="btn" data-org="copyinvite">Copy</button></div>' +
-    '<small class="visible">' + (i.url ? 'Send it to them. They sign in with Google and join as ' + ROLE_NAME[i.role] + '.' : 'Your server has no dashboard address set (APP_URL), so this is the raw invite code.') + '</small></div>' +
+    '<small class="visible">' + (i.url ? 'Send it to them. In Nikxel they paste it under Organization → Join with an invite link, sign in with Google, and join as ' + esc(aRole(i.role)) + '.' : 'Your server has no dashboard address set (APP_URL), so this is the raw invite code.') + '</small></div>' +
     '<button type="button" class="link" data-org="closeinvite">Done</button></div>';
 }
 function personPanel() {
   var m = member(O.sel);
   if (!m) return '';
   var roles = TIERS.slice(1).map(function (t) {
-    var on = m.role === t[0], can = on || canMove(m, t[0]);
-    return '<button type="button" class="btn" aria-pressed="' + on + '" data-org="role" data-id="' + esc(m.user_id) + '" data-role="' + t[0] + '"' + (can ? '' : ' disabled') + '>' + ROLE_NAME[t[0]] + '</button>';
+    var on = m.role === t[0], able = on || canMove(m, t[0]);
+    return '<button type="button" class="btn" aria-pressed="' + on + '" data-org="role" data-id="' + esc(m.user_id) + '" data-role="' + esc(t[0]) + '"' + (able ? '' : ' disabled') + '>' + esc(t[1]) + '</button>';
   }).join('');
   var teams = O.projects.map(function (pr) {
     var on = onTeam(pr, m.user_id);
     return row(esc(pr.name), on ? 'On this project' : '', canEditTeam(pr) ? '<button type="button" class="switch" role="switch" aria-checked="' + on + '" aria-label="' + esc(pr.name) + '" data-org="' + (on ? 'unteam' : 'team') + '" data-team="' + esc(pr.id) + '" data-id="' + esc(m.user_id) + '"></button>' : (on ? chip(true, 'On it') : ''));
   }).join('');
-  return '<section class="group pdetail" data-in><div class="card"><div class="head">' + av(m.user_id, nameOf(m)) + '<div style="flex:1"><b>' + esc(nameOf(m)) + '</b><br><small class="visible">' + (m.email ? esc(m.email) + ' · ' : '') + ROLE_NAME[m.role] + '</small></div>' +
+  return '<section class="group pdetail" data-in><div class="card"><div class="head">' + av(m.user_id, nameOf(m)) + '<div style="flex:1"><b>' + esc(nameOf(m)) + '</b><br><small class="visible">' + (m.email ? esc(m.email) + ' · ' : '') + esc(roleName(m.role)) + '</small></div>' +
     '<button type="button" class="link" data-org="unsel">Close</button></div>' +
-    (m.role === 'owner' ? row('Role', 'The owner’s role is fixed.', chip(true, 'Owner')) : row('Role', amStaff() ? 'What they can see and manage.' : '', '<div class="roles">' + roles + '</div>')) +
+    (m.role === 'owner' ? row('Role', 'The owner’s role is fixed.', chip(true, 'Owner')) : row('Role', can('people') ? 'What they can see and manage. Set what each role can do under Roles.' : '', '<div class="roles">' + roles + '</div>')) +
     (teams || row('Projects', 'No projects yet.', '')) +
     (O.me.role === 'owner' && m.user_id !== O.me.user_id ? row('Make ' + esc(first(nameOf(m))) + ' the owner', 'They take over ' + esc(O.org.name) + '. You stay on as a co-founder.', '<button type="button" class="btn" data-org="owner" data-id="' + esc(m.user_id) + '">Make owner</button>') : '') +
     (canRemove(m) ? row('Remove from ' + esc(O.org.name), 'They lose access to every project at once. What they shared stays.', '<button type="button" class="btn" data-org="remove" data-id="' + esc(m.user_id) + '">Remove</button>') : '') +
@@ -1194,7 +1461,7 @@ function personPanel() {
 }
 function sharedMeeting(pid, x, mine) {
   return '<div class="shared"><header><b>' + esc(x.title) + '</b><small class="visible">' + esc(x.name || (mine ? 'You' : 'Someone')) + ' · ' + day(x.date) + '</small>' +
-    (mine || amStaff() ? '<button type="button" class="link" data-org="unshare" data-proj="' + esc(pid) + '" data-id="' + esc(x.id || x.meeting_id) + '">Unshare</button>' : '') + '</header>' +
+    (mine || can('all_projects') ? '<button type="button" class="link" data-org="unshare" data-proj="' + esc(pid) + '" data-id="' + esc(x.id || x.meeting_id) + '">Unshare</button>' : '') + '</header>' +
     (x.body ? '<details class="body"><summary>Read</summary>' + md(x.body) + '</details>' : '') + '</div>';
 }
 
@@ -1202,7 +1469,7 @@ VIEWS['org-home'] = function () {
   return orgGate('Organization', function () {
     var mine = O.projects.filter(function (p) { return onTeam(p, O.me.user_id); });
     var sh = O.shared || { meetings: [], days: [] };
-    return orgHead(esc(O.org.name), 'You’re ' + (O.me.role === 'owner' ? 'the owner' : (O.me.role === 'admin' ? 'an ' : 'a ') + ROLE_NAME[O.me.role].toLowerCase()) + ' here. This side of Nikxel is shared: what you see comes from your team, and what you send here leaves your computer.') +
+    return orgHead(esc(O.org.name), 'You’re ' + (O.me.role === 'owner' ? 'the owner' : esc(aRole(O.me.role))) + ' here. This side of Nikxel is shared: what you see comes from your team, and what you send here leaves your computer.') +
       '<div class="orgstats" data-in><div class="card"><b>' + O.members.length + '</b><small>people</small></div><div class="card"><b>' + mine.length + '</b><small>your projects</small></div><div class="card"><b>' + (sh.meetings.length + sh.days.length) + '</b><small>things you’ve shared</small></div></div>' +
       '<section class="group" data-in><h2>What can leave your computer</h2><div class="card"><ul class="rules">' +
         '<li>A meeting’s minutes, without the client summary, to one project, when you click Send.</li>' +
@@ -1216,12 +1483,12 @@ VIEWS['org-chart'] = function () {
   return orgGate('Org chart', function () {
     var tiers = TIERS.map(function (t) {
       var ppl = O.members.filter(function (m) { return m.role === t[0]; });
-      var add = inviteRoles().indexOf(t[0]) >= 0 ? '<button type="button" class="pcard add" data-org="invite" data-role="' + t[0] + '">+ Invite</button>' : '';
+      var add = inviteRoles().indexOf(t[0]) >= 0 ? '<button type="button" class="pcard add" data-org="invite" data-role="' + esc(t[0]) + '">+ Invite</button>' : '';
       if (!ppl.length && !add) return '';
-      return '<div class="tier" data-tier="' + t[0] + '" data-in><h3>' + t[1] + '<span>' + ppl.length + '</span></h3><div class="row">' +
-        (ppl.map(personCard).join('') || '<span class="hint">' + (amStaff() ? 'Drag someone here' : 'Nobody yet') + '</span>') + add + '</div></div>';
+      return '<div class="tier" data-tier="' + esc(t[0]) + '" data-in><h3>' + esc(t[1]) + '<span>' + ppl.length + '</span></h3><div class="row">' +
+        (ppl.map(personCard).join('') || '<span class="hint">' + (can('people') ? 'Drag someone here' : 'Nobody yet') + '</span>') + add + '</div></div>';
     }).join('');
-    return orgHead('Org chart', amStaff()
+    return orgHead('Org chart', can('people')
         ? 'Drag people between levels to change their role, and onto a project to add them. Click anyone for the details.'
         : 'Who’s who in ' + esc(O.org.name) + ', and the projects you’re on. Drag a teammate onto one of your projects to add them.') +
       (O.invite ? inviteBox() : '') +
@@ -1239,11 +1506,28 @@ VIEWS['org-projects'] = function () {
         group('People', '<div class="avs" style="padding:12px 16px">' + p.members.map(function (m) { return '<span class="chip-av">' + av(m.user_id, m.name) + esc(m.name || 'Someone') + '</span>'; }).join('') + '</div>') +
         '<section class="group" data-in><h2>Shared minutes</h2><div class="card">' + (meetings.map(function (m) { return sharedMeeting(p.id, m, m.user_id === O.me.user_id); }).join('') || '<p class="empty">Nothing shared yet. After a meeting, send its minutes here from the summary.</p>') + '</div></section>';
     }
-    return orgHead('Projects', amStaff() ? 'Every project in ' + esc(O.org.name) + '. Open one to see what’s been shared into it.' : 'The projects you’re on. Open one to see what your teammates shared.') +
+    return orgHead('Projects', can('all_projects') ? 'Every project in ' + esc(O.org.name) + '. Open one to see what’s been shared into it.' : 'The projects you’re on. Open one to see what your teammates shared.') +
       '<section class="group" data-in><div class="card">' + (O.projects.map(function (p) {
         return row(esc(p.name), visibleTo(p) + (p.last_activity ? ' · last shared ' + day(p.last_activity) : ''), '<button type="button" class="link" data-org="openproj" data-id="' + esc(p.id) + '">Open</button>');
       }).join('') || '<p class="empty">No projects yet.</p>') + '</div></section>' +
       '<section class="group" data-in><h2>New project</h2>' + newProjectForm() + '</section>' + erpImport();
+  });
+};
+VIEWS['org-roles'] = function () {
+  return orgGate('Roles', function () {
+    var mine = O.me.role === 'owner', roles = O.roles || [];
+    var head = '<tr><th scope="col">Role</th>' + PERM_NAME.map(function (p) { return '<th scope="col">' + p[1] + '</th>'; }).join('') + '<th scope="col">People</th>' + (mine ? '<th></th>' : '') + '</tr>';
+    var body = roles.map(function (r) {
+      var edit = mine && !r.fixed, f = 'role-' + r.key;
+      return '<tr><td>' + (edit ? '<input type="text" form="' + esc(f) + '" name="name" value="' + esc(r.name) + '" maxlength="40" aria-label="Role name">' : '<b>' + esc(r.name) + '</b>' + (r.fixed ? '<br><small class="visible">can do everything</small>' : '')) + '</td>' +
+        PERM_NAME.map(function (p) { var on = r.perms.indexOf(p[0]) >= 0; return '<td>' + (edit ? '<input type="checkbox" form="' + esc(f) + '" name="' + p[0] + '"' + (on ? ' checked' : '') + ' aria-label="' + esc(r.name) + ': ' + p[1] + '">' : (on ? '✓' : '–')) + '</td>'; }).join('') +
+        '<td>' + r.people + '</td>' + (mine ? '<td style="white-space:nowrap">' + (edit ? '<form id="' + esc(f) + '" style="display:inline"><button class="btn">Save</button></form> <button type="button" class="link" data-org="delrole" data-id="' + esc(r.key) + '"' + (r.people ? ' disabled title="Move its people to another role first"' : '') + '>Delete</button>' : '') + '</td>' : '') + '</tr>';
+    }).join('');
+    return orgHead('Roles', mine ? 'What each role in ' + esc(O.org.name) + ' can do. Tick, rename, or add your own; changes apply right away. Nobody can give a role more than their own role has.'
+        : 'What each role in ' + esc(O.org.name) + ' can do. Only the owner changes these.') +
+      '<section class="group" data-in><div class="card" style="overflow-x:auto"><table class="rolegrid">' + head + body + '</table></div></section>' +
+      (mine ? '<section class="group" data-in><h2>New role</h2><form class="newproj" id="newrole"><input placeholder="Role name, like Project lead" maxlength="40" autocomplete="off" aria-label="New role name"><button class="btn">Add</button></form>' +
+        '<p class="visible">It starts with nothing ticked. Tick what it can do above, then move people into it from the Org chart.</p></section>' : '');
   });
 };
 VIEWS['org-shared'] = function () {
@@ -1254,18 +1538,33 @@ VIEWS['org-shared'] = function () {
         return '<div class="shared"><header><b>' + esc(m.title) + '</b><small class="visible">to ' + esc(m.project_name) + ' · ' + day(m.date) + '</small><button type="button" class="link" data-org="unshare" data-proj="' + esc(m.project_id) + '" data-id="' + esc(m.meeting_id) + '">Unshare</button></header></div>';
       }).join('') || '<p class="empty">No minutes shared.</p>') + '</div></section>' +
       '<section class="group" data-in><h2>Day summaries</h2><div class="card">' + (sh.days.map(function (d) {
-        return '<div class="shared"><header><b>' + day(d.date) + '</b><small class="visible">seen by the owner and co-founders</small><button type="button" class="link" data-org="unday" data-id="' + esc(d.date) + '">Delete</button></header></div>';
+        return '<div class="shared"><header><b>' + day(d.date) + '</b><small class="visible">seen by roles that can read teammates’ days</small><button type="button" class="link" data-org="unday" data-id="' + esc(d.date) + '">Delete</button></header></div>';
       }).join('') || '<p class="empty">No days sent.</p>') + '</div></section>';
   });
 };
 VIEWS['org-connection'] = function () {
   return orgGate('Connection', function () {
-    return orgHead('Connection', 'How this computer is linked to ' + esc(O.org.name) + '.') +
+    return orgHead('Organizations', 'Every organization you’re in, like Slack workspaces. Each has its own people, roles and projects; this computer works in one at a time, and what you send goes only to that one.') +
+      group('Your organizations', (O.orgs || []).map(function (o) {
+          return row(esc(o.name), esc(o.role_name), o.active ? chip(true, 'This computer') : '<button type="button" class="btn" data-orgpick="' + esc(o.id) + '"' + (O.signing ? ' disabled' : '') + '>Switch</button>');
+        }).join('') +
+        row('Add an organization', 'Start a new one, or join one with an invite link. You stay in these too.', '<button type="button" class="btn" data-section="org-new">Add…</button>')) +
       group('This computer', row('Organization', esc(O.org.name), O.me.role === 'owner'
-          ? '<form class="newproj" id="orgname-form"><input value="' + esc(O.org.name) + '" maxlength="80" autocomplete="off" aria-label="Organization name"><button class="btn">Rename</button></form>' : chip(true)) + row('You', esc(nameOf(O.me)) + (O.me.email ? ' · ' + esc(O.me.email) : ''), chip(true, ROLE_NAME[O.me.role])) +
+          ? '<form class="newproj" id="orgname-form"><input value="' + esc(O.org.name) + '" maxlength="80" autocomplete="off" aria-label="Organization name"><button class="btn">Rename</button></form>' : chip(true)) + row('You', esc(nameOf(O.me)) + (O.me.email ? ' · ' + esc(O.me.email) : ''), chip(true, esc(roleName(O.me.role)))) +
         row('Disconnect this computer', 'Stops sharing from here. You stay in the organization and can connect again.', '<button type="button" class="btn" data-org="disconnect">Disconnect</button>')) +
       (O.me.role === 'owner' ? '' : group('Leave', row('Leave ' + esc(O.org.name), 'You lose access to its projects. Choose whether what you shared stays for the team.',
         '<button type="button" class="btn" data-org="leave">Leave, keep what I shared</button><button type="button" class="btn" data-org="leaveall">Leave and delete it</button>')));
+  });
+};
+
+// The + beside the organization's name: start one, or join one with an invite link.
+VIEWS['org-new'] = function () {
+  return orgGate('Add an organization', function () {
+    return orgHead('Add an organization', 'Like adding a Slack workspace: it sits beside ' + esc(O.org.name) + ' with its own people, roles and projects, and this computer switches to it. Switch back from the name at the top of the sidebar.') +
+      group('Start a new one', row('Organization name', 'You’ll be its owner. Invite your team after.',
+        '<form class="newproj" id="orgnew"><input placeholder="Company name" maxlength="80" autocomplete="off" aria-label="Company name" autofocus><button class="btn primary"' + (O.signing ? ' disabled' : '') + '>Start</button></form>')) +
+      group('Join one', row('Invite link', 'Paste the link its admin sent you.',
+        '<form class="newproj" id="orgjoin"><input placeholder="Invite link" autocomplete="off" aria-label="Invite link"><button class="btn"' + (O.signing ? ' disabled' : '') + '>Join</button></form>'));
   });
 };
 
@@ -1278,6 +1577,7 @@ function orgClick(t) {
   if (a === 'owner') { var w = member(id); if (!confirm('Make ' + nameOf(w) + ' the owner of ' + O.org.name + '? You become a co-founder, and only they can undo this.')) return; O.sel = null;
     return orgCall('POST', '/api/org/owner', { user_id: id }).then(function (r) { O.note = ok(r) ? nameOf(w) + ' is now the owner.' : orgErr(r); O.loaded = false; orgRedraw(); }); }
   if (a === 'erpread') { O.erp = { busy: true }; orgRedraw(); return chatAsk('erpMyProjects').then(function (r) { O.erp = r || { error: 'No answer from the ERP.' }; orgRedraw(); }); }
+  if (a === 'delrole') { if (!confirm('Delete the ' + roleName(id) + ' role?')) return; return orgDo(orgCall('DELETE', '/api/roles/' + encodeURIComponent(id)), 'Deleted ' + roleName(id) + '.'); }
   if (a === 'erpclose') { O.erp = null; return orgRedraw(); }
   if (a === 'erpsend') {
     var names = [].slice.call(document.querySelectorAll('input[data-erp]:checked')).map(function (x) { return x.value; });
@@ -1293,7 +1593,7 @@ function orgClick(t) {
   if (a === 'reload') { O.loaded = false; O.error = ''; O.note = ''; return orgRedraw(); }
   if (a === 'person') { O.sel = O.sel === id ? null : id; return orgRedraw(); }
   if (a === 'unsel') { O.sel = null; return orgRedraw(); }
-  if (a === 'role') { var m = member(id); if (m.role === t.dataset.role) return; return orgDo(orgCall('PATCH', '/api/members/' + encodeURIComponent(id), { role: t.dataset.role }), nameOf(m) + ' is now ' + ROLE_NAME[t.dataset.role].toLowerCase() + '.'); }
+  if (a === 'role') { var m = member(id); if (m.role === t.dataset.role) return; return orgDo(orgCall('PATCH', '/api/members/' + encodeURIComponent(id), { role: t.dataset.role }), nameOf(m) + ' is now ' + aRole(t.dataset.role) + '.'); }
   if (a === 'remove') { var r = member(id); if (!confirm('Remove ' + nameOf(r) + ' from ' + O.org.name + '? They lose access to every project at once.')) return; O.sel = null; return orgDo(orgCall('DELETE', '/api/members/' + encodeURIComponent(id)), nameOf(r) + ' was removed.'); }
   if (a === 'team') return orgDo(orgCall('PUT', '/api/projects/' + encodeURIComponent(t.dataset.team) + '/members/' + encodeURIComponent(id)), nameOf(member(id)) + ' added to ' + proj(t.dataset.team).name + '.');
   if (a === 'unteam') return orgDo(orgCall('DELETE', '/api/projects/' + encodeURIComponent(t.dataset.team) + '/members/' + encodeURIComponent(id)), 'Taken off ' + proj(t.dataset.team).name + '.');
@@ -1310,16 +1610,38 @@ function orgClick(t) {
   if (a === 'leave' || a === 'leaveall') {
     var all = a === 'leaveall';
     if (!confirm('Leave ' + O.org.name + (all ? ' and delete everything you shared to it?' : '? What you shared stays for the team.'))) return;
-    return orgCall('POST', '/api/org/leave', { delete_shared: all }).then(function (r) { if (!ok(r)) { O.note = orgErr(r); return orgRedraw(); } O.loaded = false; post({ type: 'orgDisconnect' }); });
+    return orgCall('POST', '/api/org/leave', { delete_shared: all }).then(function (r) {
+      if (!ok(r)) { O.note = orgErr(r); return orgRedraw(); }
+      if (r.data && r.data.moved) return orgSwitched({}); // still in another org: this computer moved there
+      O.loaded = false; post({ type: 'orgDisconnect' });
+    });
   }
+}
+// This computer is now in another organization: everything is read again from there.
+function orgSwitched(r) {
+  O.signing = false; O.note = r && r.error ? r.error : '';
+  if (!O.note) { O.loaded = false; O.open = null; O.sel = null; O.invite = null; O.erp = null; O.orgs = null; O.orgsAsked = false; }
+  if (!O.note && current !== 'org-home') return goTo('org-home');
+  orgRedraw();
 }
 function orgSubmit(form) {
   var v = form.querySelector('input') && form.querySelector('input').value.trim();
   if (form.id === 'orgnew' || form.id === 'orgjoin') {
     if (!v || O.signing) return true;
     var extra = form.id === 'orgnew' ? { orgName: v } : { invite: (v.match(/join=([0-9a-f]+)/) || [])[1] || v };
+    if (S.status.dashboard) { O.signing = true; O.note = 'Switching…'; orgRedraw(); chatAsk('orgSwitch', '', extra).then(orgSwitched); return true; } // already connected: no new sign-in
     O.signing = true; O.note = 'Sign in with your work Google account in the browser window that opened.'; orgRedraw();
     chatAsk('orgSignIn', '', extra).then(function (r) { O.signing = false; O.loaded = false; O.note = r && r.error ? r.error : ''; orgRedraw(); });
+    return true;
+  }
+  if (form.id === 'newrole') {
+    if (v) orgDo(orgCall('POST', '/api/roles', { name: v, perms: [] }), 'Added ' + v + '. Tick what it can do.');
+    return true;
+  }
+  if (form.id.indexOf('role-') === 0) {
+    var key = form.id.slice(5), name = '', perms = [];
+    [].forEach.call(document.querySelectorAll('[form="' + form.id + '"]'), function (e) { if (e.name === 'name') name = e.value.trim(); else if (e.checked) perms.push(e.name); });
+    orgDo(orgCall('PATCH', '/api/roles/' + encodeURIComponent(key), { name: name, perms: perms }), 'Saved ' + (name || 'the role') + '.');
     return true;
   }
   if (form.id === 'orgname-form') {
@@ -1365,24 +1687,65 @@ document.addEventListener('drop', function (e) {
   var z = dropZone(e.target), p = member(dragId);
   if (!dragId || !allowed(z)) return;
   e.preventDefault(); clearDrops();
-  if (z.dataset.tier) orgDo(orgCall('PATCH', '/api/members/' + encodeURIComponent(p.user_id), { role: z.dataset.tier }), nameOf(p) + ' is now ' + ROLE_NAME[z.dataset.tier].toLowerCase() + '.');
+  if (z.dataset.tier) orgDo(orgCall('PATCH', '/api/members/' + encodeURIComponent(p.user_id), { role: z.dataset.tier }), nameOf(p) + ' is now ' + aRole(z.dataset.tier) + '.');
   else orgDo(orgCall('PUT', '/api/projects/' + encodeURIComponent(z.dataset.team) + '/members/' + encodeURIComponent(p.user_id)), nameOf(p) + ' added to ' + proj(z.dataset.team).name + '.');
 });
 
 // --- drawing ---------------------------------------------------------------------
 // Two sidebars: yours, and the organization's, which replaces it while you're in there.
-var navMode = null;
+var navMode = null, orgMenu = null; // orgMenu: the org dropdown is open (null: its default, open outside, closed inside)
 function drawNav() {
-  var org = inOrg();
-  if (navMode === org) return;
-  navMode = org;
+  var org = inOrg(), orgs = orgList();
+  var open = orgMenu == null ? !org : orgMenu;
+  var key = [org, open, JSON.stringify(orgs)].join('|');
+  if (navMode === key) return;
+  navMode = key;
   document.body.classList.toggle('org', org);
+  var here = orgs.filter(function (o) { return o.active; })[0];
   nav.innerHTML = org
-    ? '<button type="button" class="back" data-section="home" title="Back to my Nikxel">' + icon('back') + '<span class="lbl">Back to my Nikxel</span></button><div class="label">Organization</div>' +
+    ? '<button type="button" class="back" data-section="home" title="Back to my Nikxel">' + icon('back') + '<span class="lbl">Back to my Nikxel</span></button>' +
+      (here ? '<div class="ws"><button type="button" class="ws-cur" data-orgmenu aria-expanded="' + open + '" title="Switch organization">' + avatar(here) + '<span class="lbl">' + esc(here.name) + '</span>' + '<span class="chev">' + icon('chev') + '</span>' + '</button>' +
+          '<button type="button" class="ws-add" data-section="org-new" title="Add an organization" aria-label="Add an organization">' + icon('plus') + '</button></div>' +
+          (open ? orgMenuHTML(orgs) : '')
+        : '<div class="label">Organization</div>') +
       ORG_SECTIONS.map(function (x) { return '<button type="button" data-section="' + x[0] + '" title="' + x[1] + '">' + icon(x[2]) + '<span class="lbl">' + x[1] + '</span></button>'; }).join('')
     : SECTIONS.map(function (x) {
         return x ? '<button type="button" data-section="' + x[0] + '" title="' + x[1] + '">' + icon(x[0]) + '<span class="lbl">' + x[1] + '</span></button>' : '<div class="label">Settings</div>';
-      }).join('') + '<div class="label">Shared</div><button type="button" class="org-entry" data-section="org-home" title="Organization">' + icon('org') + '<span class="lbl">Organization</span></button>';
+      }).join('') + '<div class="label">Shared</div>' + (orgs.length // data-section is for the tour's pointer; data-orgmenu wins on click
+        ? '<button type="button" class="org-entry" data-orgmenu data-section="org-home" aria-expanded="' + open + '" title="Organizations">' + icon('org') + '<span class="lbl">Organizations</span>' + '<span class="chev">' + icon('chev') + '</span>' + '</button>' + (open ? orgMenuHTML(orgs) : '')
+        : '<button type="button" class="org-entry" data-section="org-home" title="Organization">' + icon('org') + '<span class="lbl">Organization</span></button>');
+}
+// The orgs this account is in (read once per connection, again after a switch); [] when not connected.
+function orgList() {
+  if (!S || !S.status.dashboard) { O.orgs = null; O.orgsAsked = false; return []; }
+  if (!O.orgs && !O.orgsAsked) {
+    O.orgsAsked = true;
+    orgCall('GET', '/api/me/orgs').then(function (r) { O.orgs = ok(r) ? r.data : []; markNav(); });
+  }
+  return O.orgs || [];
+}
+function avatar(o) { return '<span class="av" aria-hidden="true">' + esc((o.name.trim()[0] || '?').toUpperCase()) + '</span>'; }
+function orgMenuHTML(orgs) {
+  return '<div class="orgmenu">' + orgs.map(function (o) {
+      return '<button type="button" class="orgpick" data-orgpick="' + esc(o.id) + '" title="' + esc(o.name) + '"' + (o.active ? ' aria-current="true"' : '') + '>' + avatar(o) +
+        '<span class="lbl">' + esc(o.name) + '<small>' + esc(o.role_name) + '</small></span>' + (o.active ? '<span class="on" aria-label="This computer"></span>' : '') + '</button>';
+    }).join('') +
+    '<button type="button" class="orgpick" data-section="org-new" title="Add an organization">' + icon('plus') + '<span class="lbl">Add an organization</span></button></div>';
+}
+// Into one of your organizations, Slack-style: the active one opens; another is switched to first.
+function orgPick(id) {
+  var o = (O.orgs || []).filter(function (x) { return x.id === id; })[0];
+  if (inOrg()) orgMenu = false;
+  var open = function () { navMode = null; if (current === 'org-home') { orgRedraw(); markNav(); } else goTo('org-home'); };
+  if (!o || o.active) return open();
+  O.signing = true;
+  return chatAsk('orgSwitch', '', { org: id }).then(function (r) {
+    O.signing = false;
+    if (r && r.error) { O.note = r.error; return open(); }
+    O.orgs.forEach(function (x) { x.active = x.id === id; });
+    O.note = ''; O.loaded = false; O.loading = false; O.open = null; O.sel = null; O.invite = null; O.erp = null;
+    open();
+  });
 }
 function markNav() {
   drawNav();
@@ -1390,14 +1753,15 @@ function markNav() {
   nav.querySelectorAll('button').forEach(function (b) {
     if (b.dataset.section === at) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
+  markNew();
 }
 function render() {
   main.classList.toggle('reading', !!S.active && !inOrg());
   main.classList.toggle('orgwide', current === 'org-chart');
-  main.classList.toggle('chatting', !S.active && !S.editor && current === 'chat');
+  main.classList.toggle('chatting', !S.active && current === 'chat');
   drawTabs(S);
   if (inOrg()) return VIEWS[current](S);   // the org side never shows your tabs or files
-  return S.active ? '' : S.editor ? editorView(S.editor) : VIEWS[current](S);
+  return S.active ? '' : VIEWS[current](S);
 }
 function stagger(page) {
   page.querySelectorAll('[data-in]').forEach(function (el, i) { el.style.setProperty('--i', i); });
@@ -1415,6 +1779,8 @@ function show(section, animateIn) {
   page.innerHTML = render(); page._h = page.innerHTML;
   stagger(page);
   if (section === 'chat' && !chatSources) post({ type: 'chatStart' });
+  // Updates with nothing to tour are seen once they've been read here.
+  if (section === 'whatsnew' && S && (S.whatsNewUnseen || []).length && !featureSteps(S.whatsNewUnseen).length) seenWhatsNew();
   if (old && animateIn && !reduce && !S.active) {
     // Pinned where it sat: taken out of the flow, it would otherwise jump to the column's padding edge.
     old.style.top = old.offsetTop + 'px'; old.style.left = old.offsetLeft + 'px'; old.style.width = old.offsetWidth + 'px';
@@ -1439,7 +1805,6 @@ function show(section, animateIn) {
 // New facts on the same section: redraw in place, unless the user is typing in it.
 function patch() {
   markNav();
-  if (S.editor) return;   // never put the file back over what's being written
   if (current === 'chat' && !S.active) { drawTabs(S); return syncChat(); }
   if (current === 'automations' && draft && !S.active) { drawTabs(S); return; }   // keep what's being written   // the conversation draws itself
   var a = document.activeElement;
@@ -1456,6 +1821,234 @@ function patch() {
   paintSprites();
 }
 
+// --- dialogs: summary templates, and plain text files --------------------------------
+// Both open over the window, never in another app. The template dialog keeps
+// its own draft (T) and reloads it only when the app says the file changed
+// (rev): opened, created or reset. Every other state push leaves it alone.
+var T = null, E = null, dlgEl = null;
+var X_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+// The built-in structure, in order. Summary is always written.
+var TPL_SECTIONS = ['Speakers', 'Per-Speaker Highlights', 'Decisions', 'Blockers & Risks', 'Open Questions', 'Action Items', 'Follow-Up Meetings', 'Agent Prompts'];
+var TPL_LENGTH = {
+  short: 'Keep it short: the summary in three sentences at most, and one line per point everywhere else.',
+  long: 'Go into detail: a full paragraph for the summary, and the reasoning and numbers behind each point.'
+};
+var TPL_TONE = {
+  plain: 'Write in plain, everyday words. No jargon.',
+  formal: 'Keep the tone formal, ready to send to a client.',
+  friendly: 'Keep the tone warm and friendly.'
+};
+var TPL_IDEAS = [
+  'Put the Action Items right after the Summary.',
+  'Write owners as first names only.',
+  'Give every action item a due date, or say it has none.',
+  'Quote decisions in the words they were made in.',
+  'Leave out small talk and anything off-topic.',
+  'End with a one-line next step for each person.'
+];
+
+// A template file → what the simple editor shows. The # notes at the top stay
+// as they are; recognised instructions become controls; the rest is "Anything else".
+function tplParse(text) {
+  var lines = String(text || '').replace(/\r/g, '').split('\n'), head = [];
+  while (lines.length && (/^\s*#/.test(lines[0]) || !lines[0].trim())) head.push(lines.shift());
+  var m = { head: head.join('\n').replace(/\s+$/, ''), drop: [], length: '', tone: '', add: [], own: [] };
+  lines.join('\n').split(/\n\s*\n/).forEach(function (p) {
+    p = p.trim();
+    if (!p) return;
+    var d = /^Drop the (.+?) section(?: entirely)?\.$/.exec(p), a = /^Add a "## ([^"\n]+)" section(?:: ([^\n]+?))?\.$/.exec(p);
+    var sec = d && TPL_SECTIONS.filter(function (x) { return x.toLowerCase() === d[1].toLowerCase(); })[0];
+    if (sec) { if (m.drop.indexOf(sec) < 0) m.drop.push(sec); return; }
+    for (var k in TPL_LENGTH) if (TPL_LENGTH[k] === p) { m.length = k; return; }
+    for (k in TPL_TONE) if (TPL_TONE[k] === p) { m.tone = k; return; }
+    if (a) { m.add.push({ name: a[1], what: a[2] || '' }); return; }
+    m.own.push(p);
+  });
+  m.own = m.own.join('\n\n');
+  return m;
+}
+function tplCompose(m) {
+  var parts = [];
+  if (m.own.trim()) parts.push(m.own.trim());
+  TPL_SECTIONS.forEach(function (x) { if (m.drop.indexOf(x) >= 0) parts.push('Drop the ' + x + ' section.'); });
+  if (m.length) parts.push(TPL_LENGTH[m.length]);
+  if (m.tone) parts.push(TPL_TONE[m.tone]);
+  m.add.forEach(function (a) { parts.push('Add a "## ' + a.name + '" section' + (a.what ? ': ' + a.what.replace(/[.\s]+$/, '') : '') + '.'); });
+  return (m.head ? m.head + '\n\n' : '') + parts.join('\n\n') + '\n';
+}
+function tplEdit(f) { var m = tplParse(T.draft); f(m); T.draft = tplCompose(m); }
+function tplDirty() { return T && !T.creating && T.draft !== T.orig; }
+
+function tplListHTML() {
+  return S.templates.map(function (t) {
+    return '<button type="button" data-tpl="open" data-slug="' + esc(t.id) + '"' + (T && !T.creating && t.id === T.slug ? ' aria-current="true"' : '') + '>' + esc(t.name) +
+      (t.id === S.summaryTemplate ? '<small>In use</small>' : '') + '</button>';
+  }).join('') + '<button type="button" class="tpl-add" data-tpl="new">+ New template</button>';
+}
+function tplNewHTML() {
+  var from = [['', 'Blank']].concat(pairs(S.templates));
+  return '<div class="tpl-new"><div class="tpl-top"><div><h3>New template</h3><p>Name it after the kind of meeting: Client calls, Design review, Board.</p></div></div>' +
+    '<input class="text" id="tplname" placeholder="Template name" autocomplete="off" value="' + esc(T.newName || '') + '">' +
+    (T.error ? '<p class="tpl-err" role="alert">' + esc(T.error) + '</p>' : '') +
+    '<div class="tpl-block"><b>Start from</b><small>Copy one you already have, then change what’s different.</small><div class="choices" role="radiogroup">' +
+    from.map(function (o) {
+      return '<button type="button" class="choice" role="radio" data-tplcopy="' + esc(o[0]) + '" aria-checked="' + ((T.copy || '') === o[0]) + '"><span class="radio"></span>' + esc(o[1]) + '</button>';
+    }).join('') + '</div></div></div>';
+}
+function tplSimpleHTML(m) {
+  function segs(kind, opts, v) {
+    return '<div class="seg" role="radiogroup">' + opts.map(function (o) {
+      return '<button type="button" role="radio" data-tpl' + kind + '="' + o[0] + '" aria-checked="' + (v === o[0]) + '">' + o[1] + '</button>';
+    }).join('') + '</div>';
+  }
+  var own = m.own;
+  return '<div class="tpl-block"><b>Sections</b><small>Untick what you don’t need. The summary at the top is always there.</small><div class="togs">' +
+    '<span class="tog fixed" aria-pressed="true">Summary</span>' +
+    TPL_SECTIONS.map(function (x) { return '<button type="button" class="tog" data-tplsec="' + esc(x) + '" aria-pressed="' + (m.drop.indexOf(x) < 0) + '">' + esc(x) + '</button>'; }).join('') + '</div></div>' +
+    '<div class="tpl-block"><b>Length</b>' + segs('len', [['', 'As it is'], ['short', 'Shorter'], ['long', 'More detail']], m.length) + '</div>' +
+    '<div class="tpl-block"><b>Tone</b>' + segs('tone', [['', 'As it is'], ['plain', 'Plain'], ['formal', 'Formal'], ['friendly', 'Friendly']], m.tone) + '</div>' +
+    '<div class="tpl-block"><b>Sections of your own</b><small>A heading, and what goes under it.</small>' +
+    (m.add.length ? '<div class="adds">' + m.add.map(function (a, i) {
+      return '<div class="add"><div><b>' + esc(a.name) + '</b>' + (a.what ? '<span>' + esc(a.what) + '</span>' : '') + '</div><button type="button" class="dlg-x" data-tpldel="' + i + '" aria-label="Remove ' + esc(a.name) + '">' + X_ICON + '</button></div>';
+    }).join('') + '</div>' : '') +
+    '<div class="addform"><input class="text" id="tpladdname" placeholder="Heading, like Budget" autocomplete="off"><input class="text" id="tpladdwhat" placeholder="What goes in it, like every cost mentioned" autocomplete="off"><button type="button" class="btn" data-tpl="add">Add</button></div></div>' +
+    '<div class="tpl-block"><b>Anything else</b><small>Plain instructions, the way you’d tell a person.</small>' +
+    '<textarea id="tplown" placeholder="Write owners as first names only.">' + esc(own) + '</textarea>' +
+    '<div class="ideas-row">' + TPL_IDEAS.filter(function (x) { return own.indexOf(x) < 0; }).map(function (x) {
+      return '<button type="button" class="idea" data-tplidea="' + esc(x) + '">+ ' + esc(x) + '</button>';
+    }).join('') + '</div></div>';
+}
+function tplMainHTML() {
+  if (T.creating) return tplNewHTML();
+  var name = (S.templates.filter(function (t) { return t.id === T.slug; })[0] || {}).name || T.name;
+  var inUse = S.summaryTemplate === T.slug;
+  return '<div class="tpl-top"><div><h3>' + esc(name) + '</h3><p>' + (inUse ? 'Your meeting summaries use this template.' : 'Not in use. Save and use it, or keep it for later.') + '</p></div>' +
+    '<div class="seg" role="radiogroup" aria-label="How to edit"><button type="button" role="radio" data-tplmode="simple" aria-checked="' + (T.mode === 'simple') + '">Choose</button>' +
+    '<button type="button" role="radio" data-tplmode="write" aria-checked="' + (T.mode === 'write') + '">Write it</button></div></div>' +
+    (T.mode === 'write'
+      ? '<div class="tpl-block"><small>The whole template in your own words, one instruction per line. Lines starting with # are notes to you; I skip them.</small><textarea class="file" id="tplraw" spellcheck="false">' + esc(T.draft) + '</textarea></div>'
+      : tplSimpleHTML(tplParse(T.draft))) +
+    '<p class="tpl-block" style="margin-top:20px"><small>Takes effect from your next recording. Names, decisions and numbers still come only from what was said.</small></p>';
+}
+function tplFootHTML() {
+  if (T.confirm) {
+    return '<span class="grow warn">' + esc(T.confirm.text) + '</span>' +
+      '<button type="button" class="btn" data-tpl="no">' + esc(T.confirm.no || 'Cancel') + '</button><button type="button" class="btn primary" data-tpl="yes">' + esc(T.confirm.yes) + '</button>';
+  }
+  if (T.creating) {
+    return '<span class="grow"></span><button type="button" class="btn" data-tpl="back">Cancel</button><button type="button" class="btn primary" data-tpl="create">Create template</button>';
+  }
+  var inUse = S.summaryTemplate === T.slug;
+  return '<span class="grow">' + (T.shipped ? '<button type="button" class="link" data-tpl="reset">Reset to built-in</button>' : '<button type="button" class="link" data-tpl="delete">Delete template</button>') + '</span>' +
+    '<button type="button" class="btn" data-tpl="cancel">Cancel</button>' +
+    (inUse ? '' : '<button type="button" class="btn" data-tpl="saveuse">Save and use</button>') +
+    '<button type="button" class="btn primary" data-tpl="save">Save</button>';
+}
+
+function dlgOpen(html, small) {
+  var fresh = !dlgEl;
+  if (fresh) {
+    dlgEl = document.createElement('div');
+    document.body.appendChild(dlgEl);
+  }
+  var keep = dlgEl.querySelector('.tpl-main'), top = keep ? keep.scrollTop : 0;
+  dlgEl.innerHTML = '<div class="dlg-scrim"' + (fresh ? '' : ' style="animation:none"') + '></div><div class="dlg-wrap"><div class="dlg' + (small ? ' small' : '') + '" role="dialog" aria-modal="true" aria-labelledby="dlg-t"' + (fresh ? '' : ' style="animation:none"') + '>' + html + '</div></div>';
+  var main2 = dlgEl.querySelector('.tpl-main'); if (main2) main2.scrollTop = top;
+  return fresh;
+}
+function dlgClose() { if (dlgEl) { dlgEl.remove(); dlgEl = null; } }
+function drawTemplate(focus) {
+  var fresh = dlgOpen('<header class="dlg-head"><div><h2 id="dlg-t">Summary templates</h2><p>How your meeting minutes are written.</p></div><button type="button" class="dlg-x" data-tpl="cancel" aria-label="Close">' + X_ICON + '</button></header>' +
+    '<div class="tpl"><nav class="tpl-list" aria-label="Templates">' + tplListHTML() + '</nav><section class="tpl-main">' + tplMainHTML() + '</section></div>' +
+    '<footer class="dlg-foot">' + tplFootHTML() + '</footer>');
+  var f = focus && dlgEl.querySelector(focus);
+  if (f) f.focus();
+  else if (fresh) { var c = dlgEl.querySelector('#tplname') || dlgEl.querySelector('[aria-current]'); if (c) c.focus(); }
+}
+function drawFileEditor() {
+  var fresh = dlgOpen('<header class="dlg-head"><div><h2 id="dlg-t">' + esc(E.title) + '</h2><p>' + esc(E.help) + '</p></div><button type="button" class="dlg-x" data-act="closeFile" aria-label="Close">' + X_ICON + '</button></header>' +
+    '<div class="dlg-body"><textarea class="file" id="filetext" spellcheck="false">' + esc(E.text) + '</textarea></div>' +
+    '<footer class="dlg-foot"><span class="grow">⌘S saves.</span><button type="button" class="btn" data-act="closeFile">Cancel</button><button type="button" class="btn primary" data-savefile>Save</button></footer>', true);
+  if (fresh) document.getElementById('filetext').focus();
+}
+// Called on every state push.
+function syncDialogs() {
+  var te = S.templateEditor;
+  if (te) {
+    E = null;
+    if (!T || T.rev !== te.rev) {
+      T = { slug: te.slug, name: te.name, shipped: te.shipped, rev: te.rev, draft: te.text, orig: te.text, mode: T ? T.mode : 'simple', creating: te.creating, error: '', back: !te.creating };
+      return drawTemplate();
+    }
+    if (te.error !== T.error) { T.error = te.error; return drawTemplate('#tplname'); }
+    var list = dlgEl && dlgEl.querySelector('.tpl-list');
+    if (list) list.innerHTML = tplListHTML();   // "In use" may have moved; the draft stays as it is
+    return;
+  }
+  if (T) { T = null; dlgClose(); }
+  if (S.editor && !E) { E = S.editor; return drawFileEditor(); }
+  if (!S.editor && E) { E = null; dlgClose(); }
+}
+function tplAsk(text, yes, then) { T.confirm = { text: text, yes: yes, then: then }; drawTemplate(); }
+function tplLeave(then) {
+  if (tplDirty()) return tplAsk('Your changes to “' + T.name + '” aren’t saved.', 'Discard changes', then);
+  then();
+}
+function tplSave(use) { post({ type: 'template', op: 'save', slug: T.slug, text: T.draft, use: !!use }); }
+function tplAddSection() {
+  var n = document.getElementById('tpladdname'), w = document.getElementById('tpladdwhat');
+  var name = n.value.replace(/["#\n]/g, '').trim();
+  if (!name) { n.focus(); return; }
+  tplEdit(function (m) { m.add.push({ name: name, what: w.value.replace(/\n/g, ' ').trim() }); });
+  drawTemplate('#tpladdname');
+}
+function tplClick(t) {
+  var op = t.dataset.tpl;
+  if (t.dataset.tplmode) { T.mode = t.dataset.tplmode; return drawTemplate(); }
+  if (t.dataset.tplsec) {
+    var x = t.dataset.tplsec;
+    tplEdit(function (m) { var i = m.drop.indexOf(x); if (i >= 0) m.drop.splice(i, 1); else m.drop.push(x); });
+    return drawTemplate();
+  }
+  if (t.hasAttribute('data-tpllen')) { tplEdit(function (m) { m.length = t.dataset.tpllen; }); return drawTemplate(); }
+  if (t.hasAttribute('data-tpltone')) { tplEdit(function (m) { m.tone = t.dataset.tpltone; }); return drawTemplate(); }
+  if (t.dataset.tpldel) { tplEdit(function (m) { m.add.splice(+t.dataset.tpldel, 1); }); return drawTemplate(); }
+  if (t.dataset.tplidea) {
+    var idea = t.dataset.tplidea;
+    tplEdit(function (m) { m.own = (m.own.trim() ? m.own.trim() + '\n\n' : '') + idea; });
+    return drawTemplate();
+  }
+  if (t.hasAttribute('data-tplcopy')) { T.copy = t.dataset.tplcopy; return drawTemplate(); }
+  switch (op) {
+    case 'open':
+      if (!T.creating && t.dataset.slug === T.slug) return;
+      return tplLeave(function () { post({ type: 'template', op: 'open', slug: t.dataset.slug }); });
+    case 'new':
+      return tplLeave(function () { T.creating = true; T.confirm = null; T.error = ''; T.newName = ''; T.copy = ''; drawTemplate('#tplname'); });
+    case 'back':
+      if (!T.back) return post({ type: 'template', op: 'close' });
+      T.creating = false; T.error = ''; return drawTemplate();
+    case 'create':
+      T.newName = document.getElementById('tplname').value;
+      return post({ type: 'template', op: 'new', name: T.newName, copy: T.copy || '' });
+    case 'add': return tplAddSection();
+    case 'save': return tplSave(false);
+    case 'saveuse': return tplSave(true);
+    case 'cancel': return tplLeave(function () { post({ type: 'template', op: 'close' }); });
+    case 'reset':
+      return tplAsk('Put back the built-in “' + T.name + '”? What you wrote in it goes.', 'Reset', function () { post({ type: 'template', op: 'reset', slug: T.slug }); });
+    case 'delete':
+      return tplAsk('Delete “' + T.name + '”? Summaries using it go back to Default.', 'Delete', function () { post({ type: 'template', op: 'delete', slug: T.slug }); });
+    case 'yes': var then = T.confirm.then; T.confirm = null; drawTemplate(); return then();
+    case 'no': T.confirm = null; return drawTemplate();
+  }
+}
+document.addEventListener('input', function (e) {
+  if (!T) return;
+  if (e.target.id === 'tplown') { var v = e.target.value; tplEdit(function (m) { m.own = v; }); }
+  else if (e.target.id === 'tplraw') T.draft = e.target.value;
+});
+
 window.nx = {
   state: function (s) {
     var was = S;
@@ -1463,16 +2056,21 @@ window.nx = {
     drawFoot(s);
     if (!was) {
       document.body.classList.toggle('folded', !!s.sideCollapsed);
-      if (s.tour) setTimeout(function () { if (!S.active && !S.editor) startTour(); }, reduce ? 200 : 1400);
-      return show(s.section || 'home', !reduce);
+      if (s.tour) setTimeout(function () { if (!S.active && !S.editor && !T) startTour(); }, reduce ? 200 : 1400);
+      maybeFeatureTour();
+      show(s.section || 'home', !reduce);
+      return syncDialogs();
     }
     if (s.tour && !was.tour) startTour();   // replayed from Advanced
+    if (!s.tour && was.tour) maybeFeatureTour();
     document.body.classList.toggle('folded', !!s.sideCollapsed);
-    if (was.active !== s.active || !!was.editor !== !!s.editor) return show(current, !s.active);
+    syncDialogs();
+    if (was.active !== s.active) return show(current, !s.active);
     patch();
   },
   frames: function (r) { rows = r || []; paintSprites(); },
   go: function (section) { if (S) goTo(section); },
+  tourResume: function (skip) { if (!tourEls) return; if (skip || tourAt >= tourSteps.length - 1) return endTour(); tourAt++; showTourStep(); },
   found: function (q, list) {
     found = { q: q, list: list };
     var el = document.getElementById('list');
@@ -1496,20 +2094,28 @@ function goTo(section) {
   // Into the organization: read it fresh each time, it's never kept.
   if (section.indexOf('org-') === 0 && !inOrg()) { O.loaded = false; O.loading = false; O.sel = null; O.open = null; O.invite = null; O.note = ''; }
   if (S && S.active) { current = section; post({ type: 'action', name: 'closeSummary' }); return; }   // the state push redraws
-  if (S && S.editor) { current = section; post({ type: 'closeFile' }); return; }
   show(section, true);
 }
 document.addEventListener('click', function (e) {
   var tb = e.target.closest('[data-tour]');
   if (tb) {
-    if (tb.dataset.tour === 'next' && tourAt < TOUR.length - 1) { tourAt++; showTourStep(); } else endTour();
+    if (tb.dataset.tour === 'next' && tourAt < tourSteps.length - 1) { tourAt++; showTourStep(); } else endTour();
     return;
   }
   var x = e.target.closest('[data-closetab]');
   if (x) { e.stopPropagation(); post({ type: 'closeTab', id: x.dataset.closetab }); return; }
   var t = e.target.closest('button');
   if (!t || t.disabled) return;
+  if (T && t.closest('.dlg')) { tplClick(t); return; }
+  if (t.dataset.erp) { erpClick(t); return; }
   if (t.dataset.org) { orgClick(t); return; }
+  if (t.hasAttribute('data-orgmenu')) {
+    orgMenu = t.getAttribute('aria-expanded') !== 'true'; markNav();
+    var menu = nav.querySelector('.orgmenu'); if (menu) menu.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' }); // it opens at the bottom of a short window
+    return;
+  }
+  if (t.dataset.orgpick) { orgPick(t.dataset.orgpick); return; }
+  if (t.dataset.wn) { var steps = featureSteps([t.dataset.wn]); if (steps.length) startTour(steps, seenWhatsNew); return; }
   if (t.id === 'fold') {
     var folded = !document.body.classList.contains('folded');
     document.body.classList.toggle('folded', folded);
@@ -1521,9 +2127,17 @@ document.addEventListener('click', function (e) {
   if (t.hasAttribute('data-sectiontab')) { if (S.active) post({ type: 'action', name: 'closeSummary' }); return; }
   if (t.dataset.chat === 'suggest') { if (!chatBusy && !chatListening) chatRun(t.textContent); return; }
   if (t.dataset.chat === 'mic') { chatMic(); return; }
+  if (t.dataset.chat === 'attach') { chatAsk('attachPick').then(function (r) { attachResults(chatFiles, r, drawAtts); }); return; }
+  if (t.dataset.unattach) {
+    var u = t.dataset.unattach.split(':'), list = u[0] === 'chat' ? chatFiles : (draft && draft.files) || [];
+    list.splice(+u[1], 1); if (u[0] === 'chat') drawAtts(); else redrawAutomations(); return;
+  }
+  if (t.hasAttribute('data-draftattach')) { draft.files = draft.files || []; chatAsk('attachPick').then(function (r) { attachResults(draft.files, r, redrawAutomations); }); return; }
+  if (t.dataset.autopick) { pickFor = pickFor === t.dataset.autopick ? null : t.dataset.autopick; redrawAutomations(); return; }
+  if (t.dataset.copyrun) { post({ type: 'copyText', text: S.automationRuns[+t.dataset.copyrun].text }); t.textContent = 'Copied'; return; }
   if (t.dataset.chat === 'send') return;   // the form's submit sends
   if (t.dataset.act === 'chatNew') {
-    chatLog = []; chatDraft = ''; chatSources = null; chatBusy = chatListening = false; chatPending = {};
+    chatLog = []; chatDraft = ''; chatFiles = []; chatSources = null; chatBusy = chatListening = false; chatPending = {};
     post({ type: 'chatNew' });
     drawLog(); document.getElementById('srcs').innerHTML = sourcesHTML();
     return;
@@ -1543,7 +2157,9 @@ document.addEventListener('click', function (e) {
   if (t.hasAttribute('data-autocancel')) { draft = null; redrawAutomations(); return; }
   if (t.hasAttribute('data-autosave')) {
     if (!draft.instruction.trim()) { var ta = document.querySelector('[data-draft="instruction"]'); if (ta) ta.focus(); return; }
-    post({ type: 'autoSave', a: draft }); draft = null; redrawAutomations(); return;
+    var once = draft.trigger === 'schedule' && draft.days === 'once';
+    if ((draft.files || []).some(function (f) { return f.reading; })) return;
+    post({ type: 'autoSave', a: Object.assign({}, draft, { days: once ? 'daily' : draft.days, date: once ? draft.date : null, files: (draft.files || []).map(function (f) { return f.id; }) }) }); draft = null; redrawAutomations(); return;
   }
   if (t.hasAttribute('data-autosuggest')) {
     suggesting = true; redrawAutomations();
@@ -1606,7 +2222,8 @@ document.addEventListener('submit', function (e) {
   if (e.target.id !== 'chatf') return;
   e.preventDefault();
   var ci = document.getElementById('ci'), text = ci.value.trim();
-  if (!text || chatBusy || chatListening) return;
+  if (!text && chatFiles.some(function (f) { return f.id; })) text = 'Read what I attached and tell me in a line what it is.';
+  if (!text || chatBusy || chatListening || chatFiles.some(function (f) { return f.reading; })) return;
   ci.value = chatDraft = '';
   chatRun(text);
 });
@@ -1622,7 +2239,8 @@ document.addEventListener('input', function (e) {
 });
 document.addEventListener('change', function (e) {
   var t = e.target;
-  if (t.dataset && t.dataset.draft && draft) { draft[t.dataset.draft] = t.value; if (t.dataset.draft === 'trigger') redrawAutomations(); return; }
+  if (t.dataset && t.dataset.autorunon && t.value) { post({ type: 'autoRun', id: t.dataset.autorunon, file: t.value }); pickFor = null; redrawAutomations(); return; }
+  if (t.dataset && t.dataset.draft && draft) { draft[t.dataset.draft] = t.value; if (t.dataset.draft === 'trigger' || t.dataset.draft === 'days') redrawAutomations(); return; }
   if (!t.dataset || !t.dataset.key) return;
   var v = t.dataset.kind === 'num' ? Number(t.value) : t.value;
   post({ type: 'set', key: t.dataset.key, value: v });
@@ -1635,6 +2253,12 @@ document.addEventListener('auxclick', function (e) {
 document.addEventListener('keydown', function (e) {
   if (tourEls && e.key === 'Escape') { endTour(); return; }
   if (e.metaKey && e.key === 'w' && S && S.active) { e.preventDefault(); post({ type: 'closeTab', id: S.active }); return; }
+  if (T && e.key === 'Escape') { e.preventDefault(); if (T.confirm) { T.confirm = null; drawTemplate(); } else tplClick({ dataset: { tpl: T.creating ? 'back' : 'cancel' } }); return; }
+  if (T && e.key === 's' && e.metaKey) { e.preventDefault(); if (!T.creating) tplSave(false); return; }
+  if (e.key === 'Enter' && e.target.id === 'erpurl') { e.preventDefault(); erpClick({ dataset: { erp: 'connect' } }); return; }
+  if (T && e.key === 'Enter' && e.target.id === 'tplname') { e.preventDefault(); tplClick({ dataset: { tpl: 'create' } }); return; }
+  if (T && e.key === 'Enter' && (e.target.id === 'tpladdname' || e.target.id === 'tpladdwhat')) { e.preventDefault(); tplAddSection(); return; }
+  if (E && e.key === 'Escape') { e.preventDefault(); post({ type: 'closeFile' }); return; }
   if (e.key === 's' && e.metaKey && S && S.editor) { e.preventDefault(); post({ type: 'saveFile', text: document.getElementById('filetext').value }); return; }
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('text')) e.target.blur();
 });

@@ -29,6 +29,19 @@ import Foundation
         check(Automation.ideas.allSatisfy { Automation.clean($0) != nil }, "every idea is valid")
         check(Automation(id: "", name: "", trigger: "schedule", time: "17:00", days: "fri", instruction: "").when == "Every Friday at 17:00", "when label")
 
+        // One-time: runs at or after its minute on its day, once; a late Mac still runs it.
+        var once = Automation(id: "r", name: "Remind: call Vikas", trigger: "schedule", time: "09:00", instruction: "Remind me", date: "2026-11-28")
+        check(!once.due(at: fri9, calendar: cal), "once: not the day before")
+        check(once.due(at: sat9, calendar: cal) && once.due(at: at("2026-11-28T14:30:00Z"), calendar: cal), "once: on time, and late")
+        once.lastRun = "2026-11-28 09:00"; check(!once.due(at: at("2026-11-29T09:00:00Z"), calendar: cal), "once: never twice")
+        check(Automation.clean(Automation(id: "", name: "x", trigger: "meeting", instruction: "y", date: "2026-11-28"))?.date == nil, "only a schedule has a date")
+        check(Automation.clean(Automation(id: "", name: "x", trigger: "schedule", instruction: "y", date: "tomorrow"))?.date == nil, "a bad date is dropped")
+        check(Automation.parse(#"{"name":"Remind","trigger":"schedule","time":"9:00","date":"2026-11-28","instruction":"Remind me"}"#).first?.0.date == "2026-11-28", "date parsed")
+        check(Automation.looksLikeReminder("remind me tomorrow morning to send the deck") && Automation.looksLikeReminder("Can you set a reminder for 5pm?")
+              && !Automation.looksLikeReminder("what reminders do I have?") && !Automation.looksLikeReminder("he reminded me of the deal"), "reminder requests, not questions")
+        let old = try! JSONDecoder().decode([Automation].self, from: Data(#"[{"id":"a","name":"n","trigger":"day","time":"09:00","days":"daily","instruction":"i","enabled":true,"lastRun":""}]"#.utf8))
+        check(old.first?.date == nil, "a file from before dates still loads")
+
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("au-\(UUID().uuidString).json")
         Automation.file = tmp
         Automation.save([a])

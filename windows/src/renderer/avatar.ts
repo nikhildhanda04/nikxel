@@ -37,6 +37,7 @@ type FromMain =
   | { type: "key" }
   | { type: "card"; card: CardWire }
   | { type: "dismissCard" }
+  | { type: "away"; away: boolean }
   | { type: "pushReminder"; id: string; title: string }
   | { type: "dismissReminder"; id: string }
   | { type: "reminderText"; text: string | null }
@@ -388,6 +389,8 @@ let reminderBubbles: ReminderBubble[] = [];
 const reminderBubbleLifetime = 10;
 // Every card goes after 10 s unattended, errors and questions too.
 const cardMaxLifetime = 10;
+/// Nobody at the computer (main checks the idle time); see the card tick.
+let away = false;
 const reminderFadeOut = 0.4;
 const reminderFadeIn = 0.3;
 
@@ -665,8 +668,10 @@ function tick(): void {
   if (card) {
     const age = t - card.addedAt;
     const life = Math.min(card.lifetime ?? Infinity, cardMaxLifetime);
-    // The pointer on a card holds it: the 10 s only runs while nobody's at it.
-    if (age > cardFadeIn && hitTestCard(pointer)) card.addedAt = t - cardFadeIn;
+    // The pointer on a card holds it: the 10 s only runs while nobody's at it. A card meant to wait
+    // (the 10pm digest, a 9am reminder) is held too while nobody's at the computer.
+    const waits = card.lifetime === null || card.lifetime > cardMaxLifetime;
+    if (age > cardFadeIn && (hitTestCard(pointer) || (away && waits))) card.addedAt = t - cardFadeIn;
     let target: number;
     if (age < cardFadeIn) target = age / cardFadeIn;
     else if (age > life - cardFadeOut) target = Math.max(0, (life - age) / cardFadeOut);
@@ -1420,6 +1425,9 @@ bridge.onMessage(raw => {
       break;
     case "dismissCard":
       card = null;
+      break;
+    case "away":
+      away = m.away;
       break;
     case "pushReminder":
       pushReminder(m.id, m.title);

@@ -136,7 +136,7 @@ const clientCTA = `<div class="client-cta"><button type="button" class="nx-clien
 /// On every meeting page: sends these minutes (minus the Client Summary) to
 /// one of the user's projects on the org dashboard. Wired by the PageShare
 /// widget (/projects, /share-project), like the client button above.
-const projectCTA = `<div class="client-cta"><button type="button" class="nx-project">Share to project →</button>
+const projectCTA = `<div class="client-cta"><button type="button" class="nx-project">Push to dashboard</button>
 <p>Send these minutes to a project on your org dashboard — without the client summary or the transcript.</p></div>`;
 
 /// A client-facing markdown derived from a meeting's "## Client Summary": its

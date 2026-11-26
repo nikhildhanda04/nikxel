@@ -14,9 +14,45 @@ import { chromeUserAgent } from "../whatsapp/chromeWhatsApp";
 /// a plain HTTPS call carrying that cookie — so nothing runs in the background.
 /// The session lasts months. The Mac equivalent is src/ERP.swift.
 
-export const BASE = "https://erp.forklyft.in";
 export const PARTITION = "persist:nikxel-erp";
-const ODOO_URL = `${BASE}/odoo/`;
+
+/// The connected ERP's origin ("https://erp.example.com"). Forklyft's was the
+/// only one before the address became a setting, so it stays the fallback.
+export function base(): string { return origin(Settings.erpURL) ?? "https://erp.forklyft.in"; }
+function host(): string { return new URL(base()).hostname; }
+/// Why the last sign-in didn't connect, for the Connections page.
+export let signInProblem = "";
+
+/// What the user typed, as a URL to open: https:// added when there's no scheme.
+export function address(input: string): URL | null {
+  let s = (input ?? "").trim();
+  if (!s || /\s/.test(s)) return null;
+  if (!s.includes("://")) s = "https://" + s;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol) || !(u.hostname.includes(".") || u.hostname === "localhost")) return null;
+    return u;
+  } catch { return null; }
+}
+
+/// "erp.example.com" or "https://erp.example.com/odoo/" → "https://erp.example.com".
+export function origin(input: string): string | null { return address(input)?.origin ?? null; }
+
+/// A cookie set for the ERP's host or a parent of it (".example.com").
+export function cookieIsOurs(domain: string): boolean {
+  const d = (domain ?? "").replace(/^\.+|\.+$/g, "").toLowerCase(), h = host();
+  return !!d && (h === d || h.endsWith("." + d));
+}
+
+/// Forgets the session (the address stays, for reconnecting).
+export function disconnect(): void {
+  Settings.erpSession = "";
+  Settings.erpConnected = false;
+  void session.fromPartition(PARTITION).clearStorageData({ storages: ["cookies"] }).catch(() => { /* nothing to clear */ });
+}
+
+/// Closes the sign-in window; signIn sees it gone and reports.
+export function cancelSignIn(): void { if (win && !win.isDestroyed()) win.close(); }
 
 let win: BrowserWindow | null = null;
 
@@ -57,7 +93,7 @@ function post(path: string, params: Record<string, unknown>, timeout: number): P
   const sid = Settings.erpSession;
   if (!sid) return Promise.resolve(null);
   return new Promise(resolve => {
-    const req = net.request({ method: "POST", url: BASE + path });
+    const req = net.request({ method: "POST", url: base() + path });
     req.setHeader("Content-Type", "application/json");
     req.setHeader("User-Agent", chromeUserAgent());
     req.setHeader("Cookie", `session_id=${sid}`);
@@ -149,18 +185,49 @@ export async function tasksTouched(day: Date): Promise<TouchedTask[]> {
     .map(r => ({ name: r.name as string, project: m2o(r.project_id), stage: m2o(r.stage_id), deadline: typeof r.date_deadline === "string" ? r.date_deadline : "" }));
 }
 
+/// "what's pending in ERP?", "Aarib's open tasks": a question or automation that's about ERP work.
+export function asksAboutTasks(text: string): boolean {
+  return /\b(erp|forklyft|tasks?|pending|assigned|deadlines?|overdue)\b/i.test(text);
+}
+
+/// The open (not closed) tasks the signed-in user can see, newest first, as a
+/// context block for chat and automations. "" when not connected or on any failure.
+export async function openTasksBlock(limit = 150): Promise<string> {
+  if (!isConnected()) return "";
+  const rows = await callKw("project.task", "search_read",
+    [[["is_closed", "=", false]], ["name", "user_ids", "reviewer_ids", "project_id", "stage_id", "date_deadline", "create_date"]],
+    { limit, order: "create_date desc" });
+  if (!Array.isArray(rows)) return "";
+  const names = new Map((await assignableUsers()).map(u => [u.id, u.name]));
+  const m2o = (v: unknown): string => Array.isArray(v) && typeof v[1] === "string" ? v[1] : "";
+  const day = (v: unknown): string => typeof v === "string" ? v.slice(0, 10) : "";
+  const lines = rows.flatMap((r: any) => {
+    if (!r || typeof r.name !== "string" || !r.name) return [];
+    const who = (Array.isArray(r.user_ids) ? r.user_ids : []).map((id: number) => names.get(id)).filter(Boolean).join(", ");
+    const parts = [r.name, "for: " + (who || "nobody")];
+    // reviewer_ids is a many2one here despite the name: [id, "Name"] or false.
+    for (const [label, value] of [["reviewer: ", m2o(r.reviewer_ids)], ["project: ", m2o(r.project_id)],
+                                  ["stage: ", m2o(r.stage_id)], ["due ", day(r.date_deadline)]]) if (value) parts.push(label + value);
+    parts.push("created " + day(r.create_date));
+    return ["- " + parts.join(" · ")];
+  });
+  if (!lines.length) return "";
+  return `### ERP: open tasks (live, read just now; the ${lines.length} newest)\n` + lines.join("\n");
+}
+
 // MARK: - Tasks
 
-export async function createTask(title: string, descriptionHTML: string, assigneeUserID: number | null, deadline: string | null, projectID: number | null = null): Promise<number | null> {
+export async function createTask(title: string, descriptionHTML: string, assigneeUserID: number | null, deadline: string | null, projectID: number | null = null, reviewerUserID: number | null = null): Promise<number | null> {
   const vals: Record<string, unknown> = { name: title, description: descriptionHTML };
   if (assigneeUserID != null) vals.user_ids = [[6, 0, [assigneeUserID]]]; // many2many replace
+  if (reviewerUserID != null) vals.reviewer_ids = reviewerUserID;          // Forklyft's own field: one user
   if (projectID != null) vals.project_id = projectID;
   if (deadline) vals.date_deadline = deadline; // "YYYY-MM-DD HH:MM:SS"
   const id = await callKw("project.task", "create", [vals]);
   return typeof id === "number" ? id : null;
 }
 
-export function taskURL(id: number): string { return `${BASE}/web#id=${id}&model=project.task&view_type=form`; }
+export function taskURL(id: number): string { return `${base()}/web#id=${id}&model=project.task&view_type=form`; }
 
 // === Chat-initiated tasks ===
 // The avatar chat can create a task too, drafting it from the user's request
@@ -168,23 +235,25 @@ export function taskURL(id: number): string { return `${BASE}/web#id=${id}&model
 // same createTask path the meeting summary's "Assign" button uses.
 
 /// Does this chat message ask to create a task? A creation verb within a few
-/// words of "task" — "make a task", "create an ERP task", "add a new task".
+/// words of "task" — "make a task", "create an ERP task", "add a new task" —
+/// or "draft a task" / "assign an ERP task" said outright ("draft a nudge for each task" isn't one).
 /// Questions about existing tasks ("what tasks did I create") don't match.
 export function looksLikeTaskRequest(text: string): boolean {
-  return /\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b/i.test(text);
+  return /\b(make|create|add|new|log|raise|set ?up)\b[^.?!\n]{0,40}\btasks?\b|\b(draft|assign)\s+(a|an|the|this)\s+((new|erp|forklyft)\s+)*task\b/i.test(text);
 }
 
 /// A task drafted by the chat agent from the request plus context.
-export interface TaskDraft { title: string; body: string; assignee: string | null; project: string | null; due: string | null; }
+export interface TaskDraft { title: string; body: string; assignee: string | null; project: string | null; due: string | null; reviewer?: string | null; }
 
 /// The prompt that turns a chat request + context into one TaskDraft as JSON.
 export function taskDraftPrompt(request: string, context: string, today: Date): string {
   const d = today.toISOString().slice(0, 10);
   return `You turn a request into one ERP task. Reply with ONLY a JSON object — no prose, no code fences:
-{"title": string, "body": string, "assignee": string|null, "project": string|null, "due": string|null}
+{"title": string, "body": string, "assignee": string|null, "reviewer": string|null, "project": string|null, "due": string|null}
 - title: under 70 chars, imperative.
 - body: markdown. Pull the concrete details — what to do, who, which project, any deadline — from the recent meetings, WhatsApp and project notes below when they relate to the request. If nothing relates, write a plain description from the request alone.
 - assignee: a person's name if the request or context names who it's for, else null.
+- reviewer: the person's name if the request says who reviews it ("keep me i.e. Shreya as the reviewer" → "Shreya"), else null.
 - project: a project name if clear from the context, else null.
 - due: "YYYY-MM-DD" if a date or relative day is given ("tomorrow", "Friday"), else null. Today is ${d}.
 
@@ -209,14 +278,16 @@ export function parseTaskDraft(reply: string): TaskDraft | null {
   };
   const title = s("title");
   if (!title) return null;
-  return { title: shortTitle(title), body: s("body") ?? title, assignee: s("assignee"), project: s("project"), due: s("due") };
+  return { title: shortTitle(title), body: s("body") ?? title, assignee: s("assignee"), project: s("project"), due: s("due"), reviewer: s("reviewer") };
 }
 
 /// Create a task from a drafted TaskDraft: match the assignee and project names
 /// to the live roster, render the body, create the record. Returns the new
 /// task's web URL on success, or an error message. Call only with a live session.
 export async function createTaskFromDraft(draft: TaskDraft): Promise<{ url?: string; error?: string }> {
-  const uid = draft.assignee ? (matchUser(draft.assignee, await assignableUsers())?.id ?? null) : null;
+  const users = await assignableUsers();
+  const uid = draft.assignee ? (matchUser(draft.assignee, users)?.id ?? null) : null;
+  const rid = draft.reviewer ? (matchUser(draft.reviewer, users)?.id ?? null) : null;
   let pid: number | null = null;
   if (draft.project) {
     const want = draft.project.toLowerCase();
@@ -224,7 +295,7 @@ export async function createTaskFromDraft(draft: TaskDraft): Promise<{ url?: str
   }
   const deadline = draft.due ? draft.due + " 17:00:00" : null;
   const descHTML = richHtml(TwinProfile.correct(draft.body));
-  const id = await createTask(draft.title, descHTML, uid, deadline, pid);
+  const id = await createTask(draft.title, descHTML, uid, deadline, pid, rid);
   if (id == null) return { error: "ERP didn't create the task." };
   cblog(`ERP: chat created task ${id} — ${draft.title.slice(0, 60)}`);
   return { url: taskURL(id) };
@@ -326,18 +397,19 @@ export async function signIn(): Promise<boolean> {
   const ua = chromeUserAgent();
   session.fromPartition(PARTITION).setUserAgent(ua);
   const w = new BrowserWindow({
-    width: 1100, height: 800, title: "Forklyft ERP — Nikxel", autoHideMenuBar: true,
+    width: 1100, height: 800, title: "ERP sign-in — Nikxel", autoHideMenuBar: true,
     webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
   });
   win = w;
   w.on("closed", () => { if (win === w) win = null; });
   w.webContents.setUserAgent(ua);
-  w.loadURL(ODOO_URL, { userAgent: ua }).catch(e => cblog(`ERP: load failed — ${e}`));
+  signInProblem = "";
+  w.loadURL(Settings.erpURL || `${base()}/odoo/`, { userAgent: ua }).catch(e => cblog(`ERP: load failed — ${e}`));
   cblog("ERP: opened sign-in window");
   await delay(1500);
   const deadline = Date.now() + 180000;
   while (Date.now() < deadline) {
-    if (!win || w.isDestroyed()) { cblog("ERP: sign-in window closed — cancelled"); Settings.erpSession = ""; return false; }
+    if (!win || w.isDestroyed()) { cblog("ERP: sign-in window closed — cancelled"); Settings.erpSession = ""; signInProblem = "The window closed before you signed in."; return false; }
     // captureSession stores whatever cookie the partition holds (anonymous at
     // first); sessionUID over HTTP confirms it's logged in.
     if (await captureSession()) {
@@ -353,6 +425,7 @@ export async function signIn(): Promise<boolean> {
     await delay(2000);
   }
   cblog("ERP: sign-in timed out");
+  signInProblem = "No sign-in after 3 minutes. Check it’s your ERP’s address, then try again.";
   Settings.erpSession = "";
   win = null;
   if (!w.isDestroyed()) w.destroy();
@@ -364,7 +437,7 @@ export async function signIn(): Promise<boolean> {
 async function captureSession(): Promise<boolean> {
   try {
     const cookies = await session.fromPartition(PARTITION).cookies.get({ name: "session_id" });
-    const c = cookies.find(ck => (ck.domain ?? "").includes("forklyft") && ck.value);
+    const c = cookies.find(ck => cookieIsOurs(ck.domain ?? "") && ck.value);
     if (c?.value) { Settings.erpSession = c.value; return true; }
   } catch (e) { cblog(`ERP: cookie read failed — ${e}`); }
   return false;

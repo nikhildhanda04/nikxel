@@ -19,12 +19,16 @@ import { ChromeWhatsApp } from "../whatsapp/chromeWhatsApp";
 import { MeetingDetector } from "../whatsapp/meetingDetector";
 import { WAContactLists } from "../whatsapp/waContactLists";
 import * as Automation from "./automation";
+import * as Attachments from "./attachments";
+import { TourCoach } from "./tourCoach";
 import { Automations } from "./automations";
 import { ChatSession } from "./chatSession";
+import * as WhatsNew from "./whatsNew";
 import { CloudSync } from "./cloudSync";
 import * as DashboardData from "./dashboardData";
 import * as DayPage from "./dayPage";
 import * as ERP from "./erp";
+import * as ErpCrawl from "./erpCrawl";
 import * as Learning from "./learning";
 import * as Slack from "./slack";
 import { spriteRows } from "./spriteFrames";
@@ -63,6 +67,17 @@ let tabs: Tab[] = [];
 let active: Tab | null = null;
 /// The text file open in the page's editor (personality, a contact list, a template).
 let editing: { file: string; title: string; help: string } | null = null;
+/// The summary template open in the page's template dialog. `templateRev` tells
+/// the page to reload its draft (opened, created, reset); `templateNew` opens it
+/// on the new-template form.
+let template: string | null = null;
+let templateRev = 0;
+let templateNew = false;
+let templateError = "";
+/// The ERP sign-in under Connections: the window is open and we're waiting, or
+/// why the last try didn't connect.
+let erpWaiting = false;
+let erpProblem = "";
 /// The Chat section's conversation, the same engine as the avatar's chat.
 let chat: ChatSession | null = null;
 /// Today's calendar, fetched at most every few minutes as the window comes forward.
@@ -118,6 +133,8 @@ export function canRead(file: string): boolean {
 }
 
 /// Shows the window, on `section` when given.
+TourCoach.resume = (skip) => { void win?.webContents.executeJavaScript(`nx.tourResume(${skip})`).catch(() => {}); };
+
 export function show(to?: string): void {
   if (to) { section = to; showSection(); }
   if (!win) create();
@@ -188,11 +205,29 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
     case "closeTab": closeTab(String(m.id)); push(); break;
     case "side": Settings.dashboardSideCollapsed = !!m.collapsed; layout(); break;
     case "chatStart": startChat(); break;
-    case "tourDone": Settings.dashboardTourDone = true; push(); break;
+    case "tourDone":
+      Settings.dashboardTourDone = true;
+      // Someone new just had the whole tour: today's update isn't news to them.
+      if (!Settings.whatsNewSeen) WhatsNew.markSeen();
+      push();
+      break;
+    case "whatsNewSeen": WhatsNew.markSeen(); push(); break;
     case "chat": {
       startChat();
       const id = m.id;
-      void chat?.send(String(m.text ?? "")).then(r => reply(id, r));
+      void chat?.send(String(m.text ?? ""), "", false, Array.isArray(m.files) ? m.files.map(String) : []).then(r => reply(id, r));
+      break;
+    }
+    case "attachAdd":
+      // A file dropped on the chat or an automation: read here, never uploaded.
+      reply(m.id, Attachments.add(String(m.name ?? "file"), Buffer.from(String(m.data ?? ""), "base64")));
+      break;
+    case "attachPick": {
+      // The + button: files from an Open dialog, each read like a dropped one.
+      const id = m.id;
+      if (!win) { reply(id, []); break; }
+      void dialog.showOpenDialog(win, { properties: ["openFile", "multiSelections"], message: "Give Nikxel a document to read" })
+        .then(r => reply(id, r.canceled ? [] : r.filePaths.map(Attachments.addFile)));
       break;
     }
     case "chatNew": chat = null; startChat(); break;
@@ -227,13 +262,26 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
       editing = null; push();
       break;
     case "closeFile": editing = null; push(); break;
+    case "erp":
+      erpOp(String(m.op ?? ""), String(m.url ?? ""));
+      push();
+      break;
+    case "template":
+      templateOp(String(m.op ?? ""), String(m.slug ?? ""), m);
+      push();
+      break;
     case "autoSave": {
       const d = m.a ?? {};
       const clean = Automation.clean({ id: d.id ?? "", name: d.name ?? "", trigger: d.trigger ?? "", time: d.time ?? "09:00",
-        days: d.days ?? "daily", instruction: d.instruction ?? "", enabled: true, lastRun: "" });
+        days: d.days ?? "daily", instruction: d.instruction ?? "", enabled: true, lastRun: "", date: typeof d.date === "string" ? d.date : null,
+        files: Array.isArray(d.files) ? d.files.map(String).filter((f: string) => Attachments.name(f) !== null) : null });
       if (!clean) return;
       const list = Automation.load(), i = list.findIndex(a => a.id === clean.id);
-      if (i >= 0) list[i] = { ...clean, enabled: list[i].enabled, lastRun: list[i].lastRun }; else list.push(clean);
+      if (i >= 0) {
+        // A one-time one moved to another day or time runs again.
+        const moved = !!clean.date && (clean.date !== list[i].date || clean.time !== list[i].time);
+        list[i] = { ...clean, enabled: moved || list[i].enabled, lastRun: moved ? "" : list[i].lastRun };
+      } else list.push(clean);
       Automation.save(list); push();
       break;
     }
@@ -260,6 +308,23 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
       });
       break;
     }
+    case "orgSwitch": {
+      // Another of the user's organizations ({org}), or a new ({org_name}) or joined ({invite}) one; no new sign-in.
+      const id = m.id;
+      const req = Object.fromEntries(([["org", m.org], ["org_name", m.orgName], ["invite", m.invite]] as const).filter(([, v]) => typeof v === "string" && v)) as Record<string, string>;
+      void CloudSync.switchOrg(req).then(error => { cblog(`Dashboard: organization switch ${error ? "failed" : "done"}`); reply(id, { error }); push(); });
+      break;
+    }
+    case "tourMeeting": {
+      // A tour step that lives inside a meeting summary: the newest one opens, and its page shows the step.
+      const mt = SummaryLibrary.scan().find(e => e.kind === "meetings" && /\.html$/i.test(e.file));
+      if (!mt) { TourCoach.resume(false); break; }
+      const pending = TourCoach.pending = { file: mt.file, step: m };
+      read(mt.file);
+      // A page that never asks for it (an old one without the widget) doesn't leave the tour stuck.
+      setTimeout(() => { if (TourCoach.pending === pending) { TourCoach.pending = null; TourCoach.resume(false); } }, 8000);
+      break;
+    }
     case "erpMyProjects": {
       const id = m.id;
       void ERP.myProjectNames().then(names => reply(id, names ? { names } : { error: "Couldn’t read your ERP. Connect it under Connections, then try again." }));
@@ -268,7 +333,14 @@ function handle(m: Record<string, any>): void {   // eslint-disable-line @typesc
     case "orgDisconnect": CloudSync.unpair(); cblog("Dashboard: this computer disconnected from its organization"); push(); break;
     case "copyText": clipboard.writeText(String(m.text ?? "")); break;
     case "learnDecide": if (typeof m.key === "string") { Learning.decide(m.key, m.yes === true); push(); } break;
-    case "autoRun": { const a = Automation.load().find(x => x.id === m.id); if (a) Automations.runNow(a); break; }
+    case "autoRun": {
+      // "Run on…": a meeting (or day, week) the user picked, which it then does even if it would have skipped it.
+      const f = typeof m.file === "string" ? path.resolve(m.file) : null;
+      const picked = f && f.startsWith(SummaryLibrary.libraryRoot() + path.sep) ? f : null;
+      const a = Automation.load().find(x => x.id === m.id);
+      if (a) Automations.runNow(a, picked);
+      break;
+    }
     case "autoMake": {
       const id = m.id;
       void Automations.make(String(m.text ?? "")).then(a => reply(id, a ? Automation.dict(a)
@@ -338,9 +410,9 @@ function set(key: string, value: unknown): void {
 
 function run(name: string): void {
   switch (name) {
-    case "editTemplate":
-      return edit(SummaryTemplates.activeURL, `“${SummaryTemplates.displayName(Settings.summaryTemplate)}” template`,
-        "Plain instructions, one per line, the way you’d tell a person: drop a section, add one, change the order, the length or the tone. Lines starting with # are ignored. Takes effect on your next recording; names, decisions and numbers still come only from the transcript.");
+    case "editTemplate": case "resetTemplate": case "deleteTemplate":
+      openTemplate(Settings.summaryTemplate); return push();
+    case "newTemplate": openTemplate(Settings.summaryTemplate, true); return push();
     case "editPersonality":
       return edit(personalityFile(), "How I sound on WhatsApp", "The voice and rules I reply with. Write it the way you’d brief an assistant.");
     case "editTrusted":
@@ -352,6 +424,65 @@ function run(name: string): void {
     case "openInBrowser": if (active) void shell.openPath(active.file); return;
     case "revealSummary": if (active) revealFile(active.file); return;
     default: host?.action(name);
+  }
+}
+
+/// Connections → ERP: the address is typed in the page, the sign-in window opens
+/// on it, and the page shows waiting, connected, or what went wrong.
+function erpOp(op: string, url: string): void {
+  switch (op) {
+    case "connect": {
+      if (erpWaiting) return;
+      const address = ERP.address(url);
+      if (!address) { erpProblem = "That doesn’t look like a web address. Try something like erp.yourcompany.com."; return; }
+      if (ERP.isConnected()) ERP.disconnect();   // a new address is a different ERP
+      Settings.erpURL = address.href;
+      erpProblem = "";
+      erpWaiting = true;
+      void ERP.signIn().then(ok => {
+        erpWaiting = false;
+        erpProblem = ok ? "" : (ERP.signInProblem || "Sign-in didn’t finish. Try again.");
+        push();
+        if (ok && host) { const agent = host.agent; void ErpCrawl.ingest((p, k) => agent.runPrompt(p, k)); }
+      });
+      return;
+    }
+    case "cancel": ERP.cancelSignIn(); return;
+    case "disconnect": ERP.disconnect(); erpProblem = ""; return;
+  }
+}
+
+function openTemplate(slug: string, creating = false): void {
+  SummaryTemplates.seedIfMissing();
+  template = slug;
+  templateNew = creating;
+  templateError = "";
+  templateRev++;
+}
+
+/// The template dialog's requests: everything happens in the page, nothing opens a file.
+function templateOp(op: string, slug: string, m: Record<string, unknown>): void {
+  templateError = "";
+  switch (op) {
+    case "open": return openTemplate(slug);
+    case "save":
+      if (typeof m.text === "string" && SummaryTemplates.exists(slug)) writeAtomic(SummaryTemplates.url(slug), m.text);
+      if (m.use === true) Settings.summaryTemplate = slug;
+      template = null;
+      return;
+    case "use": Settings.summaryTemplate = slug; return;
+    case "new": {
+      const name = String(m.name ?? "").trim();
+      const made = SummaryTemplates.create(name, m.copy ? String(m.copy) : null);
+      if (made) { Settings.summaryTemplate = made; return openTemplate(made); }
+      templateError = SummaryTemplates.slugify(name) === ""
+        ? "Give it a name with at least one letter or number in it."
+        : "There’s already a template called that. Pick another name, or edit that one.";
+      return;
+    }
+    case "reset": SummaryTemplates.reset(slug); return openTemplate(slug);
+    case "delete": SummaryTemplates.delete(slug); return openTemplate(Settings.summaryTemplate);
+    default: template = null;
   }
 }
 
@@ -579,6 +710,13 @@ function state(): Record<string, unknown> {
     openInApp: Settings.openSummariesInApp,
     appearance: Settings.appearance,
     tour: !Settings.dashboardTourDone,
+    whatsNew: WhatsNew.forPage(),
+    whatsNewUnseen: WhatsNew.pending(),
+    erp: { connected: ERP.isConnected(), waiting: erpWaiting, problem: erpProblem, url: Settings.erpURL || (ERP.isConnected() ? ERP.base() : "") },
+    templateEditor: template ? {
+      slug: template, name: SummaryTemplates.displayName(template), shipped: SummaryTemplates.isShipped(template),
+      text: readText(SummaryTemplates.url(template)) ?? "", rev: templateRev, creating: templateNew, error: templateError,
+    } : null,
     editor: editing ? { title: editing.title, help: editing.help, text: readText(editing.file) ?? "" } : null,
     tasks,
     people,
@@ -588,7 +726,9 @@ function state(): Record<string, unknown> {
     botReplies: DashboardData.botReplies(new Date(), waLogs),
     neverReply: WAContactLists.names("neverReply"),
     usageDays: usageDays(),
-    automations: Automation.load().map(Automation.dict),
+    // Each automation's files with their names, for its chips.
+    automations: Automation.load().map(a => ({ ...Automation.dict(a),
+      files: (a.files ?? []).flatMap(id => { const name = Attachments.name(id); return name ? [{ id, name }] : []; }) })),
     automationRuns: Automations.runs,
     automationRunning: Automations.running ?? "",
     nikxelSuggested: Learning.history(),

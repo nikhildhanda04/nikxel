@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, screen, IpcMainEvent, Rectangle } from "electron";
+import { BrowserWindow, ipcMain, powerMonitor, screen, IpcMainEvent, Rectangle } from "electron";
 import * as fs from "fs";
 import { StateMachine, NikxelState } from "../core/stateMachine";
 import { ui, AvatarSurface, CardOptions, CardKind } from "../core/ui";
@@ -62,6 +62,7 @@ export type ToRenderer =
   | { type: "key" }
   | { type: "card"; card: CardWire }
   | { type: "dismissCard" }
+  | { type: "away"; away: boolean }
   | { type: "pushReminder"; id: string; title: string }
   | { type: "dismissReminder"; id: string }
   | { type: "reminderText"; text: string | null }
@@ -211,6 +212,12 @@ export function createAvatarWindow(
   // doesn't happen.
   let cardSeq = 0;
   let current: { id: number; card: CardOptions } | null = null;
+  /// Cards that arrived while one that waits (a question, the day digest, a reminder) was up.
+  let waiting: CardOptions[] = [];
+  const waits = (c: CardOptions) => !!c.buttons?.length || (c.lifetime ?? 20) > 10;
+  const showNow = (c: CardOptions) => { const id = ++cardSeq; current = { id, card: c }; send({ type: "card", card: wire(id, c) }); };
+  /// The card went: the next one waiting takes its place.
+  const cleared = () => { current = null; const n = waiting.shift(); if (n) showNow(n); };
 
   const runSafely = (what: string, fn: (() => void) | undefined) => {
     if (!fn) return;
@@ -316,6 +323,8 @@ export function createAvatarWindow(
     send({ type: "cursor", x, y });
   };
   const cursorTimer = setInterval(pollCursor, 33);   // the renderer draws at 30 fps
+  // No keyboard or mouse for a minute (or locked): a card meant to wait holds its 10 s till they're back.
+  const awayTimer = setInterval(() => { if (current) send({ type: "away", away: powerMonitor.getSystemIdleTime() >= 60 }); }, 5000);
   screen.on("display-metrics-changed", applyInteractive);
   screen.on("display-added", applyInteractive);
   screen.on("display-removed", applyInteractive);
@@ -406,7 +415,7 @@ export function createAvatarWindow(
         // Tapping the card opens what it's about instead of picking Nikxel up.
         if (!current || current.id !== evt.id || current.card.buttons?.length) break;
         const action = current.card.action;
-        current = null;   // before the action, which may raise the next card
+        cleared();   // before the action, which may raise the next card
         runSafely("card action", action);
         break;
       }
@@ -415,12 +424,12 @@ export function createAvatarWindow(
         if (!current || current.id !== evt.id) break;
         const btn = current.card.buttons?.[evt.index];
         if (!btn) break;
-        current = null;   // before the action, which may ask the next question
+        cleared();   // before the action, which may ask the next question
         runSafely(`card button "${btn.title}"`, btn.action);
         break;
       }
       case "cardGone":
-        if (current?.id === evt.id) current = null;
+        if (current?.id === evt.id) cleared();
         break;
     }
   };
@@ -470,6 +479,7 @@ export function createAvatarWindow(
   win.on("closed", () => {
     stopDrag();
     clearInterval(cursorTimer);
+    clearInterval(awayTimer);
     screen.off("display-metrics-changed", applyInteractive);
     screen.off("display-added", applyInteractive);
     screen.off("display-removed", applyInteractive);
@@ -513,18 +523,16 @@ export function createAvatarWindow(
     /// seconds, but the 10pm digest fires when nobody is watching and has to
     /// still be there when they come back, and an error should wait to be read.
     showCard(c: CardOptions) {
-      // A question waiting on an answer isn't knocked off by a passing notice.
-      // ponytail: that notice is dropped, not queued; queue if it matters.
-      if (current?.card.buttons?.length && !c.buttons?.length) return;
-      const id = ++cardSeq;
-      current = { id, card: c };
-      send({ type: "card", card: wire(id, c) });
+      // A card that waits (a question, the day digest, a reminder) isn't knocked off: the new one
+      // queues behind it. ponytail: the queue keeps the last 5; plenty for one evening.
+      if (current && waits(current.card)) { waiting = [...waiting, c].slice(-5); return; }
+      showNow(c);
     },
 
     dismissCard() {
       if (!current) return;
-      current = null;
       send({ type: "dismissCard" });
+      cleared();
     },
 
     pushReminder(id: string, title: string) { send({ type: "pushReminder", id, title }); },

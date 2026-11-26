@@ -15,6 +15,7 @@ import { createAvatarWindow } from "./avatar/avatarWindow";
 import * as AvatarChat from "./system/avatarChat";
 import { Automations } from "./system/automations";
 import * as Dashboard from "./system/dashboardWindow";
+import * as WhatsNew from "./system/whatsNew";
 import { CoachTour, TourHost } from "./system/coachTour";
 import * as Learning from "./system/learning";
 import { InputHandler } from "./avatar/inputHandler";
@@ -236,6 +237,14 @@ class NikxelApp {
       this.maybeAskRole();
       // Once, for anyone who set up before the tour existed: the menus moved into the Nikxel window.
       setTimeout(() => CoachTour.startIfNew(this.tourHost), 10_000);
+      // Just updated: say what's new; the Nikxel window walks them through it.
+      setTimeout(() => {
+        const unseen = WhatsNew.pending();
+        if (!unseen.length) return;
+        const titles = WhatsNew.releases().filter(r => unseen.includes(r.id)).flatMap(r => r.items.map(i => i.title));
+        ui.tell({ icon: "✨", title: "Nikxel updated: see what's new", lines: [...titles.slice(0, 3), ...(titles.length > 3 ? ["…"] : [])],
+          lifetime: 40, action: () => Dashboard.show("whatsnew") });
+      }, 6000);
     }
 
     // Start at login, once: a user who restarts shouldn't have to hunt for
@@ -394,9 +403,6 @@ class NikxelApp {
       toggleMicMute: () => { this.meetingCoordinator.recorder.isMicMuted = !this.meetingCoordinator.recorder.isMicMuted; },
       toggleVisibility: () => this.toggleVisibility(),
       quit: () => app.quit(),
-      newTemplate: () => this.newTemplate(),
-      resetTemplate: () => this.resetActiveTemplate(),
-      deleteTemplate: () => this.deleteActiveTemplate(),
       openTemplates: () => openFolder(SummaryTemplates.templatesDir),
     };
     Dashboard.init({
@@ -415,27 +421,9 @@ class NikxelApp {
     else this.showAvatar();
   }
 
-  private async connectERP(): Promise<void> {
-    if (ERP.isConnected()) {
-      await dialog.showMessageBox({
-        type: "info", title: "Nikxel", noLink: true,
-        message: "Forklyft ERP is connected",
-        detail: "Nikxel reads your team and files tasks through your logged-in ERP session. Use the Assign button on a meeting's action items.",
-        buttons: ["OK"],
-      });
-      return;
-    }
-    const ok = await ERP.signIn();
-    await dialog.showMessageBox({
-      type: ok ? "info" : "warning", title: "Nikxel", noLink: true,
-      message: ok ? "Forklyft ERP connected" : "ERP not connected",
-      detail: ok
-        ? "You can now Assign action items to the ERP from any meeting summary. Nikxel also reads and summarizes your ERP into your work context."
-        : "Sign-in didn't complete. Open the menu and try “Connect Forklyft ERP…” again.",
-      buttons: ["OK"],
-    });
-    if (ok) void ErpCrawl.ingest((p, k) => this.meetingCoordinator.momGen.runPrompt(p, k));
-  }
+  /// The ERP is connected from Connections in the Nikxel window, where its address is typed.
+  private connectERP(): void { Dashboard.show("connections"); }
+
 
   /// Disconnecting is for people who don't want WhatsApp in Nikxel at all:
   /// the WhatsApp window stops reopening itself, across restarts too.
@@ -511,49 +499,6 @@ class NikxelApp {
     ui.tell({
       icon: ok ? "✅" : "⚠️", title: ok ? "Connected to dashboard" : "Couldn't connect", kind: ok ? "info" : "warning",
       lines: [ok ? "Your daily work summary will be shared with your org." : "Check the code and that the dashboard is reachable, then try again."],
-    });
-  }
-
-  private async newTemplate(): Promise<void> {
-    const active = Settings.summaryTemplate;
-    const r = await promptText({
-      title: "New summary template",
-      message: "Name it after the kind of meeting or the role it's for — \"Client Calls\", \"Design Review\", \"Board\".",
-      placeholder: "Template name",
-      buttons: ["Create, starting blank", `Create, copying “${SummaryTemplates.displayName(active)}”`, "Cancel"],
-    });
-    if (r.button !== 0 && r.button !== 1) return;
-    const slug = SummaryTemplates.create(r.value, r.button === 1 ? active : null);
-    if (!slug) {
-      ui.tell({
-        icon: "⚠️", title: "Couldn't create that template", kind: "warning",
-        lines: [SummaryTemplates.slugify(r.value) === ""
-          ? "Give it a name with at least one letter or number in it."
-          : "A template with that name already exists. Pick a different name, or edit the existing one."],
-      });
-      return;
-    }
-    Settings.summaryTemplate = slug;
-    openFile(SummaryTemplates.url(slug));
-  }
-
-  private resetActiveTemplate(): void {
-    const slug = Settings.summaryTemplate;
-    ui.ask({
-      title: `Reset “${SummaryTemplates.displayName(slug)}” to the built-in version?`,
-      lines: [`Anything you've written in ${slug}.txt will be replaced. Your other templates aren't touched.`],
-      kind: "warning",
-      buttons: [{ title: "Reset", action: () => SummaryTemplates.reset(slug) }, { title: "Cancel", action: () => {} }],
-    });
-  }
-
-  private deleteActiveTemplate(): void {
-    const slug = Settings.summaryTemplate;
-    ui.ask({
-      title: `Delete “${SummaryTemplates.displayName(slug)}”?`,
-      lines: [`${slug}.txt is removed and summaries go back to the Default template.`],
-      kind: "warning",
-      buttons: [{ title: "Delete", action: () => SummaryTemplates.delete(slug) }, { title: "Cancel", action: () => {} }],
     });
   }
 

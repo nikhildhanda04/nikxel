@@ -14,6 +14,8 @@ cp sprite_prompt.txt Nikxel.app/Contents/Resources/sprite_prompt.txt
 cp vendor/framer-motion-dom.js Nikxel.app/Contents/Resources/framer-motion-dom.js
 # The dashboard's dithered clouds (nikxel-admin/src/clouds.png), the onboarding's ground.
 cp vendor/clouds.png Nikxel.app/Contents/Resources/clouds.png
+# What each update added: the Nikxel window's What's new and its tour (WhatsNew.swift).
+cp WHATSNEW.md Nikxel.app/Contents/Resources/whatsnew.md
 # The clone this was built from, so Check for Updates finds it even when the
 # app is opened from a copy or link elsewhere (Applications, Dock, login item).
 echo "$PWD" > Nikxel.app/Contents/Resources/repo_path

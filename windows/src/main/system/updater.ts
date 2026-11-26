@@ -225,8 +225,9 @@ function updateAndRestart(repo: string): boolean {
   if (!app) return false;
   const gitBin = which("git");
   const npmBin = which("npm");
-  if (!gitBin || !npmBin) {
-    diag("update", `can't update: git=${gitBin} npm=${npmBin}`);
+  const nodeBin = which("node");
+  if (!gitBin || !npmBin || !nodeBin) {
+    diag("update", `can't update: git=${gitBin} npm=${npmBin} node=${nodeBin}`);
     return false;
   }
   const relaunch = relaunchCommand(app);
@@ -241,6 +242,7 @@ $repo = ${psq(repo)}
 $app = ${psq(app)}
 $git = ${psq(gitBin)}
 $npm = ${psq(npmBin)}
+$node = ${psq(nodeBin)}
 $waitPid = ${process.pid}
 $launchExe = ${psq(relaunch.exe)}
 $launchArgs = ${psq(relaunch.args)}
@@ -262,13 +264,46 @@ function Run([string]$exe, [string[]]$argv, [string]$cwd) {
   if ($null -eq $code) { $code = 0 }
   return [int]$code
 }
+# True when a Nikxel process from this folder is running.
+function Running { @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($app, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 }
 function Relaunch {
   # Electron attaches to the console it's started from, and closing that
   # console (this window, a moment later) ends it: the update finished and
   # Nikxel vanished. Unattached, it outlives this window.
   $env:ELECTRON_NO_ATTACH_CONSOLE = '1'
-  if ($launchArgs) { Start-Process -FilePath $launchExe -ArgumentList $launchArgs -WorkingDirectory $app }
-  else { Start-Process -FilePath $launchExe -WorkingDirectory $app }
+  Log ("--- relaunch: " + $launchExe + " " + $launchArgs)
+  if (-not (Test-Path -LiteralPath $launchExe)) { Log "--- relaunch: the app executable is missing"; Repair }
+  try {
+    if ($launchArgs) { Start-Process -FilePath $launchExe -ArgumentList $launchArgs -WorkingDirectory $app -ErrorAction Stop }
+    else { Start-Process -FilePath $launchExe -WorkingDirectory $app -ErrorAction Stop }
+  } catch { Log ("--- relaunch failed: " + $_) }
+  # It has to still be there a few seconds on, not just have started: a start that dies
+  # (or never happened) used to leave nobody knowing Nikxel was gone.
+  Start-Sleep -Seconds 10
+  if (Running) { Log "--- relaunch: Nikxel is running"; return }
+  $lnk = Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Nikxel.lnk'
+  if (Test-Path -LiteralPath $lnk) {
+    Log "--- relaunch: not running; trying the Start menu shortcut"
+    try { Invoke-Item -LiteralPath $lnk } catch { Log ("    " + $_) }
+    Start-Sleep -Seconds 10
+    if (Running) { Log "--- relaunch: Nikxel is running"; return }
+  }
+  Log "--- relaunch: Nikxel didn't start"
+  Say "Nikxel didn't start again by itself. Open it from the Start menu (search Nikxel)."
+  Say ("If it still doesn't open, send this file to your admin: " + $log)
+  Read-Host "Press Enter to close"
+}
+# npm 11.16+ skips install scripts package.json's allowScripts doesn't approve, and electron.exe /
+# ffmpeg.exe come from those scripts: an npm ci left Nikxel with nothing to start. Same as setup.cmd.
+function Repair {
+  if (-not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\electron\\dist\\electron.exe'))) {
+    Log "--- downloading Electron"
+    Run $node @('node_modules\\electron\\install.js') $app | Out-Null
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\ffmpeg-static\\ffmpeg.exe'))) {
+    Log "--- downloading ffmpeg"
+    Run $node @('node_modules\\ffmpeg-static\\install.js') $app | Out-Null
+  }
 }
 function Stamp {
   $head = (& $git -C $repo rev-parse HEAD 2>$null)
@@ -279,7 +314,9 @@ function Build {
   # node_modules and downloads Electron again, minutes for nothing otherwise.
   if ($script:depsChanged -or -not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\electron\\dist\\electron.exe'))) {
     Log "--- npm ci"
-    if ((Run $npm @('ci') $app) -ne 0) { return $false }
+    if ((Run $npm @('ci', '--no-audit', '--no-fund') $app) -ne 0) { return $false }
+    Repair
+    if (-not (Test-Path -LiteralPath (Join-Path $app 'node_modules\\electron\\dist\\electron.exe'))) { Log "--- Electron didn't download"; return $false }
   }
   Log "--- npm run build"
   if ((Run $npm @('run', 'build') $app) -ne 0) { return $false }

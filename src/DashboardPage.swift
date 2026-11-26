@@ -1091,6 +1091,8 @@ function placeTourStep() {
   if (!tourEls) return;
   var step = tourSteps[tourAt], el = document.querySelector(step[0]);
   if (!el) { tourAt++; return tourAt < tourSteps.length ? showTourStep() : endTour(); }
+  // A sidebar scrolled down (the organizations list open) hides the top entries: bring it into view first.
+  el.scrollIntoView({ block: 'nearest' });
   var r = el.getBoundingClientRect(), pad = 6;
   Object.assign(tourEls.hole.style, { left: r.left - pad + 'px', top: r.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
   var last = tourAt === tourSteps.length - 1;

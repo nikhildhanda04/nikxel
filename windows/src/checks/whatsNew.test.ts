@@ -42,6 +42,8 @@ test("unseen: newest only when never seen, else everything above the seen one", 
   assert.deepEqual(unseen(r, undefined), ["2026-11-26"]);
   assert.deepEqual(unseen(r, "2026-11-25"), ["2026-11-26"]);
   assert.deepEqual(unseen(r, "2026-11-26"), []);
+  const day = [{ id: "2026-11-27.2", items: [] }, { id: "2026-11-27", items: [] }, { id: "2026-11-26", items: [] }];
+  assert.deepEqual(unseen(day, undefined), ["2026-11-27.2", "2026-11-27"], "never seen: all of the newest day");
   assert.deepEqual(unseen(r, "gone"), ["2026-11-26", "2026-11-25"]);
 });
 

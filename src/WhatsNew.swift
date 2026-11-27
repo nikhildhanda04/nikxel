@@ -49,10 +49,10 @@ enum WhatsNew {
     }
 
     /// The updates someone hasn't seen yet, newest first: those above `seen`.
-    /// Never seen anything: only the newest, not the whole history.
+    /// Never seen anything: the newest day's updates ("2026-11-27", "2026-11-27.2"…), not the whole history.
     static func unseen(_ releases: [Release], seen: String?) -> [String] {
         guard let first = releases.first else { return [] }
-        guard let seen, !seen.isEmpty else { return [first.id] }
+        guard let seen, !seen.isEmpty else { return releases.prefix { $0.id.prefix(10) == first.id.prefix(10) }.map(\.id) }
         return Array(releases.prefix { $0.id != seen }.map(\.id))
     }
 

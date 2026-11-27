@@ -45,7 +45,8 @@ export function parse(md: string): Release[] {
 /// Never seen anything: only the newest, not the whole history.
 export function unseen(releases: Release[], seen: string | undefined): string[] {
   if (!releases.length) return [];
-  if (!seen) return [releases[0].id];
+  // Never seen anything: the newest day's updates ("2026-11-27", "2026-11-27.2"…), not the whole history.
+  if (!seen) { const day = releases[0].id.slice(0, 10); return releases.filter((r, i) => releases.slice(0, i + 1).every(x => x.id.slice(0, 10) === day)).map(r => r.id); }
   const i = releases.findIndex(r => r.id === seen);
   return releases.slice(0, i < 0 ? releases.length : i).map(r => r.id);
 }

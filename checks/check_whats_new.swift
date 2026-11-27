@@ -38,6 +38,8 @@ import Foundation
         check(WhatsNew.unseen(r, seen: "2026-11-25") == ["2026-11-26"], "above the seen one")
         check(WhatsNew.unseen(r, seen: "2026-11-26").isEmpty, "all seen")
         check(WhatsNew.unseen(r, seen: "2026-01-01") == ["2026-11-26", "2026-11-25"], "seen one gone: everything")
+        let day = [WhatsNew.Release(id: "2026-11-27.2", items: []), WhatsNew.Release(id: "2026-11-27", items: []), WhatsNew.Release(id: "2026-11-26", items: [])]
+        check(WhatsNew.unseen(day, seen: nil) == ["2026-11-27.2", "2026-11-27"], "never seen: all of the newest day")
         let real = WhatsNew.parse(try String(contentsOfFile: "WHATSNEW.md", encoding: .utf8))
         check(!real.isEmpty && real.allSatisfy { !$0.items.isEmpty }, "WHATSNEW.md parses, every update has changes")
         let sections: Set = ["home", "chat", "library", "tasks", "automations", "people", "activity", "whatsnew", "you", "meetings", "whatsapp",

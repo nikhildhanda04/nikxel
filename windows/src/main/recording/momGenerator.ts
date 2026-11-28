@@ -276,7 +276,7 @@ export class MOMGenerator {
       const authHints = ["not logged in", "log in", "login", "/login", "unauthorized", "authenticate",
         "api key", "401", "sign in", "credentials", "invalid x-api-key"];
       return authHints.some(h => lower.includes(h))
-        ? { working: false, notInstalled: false, reason: "Installed, but not logged in" }
+        ? { working: false, notInstalled: false, reason: `Installed, but not logged in: ${msg.trim().slice(0, 200)}` }
         : { working: false, notInstalled: false, reason: `Installed, but a test request failed: ${msg.slice(0, 200)}` };
     }
   }
@@ -372,7 +372,7 @@ export class MOMGenerator {
     if (r.timedOut) {
       const limit = timeout >= 60 ? `${Math.trunc(timeout / 60)} min` : `${Math.trunc(timeout)} s`;
       throw new MOMError("generationFailed",
-        `${backend.whichName} did not finish within ${limit} and was killed.\nCheck that \`${backend.whichName}\` works in a terminal (login / quota).\n${r.stderr.slice(-300)}\n\nLogs: ${workspace}`);
+        `${backend.whichName} did not finish within ${limit} and was killed.\nCheck that \`${backend.whichName}\` answers in a terminal; a first run can be slow.\n${r.stderr.slice(-300)}\n\nLogs: ${workspace}`);
     }
 
     if (r.error) {

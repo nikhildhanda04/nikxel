@@ -57,6 +57,18 @@ const MODEL_DOWNLOAD_SIZE = "466 MB";
 
 /// What a failed agent check says when the fix is to sign in. Same list
 /// MOMGenerator.checkAgent sorted failures with on the Mac.
+/// "Not logged in" with what the agent actually said. Signed in yet still refused is almost
+/// always an API key in the environment: an interactive `claude` asks whether to use it, but
+/// Nikxel's headless runs (`claude -p`) always do, so a stale key beats a good login.
+export function notLoggedInText(agent: CodingAgent, why: string): string {
+  const said = why.replace(/^Installed, but not logged in:?\s*/i, "").trim();
+  if (agent === "claude" && process.env.ANTHROPIC_API_KEY && /api key|401|unauthori[sz]ed/i.test(said)) {
+    return "Logged in, but an ANTHROPIC_API_KEY set on this computer is overriding it and Claude rejects that key. " +
+      "Remove it (Settings › System › About › Advanced system settings › Environment Variables), restart Nikxel, then Test again.";
+  }
+  return "Installed, but not logged in" + (said ? `. ${AGENT_INFO[agent].displayName} said: “${said}”` : "");
+}
+
 const AUTH_HINTS = ["not logged in", "log in", "login", "/login", "unauthorized", "authenticate",
   "api key", "401", "sign in", "credentials", "invalid x-api-key"];
 
@@ -286,7 +298,7 @@ export class OnboardingWindowController {
     if (health.notInstalled) return { text: "Not installed", tone: "muted", hint: install };
     const why = health.reason;
     const lower = why.toLowerCase();
-    if (AUTH_HINTS.some(h => lower.includes(h))) return { text: "Installed, but not logged in", tone: "orange", hint: agent };
+    if (AUTH_HINTS.some(h => lower.includes(h))) return { text: notLoggedInText(agent, why), tone: "orange", hint: agent };
     if (/won't start|--version|exited with code|cannot find module|is not recognized|enoent/i.test(why)) {
       return { text: `Installed but won't start: ${why}`, tone: "red", hint: install };
     }
@@ -324,7 +336,8 @@ export class OnboardingWindowController {
       case "pickAgent": if (agent) { this.chosenAgent = agent; this.render(); } break;
       case "copyAgent": if (agent) this.copyInstallCommand(agent); break;
       case "installAgent": this.installClaude(); break;
-      case "retestAgents": this.refreshAvailableAgents(); break;
+      // A fresh test replaces the sign-in watch, so "Waiting for you…" doesn't outlive it.
+      case "retestAgents": this.stopInstallPoll(); this.closeInstallPointer(); this.refreshAvailableAgents(); break;
       case "finish": this.finishSetup(); break;
       // "getChrome": the Mac's WhatsApp needs Chrome; Windows' runs in Nikxel.
     }

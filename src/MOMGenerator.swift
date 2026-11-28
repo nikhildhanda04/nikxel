@@ -458,7 +458,7 @@ class MOMGenerator {
         try? errData.write(to: stderrDump)
 
         if timedOut {
-            throw MOMError.generationFailed("\(backend.whichName) did not finish within \(timeout >= 60 ? "\(Int(timeout / 60)) min" : "\(Int(timeout)) s") and was killed.\nCheck that `\(backend.whichName)` works in a terminal (login / quota).\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
+            throw MOMError.generationFailed("\(backend.whichName) did not finish within \(timeout >= 60 ? "\(Int(timeout / 60)) min" : "\(Int(timeout)) s") and was killed.\nCheck that `\(backend.whichName)` answers in a terminal; a first run can be slow.\n\(String((String(data: errData, encoding: .utf8) ?? "").suffix(300)))\n\nLogs: \(workspace.path)")
         }
 
         guard task.terminationStatus == 0 else {

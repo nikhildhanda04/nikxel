@@ -184,7 +184,10 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
         case "pickAgent": pickAgent(index)
         case "copyAgent": copyInstallCommand(index)
         case "installAgent": installClaude()
-        case "retestAgents": refreshAvailableAgents()
+        // A fresh test replaces the sign-in watch, so "Waiting for you…" doesn't outlive it.
+        case "retestAgents":
+            agentInstallPoll?.invalidate(); agentInstallPoll = nil; closeInstallPointer()
+            refreshAvailableAgents()
         case "finish": finishSetup()
         default: break
         }
@@ -277,8 +280,8 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
             return ("Not installed", "muted", agent.installCommand)
         case .broken(let why):
             return ("Installed but won't start: \(readable(why))", "red", agent.installCommand)
-        case .notLoggedIn:
-            return ("Installed, but not logged in", "orange", bin)
+        case .notLoggedIn(let said):
+            return (notLoggedInText(agent, said), "orange", bin)
         case .failing(let why):
             return ("Installed, but a test request failed: \(readable(why))", "red", nil)
         case .working(let version):
@@ -286,6 +289,19 @@ final class OnboardingWindowController: NSWindowController, WKScriptMessageHandl
             let v = version.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
             return ("Installed, logged in and working" + (v.isEmpty ? "" : " (\(v))"), "green", nil)
         }
+    }
+
+    /// "Not logged in" with what the agent actually said. Signed in yet still refused is almost
+    /// always an API key in the environment: an interactive `claude` asks whether to use it, but
+    /// Nikxel's headless runs (`claude -p`) always do, so a stale key beats a good login.
+    /// Mirrors notLoggedInText in onboarding.ts.
+    static func notLoggedInText(_ agent: CodingAgent, _ said: String) -> String {
+        let said = readable(said).trimmingCharacters(in: .whitespacesAndNewlines)
+        if agent == .claude, ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil,
+           said.range(of: #"api key|401|unauthori[sz]ed"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "Logged in, but an ANTHROPIC_API_KEY set on this Mac is overriding it and Claude rejects that key. Remove it from your shell profile, restart Nikxel, then Test again."
+        }
+        return "Installed, but not logged in" + (said.isEmpty ? "" : ". \(agent.displayName) said: “\(said)”")
     }
 
     /// An agent's error as a person would say it. OpenCode fails with its raw
